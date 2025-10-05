@@ -59,28 +59,25 @@ export default function Login({ onLogin, onAdminLogin }) {
         </IconButton>
       </Tooltip>
 
+      {/* Centered logo from /public/logo.png */}
       <Box sx={{ display: "flex", justifyContent: "center", mb: 1 }}>
         <Box
+          component="img"
+          src="/logo.png"
+          alt="Print+Play Logo"
           sx={{
-            width: 64,
-            height: 64,
-            borderRadius: "50%",
-            border: "2px solid",
-            borderColor: "primary.main",
-            display: "grid",
-            placeItems: "center",
-            fontSize: 28,
+            width: 72,
+            height: 72,
+            objectFit: "contain",
+            borderRadius: 1,
+            userSelect: "none",
           }}
-        >
-          ⚛
-        </Box>
+        />
       </Box>
 
       <Typography align="center" variant="h5" gutterBottom>
         Print+Play
       </Typography>
-
-      {/* No pre-auth shift status check here (Option B) */}
 
       <Box component="form" onSubmit={handleSubmit} sx={{ mt: 2, display: "grid", gap: 2 }}>
         <TextField

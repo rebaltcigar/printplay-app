@@ -20,7 +20,7 @@ import {
   updateDoc, where, setDoc, serverTimestamp, getDocs, getDoc
 } from 'firebase/firestore';
 
-import logo from '../assets/react.svg';
+import logo from '/icon.ico';
 
 /* ---------- Expense policy ---------- */
 const EXPENSE_TYPES_ALL = [
