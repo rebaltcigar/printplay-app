@@ -7,12 +7,13 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import { auth } from '../firebase';
 import { signOut } from 'firebase/auth';
 
-import Reports from './Reports';
+import Shifts from './Shifts';
 import ExpenseManagement from './ExpenseManagement';
 import DebtReport from './DebtReport';
 import ServiceManagement from './ServiceManagement';
 import UserManagement from './UserManagement';
 import AdminHome from './AdminHome'; // Charts & summaries
+import Transactions from './Transactions';
 
 function TabPanel({ value, index, children }) {
   return (
@@ -72,7 +73,8 @@ export default function AdminDashboard({ user }) {
           sx={{ px: 1 }}
         >
           <Tab label="Home" />
-          <Tab label="Reports" />
+          <Tab label="Shifts" />
+          <Tab label="Transactions" />
           <Tab label="Expenses" />
           <Tab label="Debts" />
           <Tab label="Services" />
@@ -90,29 +92,35 @@ export default function AdminDashboard({ user }) {
 
         <TabPanel value={tab} index={1}>
           <Box sx={{ height: '100%', width: '100%' }}>
-            <Reports />
+            <Shifts />
           </Box>
         </TabPanel>
 
-        <TabPanel value={tab} index={2}>
+      <TabPanel value={tab} index={2}>
           <Box sx={{ height: '100%', width: '100%' }}>
-            <ExpenseManagement />
+            <Transactions />
           </Box>
         </TabPanel>
 
         <TabPanel value={tab} index={3}>
           <Box sx={{ height: '100%', width: '100%' }}>
-            <DebtReport />
+            <ExpenseManagement />
           </Box>
         </TabPanel>
 
         <TabPanel value={tab} index={4}>
           <Box sx={{ height: '100%', width: '100%' }}>
-            <ServiceManagement />
+            <DebtReport />
           </Box>
         </TabPanel>
 
         <TabPanel value={tab} index={5}>
+          <Box sx={{ height: '100%', width: '100%' }}>
+            <ServiceManagement />
+          </Box>
+        </TabPanel>
+
+        <TabPanel value={tab} index={6}>
           <Box sx={{ height: '100%', width: '100%' }}>
             <UserManagement />
           </Box>

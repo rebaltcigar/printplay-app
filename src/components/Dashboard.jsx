@@ -1,18 +1,17 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
-  Box, Typography, AppBar, Toolbar, Grid, Card, TextField, Select, MenuItem,
+  Box, Typography, AppBar, Toolbar, Card, TextField, Select, MenuItem,
   FormControl, InputLabel, Paper, Checkbox, IconButton, Stack, Tooltip, Dialog,
   DialogTitle, DialogContent, DialogActions, Divider, Button, Table, TableHead,
   TableBody, TableRow, TableCell, TableContainer
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
-import DeleteIcon from '@mui/icons-material/Delete';
 import HistoryIcon from '@mui/icons-material/History';
 import ClearIcon from '@mui/icons-material/Clear';
 import CommentIcon from '@mui/icons-material/Comment';
 
 import CustomerDialog from './CustomerDialog';
-import DebtLookupDialog from './DebtLookupDialog';
+import StaffDebtLookupDialog from '../components/StaffDebtLookupDialog';
 
 import { auth, db } from '../firebase';
 import {
@@ -61,7 +60,11 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
 
   const [openEndShiftDialog, setOpenEndShiftDialog] = useState(false);
   const [openCustomerDialog, setOpenCustomerDialog] = useState(false);
+
+  // Staff Debt Lookup (read-only)
   const [openDebtDialog, setOpenDebtDialog] = useState(false);
+  const [presetCustomer, setPresetCustomer] = useState(null);
+  const [selectToken, setSelectToken] = useState(0);
 
   const [pcRental, setPcRental] = useState('');
   const [showReceipt, setShowReceipt] = useState(false);
@@ -70,6 +73,8 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
   const [staffOptions, setStaffOptions] = useState([]); // [{id, fullName, email}]
   const [shiftStart, setShiftStart] = useState(null);    // Date
   const [elapsed, setElapsed] = useState('00:00:00');
+
+  const [staffDisplayName, setStaffDisplayName] = useState(user?.email || ''); // header name
 
   const isAdmin = userRole === 'superadmin';
   const ALLOWED_EXPENSE_TYPES = isAdmin ? EXPENSE_TYPES_ALL : EXPENSE_TYPES_STAFF;
@@ -129,6 +134,30 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     loadStaff();
   }, []);
 
+  // Resolve header staff name (prefer users.fullName by current email)
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      try {
+        // Try to resolve from users collection by email (works for staff/admin)
+        const qMe = query(collection(db, 'users'), where('email', '==', user.email));
+        const snap = await getDocs(qMe);
+        if (!isMounted) return;
+        if (!snap.empty) {
+          const d = snap.docs[0].data() || {};
+          setStaffDisplayName(d.fullName || d.name || d.displayName || user.email);
+        } else {
+          // fallback to staffOptions (if available)
+          const mo = staffOptions.find(s => s.email === user.email);
+          setStaffDisplayName(mo?.fullName || user.email);
+        }
+      } catch {
+        if (isMounted) setStaffDisplayName(user.email);
+      }
+    })();
+    return () => { isMounted = false; };
+  }, [user?.email, staffOptions]);
+
   useEffect(() => {
     if ((expenseType === 'Salary' || expenseType === 'Salary Advance') && !expenseStaffId && staffOptions.length) {
       const me = staffOptions.find(o => o.email === user.email) || staffOptions[0];
@@ -169,10 +198,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
 
   const handleEndShiftClick = () => setOpenEndShiftDialog(true);
   const handleCloseDialog = () => setOpenEndShiftDialog(false);
-
-  const handleSelectTransaction = (id) => {
-    setSelectedTransactions(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
-  };
 
   const handleDeleteSelected = async () => {
     if (selectedTransactions.length === 0) return;
@@ -338,9 +363,37 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     }, 0);
   }, [transactions]);
 
+  const pcRentalNum = useMemo(() => Number(pcRental || 0), [pcRental]);
+  const salesTotalWithPc = useMemo(() => servicesTotal + pcRentalNum, [servicesTotal, pcRentalNum]);
+
   const finalTotal = useMemo(() => {
-    return servicesTotal - expensesTotal + Number(pcRental || 0);
-  }, [servicesTotal, expensesTotal, pcRental]);
+    return servicesTotal - expensesTotal + pcRentalNum;
+  }, [servicesTotal, expensesTotal, pcRentalNum]);
+
+  // Detailed breakdowns for End Shift & Receipt (sales here EXCLUDE PC rental; we show PC rental separately)
+  const salesBreakdown = useMemo(() => {
+    const m = new Map();
+    transactions.forEach(tx => {
+      if (tx.item === 'Expenses' || tx.item === 'New Debt') return; // not sales
+      const key = tx.item || '—';
+      m.set(key, (m.get(key) || 0) + Number(tx.total || 0));
+    });
+    return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [transactions]);
+
+  const expensesBreakdown = useMemo(() => {
+    const m = new Map();
+    transactions.forEach(tx => {
+      if (tx.item === 'Expenses') {
+        const key = `Expense: ${tx.expenseType || 'Other'}`;
+        m.set(key, (m.get(key) || 0) + Number(tx.total || 0));
+      } else if (tx.item === 'New Debt') {
+        const key = 'New Debt';
+        m.set(key, (m.get(key) || 0) + Number(tx.total || 0));
+      }
+    });
+    return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [transactions]);
 
   const identifierText = (tx) => {
     if (tx.item === 'Expenses') {
@@ -357,7 +410,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
       return;
     }
     const summary = {
-      pcRentalTotal: Number(pcRental),
+      pcRentalTotal: pcRentalNum,
       servicesTotal,
       expensesTotal,
       systemTotal: finalTotal,
@@ -367,7 +420,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
       await updateDoc(doc(db, 'shifts', activeShiftId), summary);
       const statusRef = doc(db, 'app_status', 'current_shift');
       await setDoc(statusRef, { activeShiftId: null, staffEmail: user.email }, { merge: true });
-      setReceiptData({ ...summary, endTime: new Date() });
+      setReceiptData({ ...summary, endTime: new Date(), salesBreakdown, expensesBreakdown });
       setOpenEndShiftDialog(false);
       setShowReceipt(true);
     } catch (e) {
@@ -375,6 +428,8 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
       alert('Failed to end shift.');
     }
   };
+
+  const tableDisabled = Boolean(currentlyEditing);
 
   // --- VIEW ---
   return (
@@ -393,12 +448,14 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <img src={logo} alt="logo" width={20} height={20} />
             <Typography variant="subtitle2" sx={{ opacity: 0.9 }}>
-              {user.email} ({shiftPeriod} Shift) | {elapsed}
+              {staffDisplayName} ({shiftPeriod} Shift) | {elapsed}
             </Typography>
           </Box>
 
-          {/* Staff dash: NO dedicated Logout button per request */}
           <Box sx={{ ml: 'auto', display: 'flex', gap: 1 }}>
+            <Button size="small" variant="outlined" onClick={() => { setPresetCustomer(null); setOpenDebtDialog(true); }}>
+              Debt Lookup
+            </Button>
             <Button size="small" variant="contained" color="error" onClick={handleEndShiftClick}>
               End Shift
             </Button>
@@ -502,15 +559,22 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             onChange={(e) => setNotes(e.target.value)}
           />
 
-          <Stack direction="row" spacing={1} sx={{ mt: 'auto' }}>
-            <Button onClick={handleTransactionSubmit} variant="contained" fullWidth disabled={isDebtItem && !selectedCustomer && !currentlyEditing}>
+          {/* Add / Cancel buttons right after Notes */}
+          <Stack direction="row" spacing={1}>
+            <Button
+              onClick={handleTransactionSubmit}
+              variant="contained"
+              fullWidth
+              disabled={isDebtItem && !selectedCustomer && !currentlyEditing}
+            >
               {currentlyEditing ? 'Update Entry' : 'Add Entry'}
             </Button>
-            {currentlyEditing && <Button variant="outlined" onClick={clearForm} fullWidth>Cancel</Button>}
+            {currentlyEditing && (
+              <Button variant="outlined" onClick={clearForm} fullWidth>
+                Cancel
+              </Button>
+            )}
           </Stack>
-
-          <Divider sx={{ my: 2 }} />
-          <Button variant="outlined" fullWidth onClick={() => setOpenDebtDialog(true)}>Customer Look Up</Button>
         </Card>
 
         {/* RIGHT: table */}
@@ -519,14 +583,14 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               <Typography variant="subtitle1" fontWeight={600}>Logs</Typography>
               <Box sx={{ flexGrow: 1 }} />
-              <Tooltip title="Delete Selected">
+              <Tooltip title={tableDisabled ? "Finish editing to delete" : "Delete Selected"}>
                 <Box component="span">
                   <Button
                     size="small"
                     variant="outlined"
                     color="error"
                     onClick={handleDeleteSelected}
-                    disabled={selectedTransactions.length === 0}
+                    disabled={tableDisabled || selectedTransactions.length === 0}
                   >
                     Delete Selected
                   </Button>
@@ -534,7 +598,14 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
               </Tooltip>
             </Box>
 
-            <TableContainer sx={{ flex: 1, minHeight: 0, width: '100%' }}>
+            <TableContainer
+              sx={{
+                flex: 1,
+                minHeight: 0,
+                width: '100%',
+                ...(tableDisabled ? { pointerEvents: 'none', opacity: 0.55 } : {}),
+              }}
+            >
               <Table stickyHeader size="small">
                 <TableHead>
                   <TableRow>
@@ -550,12 +621,17 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
                 </TableHead>
                 <TableBody>
                   {transactions.map((tx) => (
-                    <TableRow key={tx.id} hover>
+                    <TableRow key={tx.id} hover={!tableDisabled}>
                       <TableCell padding="checkbox">
                         <Checkbox
                           checked={selectedTransactions.includes(tx.id)}
-                          onChange={() => handleSelectTransaction(tx.id)}
+                          onChange={() =>
+                            setSelectedTransactions(prev =>
+                              prev.includes(tx.id) ? prev.filter(i => i !== tx.id) : [...prev, tx.id]
+                            )
+                          }
                           size="small"
+                          disabled={tableDisabled}
                         />
                       </TableCell>
                       <TableCell>
@@ -573,7 +649,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
                       <TableCell align="right">₱{(tx.total || 0).toFixed(2)}</TableCell>
                       <TableCell>{identifierText(tx)}</TableCell>
                       <TableCell align="right">
-                        <IconButton size="small" onClick={() => setCurrentlyEditing(tx)}>
+                        <IconButton size="small" onClick={() => setCurrentlyEditing(tx)} disabled={tableDisabled && (!currentlyEditing || currentlyEditing?.id !== tx.id)}>
                           <EditIcon fontSize="inherit" />
                         </IconButton>
                         {/* Soft delete is via bulk selection for audit-trail reasons */}
@@ -587,11 +663,12 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         </Paper>
       </Box>
 
-      {/* End Shift dialog (PC Rental + Totals only) */}
+      {/* End Shift dialog (with full breakdown) */}
       <Dialog open={openEndShiftDialog} onClose={handleCloseDialog} fullWidth maxWidth="sm">
         <DialogTitle>End of Shift</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
+            {/* PC Rental first */}
             <TextField
               autoFocus
               label="PC Rental Total"
@@ -601,19 +678,50 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
               required
               fullWidth
             />
+
+            {/* Sales (credits/incoming) - PC rental is shown separately but included in Total Sales below */}
+            <Typography variant="subtitle2" sx={{ mt: 1 }}>Sales</Typography>
+            {salesBreakdown.length === 0 && (
+              <Typography variant="body2" sx={{ opacity: 0.7 }}>No sales entries.</Typography>
+            )}
+            {salesBreakdown.map(([label, amt]) => (
+              <Box key={label} sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                <Typography>{label}</Typography>
+                <Typography>₱{Number(amt).toFixed(2)}</Typography>
+              </Box>
+            ))}
+
             <Divider />
+
+            {/* Expenses */}
+            <Typography variant="subtitle2">Expenses</Typography>
+            {expensesBreakdown.length === 0 && (
+              <Typography variant="body2" sx={{ opacity: 0.7 }}>No expense entries.</Typography>
+            )}
+            {expensesBreakdown.map(([label, amt]) => (
+              <Box key={label} sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                <Typography>{label}</Typography>
+                <Typography>₱{Number(amt).toFixed(2)}</Typography>
+              </Box>
+            ))}
+
+            <Divider />
+
+            {/* Totals */}
             <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-              <Typography>Services Total</Typography>
-              <Typography>₱{servicesTotal.toFixed(2)}</Typography>
+              <Typography>Total Sales</Typography>
+              <Typography>₱{salesTotalWithPc.toFixed(2)}</Typography>
             </Box>
             <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-              <Typography>Expenses Total</Typography>
+              <Typography>Total Expenses</Typography>
               <Typography>₱{expensesTotal.toFixed(2)}</Typography>
             </Box>
+
             <Divider />
-            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-              <Typography variant="h6">Final Total</Typography>
-              <Typography variant="h6">₱{finalTotal.toFixed(2)}</Typography>
+
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <Typography variant="h6">SYSTEM TOTAL</Typography>
+              <Typography variant="h5" fontWeight={800}>₱{finalTotal.toFixed(2)}</Typography>
             </Box>
           </Stack>
         </DialogContent>
@@ -623,33 +731,64 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         </DialogActions>
       </Dialog>
 
-      {/* Receipt (big total) */}
+      {/* Receipt (with full breakdown) */}
       <Dialog open={showReceipt} onClose={() => {}} fullWidth maxWidth="xs">
         <DialogTitle>Shift Summary Receipt</DialogTitle>
         <DialogContent dividers>
-          <Typography variant="subtitle2">{user.email}</Typography>
+          <Typography variant="subtitle2">{staffDisplayName}</Typography>
           <Typography variant="body2" gutterBottom>
             {shiftPeriod} Shift — {receiptData?.endTime?.toLocaleDateString?.() || new Date().toLocaleDateString()}
           </Typography>
 
-          <Divider sx={{ my: 2 }} />
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-            <Typography>Services Total</Typography>
-            <Typography>₱{(receiptData?.servicesTotal || 0).toFixed(2)}</Typography>
-          </Box>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-            <Typography>Expenses Total</Typography>
-            <Typography>₱{(receiptData?.expensesTotal || 0).toFixed(2)}</Typography>
-          </Box>
+          {/* PC Rental */}
           <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
             <Typography>PC Rental</Typography>
-            <Typography>₱{(receiptData?.pcRentalTotal || 0).toFixed(2)}</Typography>
+            <Typography>₱{pcRentalNum.toFixed(2)}</Typography>
+          </Box>
+
+          {/* Sales */}
+          <Typography variant="subtitle2" sx={{ mt: 1 }}>Sales</Typography>
+          {salesBreakdown.length === 0 && (
+            <Typography variant="body2" sx={{ opacity: 0.7 }}>No sales entries.</Typography>
+          )}
+          {salesBreakdown.map(([label, amt]) => (
+            <Box key={label} sx={{ display: 'flex', justifyContent: 'space-between' }}>
+              <Typography>{label}</Typography>
+              <Typography>₱{Number(amt).toFixed(2)}</Typography>
+            </Box>
+          ))}
+
+          <Divider sx={{ my: 2 }} />
+
+          {/* Expenses */}
+          <Typography variant="subtitle2">Expenses</Typography>
+          {expensesBreakdown.length === 0 && (
+            <Typography variant="body2" sx={{ opacity: 0.7 }}>No expense entries.</Typography>
+          )}
+          {expensesBreakdown.map(([label, amt]) => (
+            <Box key={label} sx={{ display: 'flex', justifyContent: 'space-between' }}>
+              <Typography>{label}</Typography>
+              <Typography>₱{Number(amt).toFixed(2)}</Typography>
+            </Box>
+          ))}
+
+          <Divider sx={{ my: 2 }} />
+
+          {/* Totals */}
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+            <Typography>Total Sales</Typography>
+            <Typography>₱{salesTotalWithPc.toFixed(2)}</Typography>
+          </Box>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+            <Typography>Total Expenses</Typography>
+            <Typography>₱{expensesTotal.toFixed(2)}</Typography>
           </Box>
 
           <Divider sx={{ my: 2 }} />
+
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-            <Typography variant="h5" fontWeight={700}>TOTAL</Typography>
-            <Typography variant="h4" fontWeight={800}>₱{(receiptData?.systemTotal || 0).toFixed(2)}</Typography>
+            <Typography variant="h5" fontWeight={700}>SYSTEM TOTAL</Typography>
+            <Typography variant="h4" fontWeight={800}>₱{finalTotal.toFixed(2)}</Typography>
           </Box>
         </DialogContent>
         <DialogActions>
@@ -672,7 +811,14 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         onSelectCustomer={handleSelectCustomer}
         user={user}
       />
-      <DebtLookupDialog open={openDebtDialog} onClose={() => setOpenDebtDialog(false)} />
+
+      {/* Read-only debt lookup for staff */}
+      <StaffDebtLookupDialog
+        open={openDebtDialog}
+        onClose={() => setOpenDebtDialog(false)}
+        presetCustomer={presetCustomer}
+        selectToken={selectToken}
+      />
     </Box>
   );
 }
