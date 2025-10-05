@@ -42,7 +42,6 @@ import {
   where,
   doc,
   updateDoc,
-  writeBatch,
   serverTimestamp,
 } from "firebase/firestore";
 
@@ -58,6 +57,13 @@ const toDateInput = (d) => {
   const mm = String(x.getMonth() + 1).padStart(2, "0");
   const dd = String(x.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
+};
+
+const toTimeInput = (d) => {
+  const x = new Date(d);
+  const HH = String(x.getHours()).padStart(2, "0");
+  const MM = String(x.getMinutes()).padStart(2, "0");
+  return `${HH}:${MM}`;
 };
 
 const fmtDateTime = (ts) => {
@@ -103,7 +109,7 @@ export default function Transactions() {
   const [servicesFilter, setServicesFilter] = useState([]); // multi-select
 
   // Option lists
-  const [staffOptions, setStaffOptions] = useState([]); // [{email, name}]
+  const [staffOptions, setStaffOptions] = useState([]); // [{email, name, id}]
   const [shiftOptions, setShiftOptions] = useState([]); // [{id, label}]
   const [serviceItems, setServiceItems] = useState([]); // services for filter and editor
 
@@ -123,6 +129,8 @@ export default function Transactions() {
   const [editPrice, setEditPrice] = useState("");
   const [editNotes, setEditNotes] = useState("");
   const [staffSelectOptions, setStaffSelectOptions] = useState([]); // for salary edits
+  const [editDate, setEditDate] = useState(""); // NEW
+  const [editTime, setEditTime] = useState(""); // NEW
 
   /* ---- Load staff for filter ---- */
   useEffect(() => {
@@ -393,6 +401,14 @@ export default function Transactions() {
     setEditQuantity(String(row.quantity ?? ""));
     setEditPrice(String(row.price ?? ""));
     setEditNotes(row.notes || "");
+
+    // Populate date/time from timestamp
+    let dt = new Date();
+    if (row.timestamp?.seconds) dt = new Date(row.timestamp.seconds * 1000);
+    else if (row.timestamp instanceof Date) dt = row.timestamp;
+    setEditDate(toDateInput(dt));
+    setEditTime(toTimeInput(dt));
+
     setEditOpen(true);
   };
 
@@ -420,12 +436,26 @@ export default function Transactions() {
     const price = Number(editPrice || 0);
     const total = qty * price;
 
+    // Build new timestamp from editDate + editTime (local time)
+    let newTimestamp = null;
+    if (editDate && editTime) {
+      const [yyyy, mm, dd] = editDate.split("-").map(Number);
+      const [HH, MM] = editTime.split(":").map(Number);
+      newTimestamp = new Date(yyyy, (mm || 1) - 1, dd || 1, HH || 0, MM || 0, 0, 0);
+    } else {
+      // fallback to previous timestamp if either field is missing
+      if (editing.timestamp?.seconds) newTimestamp = new Date(editing.timestamp.seconds * 1000);
+      else if (editing.timestamp instanceof Date) newTimestamp = editing.timestamp;
+      else newTimestamp = new Date();
+    }
+
     const update = {
       item: editItem,
       quantity: qty,
       price: price,
       total,
       notes: editNotes || "",
+      timestamp: newTimestamp, // <-- UPDATED DATE/TIME
       isEdited: true,
       editedBy: auth.currentUser?.email || "admin",
       editReason: window.prompt("Reason for this edit?") || "(edited in Transactions view)",
@@ -821,6 +851,26 @@ export default function Transactions() {
                 )}
               </>
             )}
+
+            {/* NEW: Date & Time editors */}
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <TextField
+                label="Date"
+                type="date"
+                value={editDate}
+                onChange={(e) => setEditDate(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+                fullWidth
+              />
+              <TextField
+                label="Time"
+                type="time"
+                value={editTime}
+                onChange={(e) => setEditTime(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+                fullWidth
+              />
+            </Stack>
 
             <TextField
               label="Quantity"
