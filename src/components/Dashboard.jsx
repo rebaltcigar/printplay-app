@@ -202,15 +202,14 @@ function Dashboard({ user, activeShiftId, shiftPeriod }) {
   };
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh', width: "100%", overflow: 'hidden' }}>
       <AppBar position="static">
         <Toolbar>
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>{user.email} - {shiftPeriod} Shift</Typography>
-          <Button color="inherit" sx={{ mr: 2 }} onClick={() => setOpenDebtDialog(true)}>Customer Look Up</Button>
           <Button variant="contained" color="error" onClick={handleEndShiftClick}>End Shift</Button>
         </Toolbar>
       </AppBar>
-      <Grid container spacing={2} sx={{ p: 2, flexGrow: 1, overflow: 'hidden' }}>
+      <Grid container spacing={2} sx={{ p: 2, flexGrow: 1, overflow: 'hidden', justifyContent: 'center' }}>
         <Grid item xs={12} md={2}>
           <Card sx={{ padding: 2, display: 'flex', flexDirection: 'column', height: '100%' }}>
             <Box component="form" onSubmit={handleTransactionSubmit} sx={{ display: 'flex', flexDirection: 'column', gap: 2, flexGrow: 1 }}>
@@ -251,10 +250,10 @@ function Dashboard({ user, activeShiftId, shiftPeriod }) {
             </Button>
           </Card>
         </Grid>
-        <Grid item xs={12} md={10} sx={{ height: 'calc(100vh - 110px)', display: 'flex', flexDirection: 'column', transition: 'opacity 0.2s', opacity: currentlyEditing ? 0.4 : 1, pointerEvents: currentlyEditing ? 'none' : 'auto' }}>
+        <Grid item xs={12} md={12} sx={{ height: 'calc(100vh - 110px)', display: 'flex', flexDirection: 'column', transition: 'opacity 0.2s', opacity: currentlyEditing ? 0.4 : 1, pointerEvents: currentlyEditing ? 'none' : 'auto' }}>
           <Card sx={{ padding: 2, flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="h5">Logs</Typography>
+              <Typography variant="h5">Logs - - - - - - - - - - - - - - - - -</Typography>
               <Tooltip title="Delete Selected"><Box component="span"><IconButton color="error" onClick={handleDeleteSelected} disabled={selectedTransactions.length === 0}><DeleteIcon /></IconButton></Box></Tooltip>
             </Box>
             <Box sx={{ flexGrow: 1, overflowY: 'auto', overflowX: 'hidden' }}>

@@ -5,6 +5,7 @@ import { signOut } from 'firebase/auth';
 import UserManagement from './UserManagement';
 import ServiceManagement from './ServiceManagement';
 import Reports from './Reports';
+import ExpenseManagement from './ExpenseManagement'; // Ensure this path and filename is correct
 
 function AdminDashboard({ user }) {
   const [activeTab, setActiveTab] = useState(0);
@@ -33,6 +34,7 @@ function AdminDashboard({ user }) {
           <Tab label="Reports" />
           <Tab label="Services Management" />
           <Tab label="User Management" />
+          <Tab label="Expenses" />
         </Tabs>
       </Box>
 
@@ -40,6 +42,7 @@ function AdminDashboard({ user }) {
         {activeTab === 0 && <Reports />}
         {activeTab === 1 && <ServiceManagement />}
         {activeTab === 2 && <UserManagement />}
+        {activeTab === 3 && <ExpenseManagement />}
       </Box>
     </Box>
   );
