@@ -1,167 +1,92 @@
-import React, { useState, useEffect } from 'react';
-import { Box, Typography, Button, Dialog, DialogTitle, DialogContent, TextField, Stack, DialogActions, TableContainer, Paper, Table, TableHead, TableRow, TableCell, TableBody, Select, MenuItem, FormControl, InputLabel, IconButton } from '@mui/material';
-import EditIcon from '@mui/icons-material/Edit';
-import { db, auth } from '../firebase';
-import { collection, onSnapshot, doc, setDoc, updateDoc } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import React, { useEffect, useState } from "react";
+import {
+  Card,
+  Typography,
+  Divider,
+  Paper,
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+  TableContainer,
+} from "@mui/material";
+import { collection, getDocs, orderBy, query } from "firebase/firestore";
+import { db } from "../firebase";
 
-function UserManagement() {
+/**
+ * List-only user management.
+ * - Shows users (fullName, email, role)
+ * - No create/edit/delete actions
+ * - If you need to add a user: create it in Firebase Auth, then add a matching
+ *   Firestore doc at users/{uid} with fields { fullName, email, role }.
+ */
+export default function UserManagement() {
   const [users, setUsers] = useState([]);
-  const [openAddUserDialog, setOpenAddUserDialog] = useState(false);
-  const [openEditUserDialog, setOpenEditUserDialog] = useState(false);
-  const [userToEdit, setUserToEdit] = useState(null);
-  const [newUser, setNewUser] = useState({ email: '', password: '', fullName: '', role: 'staff' });
-  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, "users"), (snapshot) => {
-      setUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
-    return () => unsubscribe();
+    let cancelled = false;
+    (async () => {
+      try {
+        const q = query(collection(db, "users"), orderBy("fullName"));
+        const snap = await getDocs(q);
+        if (cancelled) return;
+        setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      } catch (err) {
+        console.warn("Failed to load users:", err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
-  const handleOpenEditDialog = (user) => {
-    setUserToEdit(user);
-    setOpenEditUserDialog(true);
-  };
-
-  const handleCloseEditDialog = () => {
-    setUserToEdit(null);
-    setOpenEditUserDialog(false);
-  };
-
-  const handleEditInputChange = (e) => {
-    setUserToEdit({ ...userToEdit, [e.target.name]: e.target.value });
-  };
-
-  const handleUpdateUser = async (event) => {
-    event.preventDefault();
-    if (!userToEdit) return;
-
-    try {
-      const userDocRef = doc(db, "users", userToEdit.id);
-      await updateDoc(userDocRef, {
-        fullName: userToEdit.fullName,
-        role: userToEdit.role,
-      });
-      handleCloseEditDialog();
-    } catch (error) {
-      console.error("Error updating user:", error);
-      alert("Failed to update user.");
-    }
-  };
-
-  const handleInputChange = (e) => {
-    setNewUser({ ...newUser, [e.target.name]: e.target.value });
-  };
-
-  const handleAddNewUser = async (event) => {
-    event.preventDefault();
-    setError('');
-    if (!newUser.email || !newUser.password || !newUser.fullName) {
-      setError("All fields are required.");
-      return;
-    }
-
-    try {
-      const functions = getFunctions();
-      const createNewUser = httpsCallable(functions, 'createNewUser');
-      await createNewUser(newUser);
-      
-      setOpenAddUserDialog(false);
-      setNewUser({ email: '', password: '', fullName: '', role: 'staff' });
-    } catch (error) {
-      console.error("Error creating new user via function:", error);
-      setError(error.message);
-    }
-  };
-
   return (
-    <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h5">User Accounts</Typography>
-        <Button variant="contained" onClick={() => setOpenAddUserDialog(true)}>Add New User</Button>
-      </Box>
-      <TableContainer component={Paper}>
-        <Table>
+    <Card sx={{ p: 2 }}>
+      <Typography variant="h6" gutterBottom>
+        Users
+      </Typography>
+      <Divider sx={{ mb: 2 }} />
+      <TableContainer component={Paper} sx={{ maxHeight: 520 }}>
+        <Table stickyHeader size="small">
           <TableHead>
             <TableRow>
               <TableCell>Full Name</TableCell>
               <TableCell>Email</TableCell>
               <TableCell>Role</TableCell>
-              <TableCell align="right">Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {users.map((user) => (
-              <TableRow key={user.id}>
-                <TableCell>{user.fullName}</TableCell>
-                <TableCell>{user.email}</TableCell>
-                <TableCell sx={{ textTransform: 'capitalize' }}>{user.role}</TableCell>
-                <TableCell align="right">
-                  <IconButton onClick={() => handleOpenEditDialog(user)}>
-                    <EditIcon />
-                  </IconButton>
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={3}>
+                  <Typography color="text.secondary">Loading…</Typography>
                 </TableCell>
               </TableRow>
-            ))}
+            ) : users.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={3}>
+                  <Typography color="text.secondary">No users found.</Typography>
+                </TableCell>
+              </TableRow>
+            ) : (
+              users.map(u => (
+                <TableRow key={u.id} hover>
+                  <TableCell>{u.fullName || "—"}</TableCell>
+                  <TableCell>{u.email || "—"}</TableCell>
+                  <TableCell>{u.role || "—"}</TableCell>
+                </TableRow>
+              ))
+            )}
           </TableBody>
         </Table>
       </TableContainer>
 
-      {/* Add User Dialog */}
-      <Dialog open={openAddUserDialog} onClose={() => setOpenAddUserDialog(false)}>
-        <DialogTitle>Add a New User</DialogTitle>
-        <Box component="form" onSubmit={handleAddNewUser}>
-          <DialogContent>
-            <Stack spacing={2} sx={{ pt: 1, minWidth: 400 }}>
-              <TextField name="fullName" label="Full Name" value={newUser.fullName} onChange={handleInputChange} required autoFocus/>
-              <TextField name="email" label="Email Address" type="email" value={newUser.email} onChange={handleInputChange} required />
-              <TextField name="password" label="Password" type="password" value={newUser.password} onChange={handleInputChange} required />
-              <FormControl fullWidth>
-                <InputLabel>Role</InputLabel>
-                <Select name="role" value={newUser.role} label="Role" onChange={handleInputChange}>
-                  <MenuItem value="staff">Staff</MenuItem>
-                  <MenuItem value="superadmin">Super Admin</MenuItem>
-                </Select>
-              </FormControl>
-              {error && <Typography color="error">{error}</Typography>}
-            </Stack>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setOpenAddUserDialog(false)}>Cancel</Button>
-            <Button type="submit">Create User</Button>
-          </DialogActions>
-        </Box>
-      </Dialog>
-
-      {/* Edit User Dialog */}
-      <Dialog open={openEditUserDialog} onClose={handleCloseEditDialog}>
-        <DialogTitle>Edit User</DialogTitle>
-        {userToEdit && (
-          <Box component="form" onSubmit={handleUpdateUser}>
-            <DialogContent>
-              <Stack spacing={2} sx={{ pt: 1, minWidth: 400 }}>
-                <TextField name="email" label="Email Address" value={userToEdit.email} disabled />
-                <TextField name="fullName" label="Full Name" value={userToEdit.fullName} onChange={handleEditInputChange} required autoFocus />
-                <FormControl fullWidth>
-                  <InputLabel>Role</InputLabel>
-                  <Select name="role" value={userToEdit.role} label="Role" onChange={handleEditInputChange}>
-                    <MenuItem value="staff">Staff</MenuItem>
-                    <MenuItem value="superadmin">Super Admin</MenuItem>
-                  </Select>
-                </FormControl>
-              </Stack>
-            </DialogContent>
-            <DialogActions>
-              <Button onClick={handleCloseEditDialog}>Cancel</Button>
-              <Button type="submit">Save Changes</Button>
-            </DialogActions>
-          </Box>
-        )}
-      </Dialog>
-    </Box>
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+        To add users, create the account in <strong>Firebase Authentication</strong>, then add a matching
+        document in <code>users/&lt;uid&gt;</code> with fields: <code>fullName</code>, <code>email</code>, <code>role</code> (e.g. <code>"staff"</code> or <code>"superadmin"</code>).
+      </Typography>
+    </Card>
   );
 }
-
-export default UserManagement;

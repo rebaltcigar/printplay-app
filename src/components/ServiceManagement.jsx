@@ -1,133 +1,203 @@
-import React, { useState, useEffect } from 'react';
-import { Box, Typography, Button, Dialog, DialogTitle, DialogContent, TextField, Stack, DialogActions, TableContainer, Paper, Table, TableHead, TableRow, TableCell, TableBody, Select, MenuItem, FormControl, InputLabel, IconButton } from '@mui/material';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Box, Button, Card, CardContent, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle,
+  FormControlLabel, IconButton, Stack, Table, TableBody, TableCell, TableContainer,
+  TableHead, TableRow, TextField, Tooltip, Typography
+} from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
+import AddIcon from '@mui/icons-material/Add';
+import {
+  collection, addDoc, updateDoc, deleteDoc, doc, query, orderBy, onSnapshot, where, getDocs
+} from 'firebase/firestore';
 import { db } from '../firebase';
-import { collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, orderBy, query } from 'firebase/firestore';
 
-const defaultService = { serviceName: '', price: '', category: 'Debit', sortOrder: 0 };
-
-function ServiceManagement() {
+export default function ServiceManagement() {
   const [services, setServices] = useState([]);
-  const [openDialog, setOpenDialog] = useState(false);
-  const [serviceToEdit, setServiceToEdit] = useState(defaultService);
-  const isEditing = !!serviceToEdit.id;
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({ serviceName: '', price: '', sortOrder: '', active: true });
 
   useEffect(() => {
-    // Sort by the new sortOrder field
-    const q = query(collection(db, "services"), orderBy("sortOrder"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setServices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    const q = query(collection(db, 'services'), orderBy('sortOrder'));
+    const unsub = onSnapshot(q, snap => {
+      setServices(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
-    return () => unsubscribe();
+    return () => unsub();
   }, []);
 
-  const handleOpenDialog = (service = defaultService) => {
-    setServiceToEdit(service);
-    setOpenDialog(true);
+  const resetAndOpen = () => {
+    setEditing(null);
+    setForm({ serviceName: '', price: '', sortOrder: services.length + 1, active: true });
+    setOpen(true);
   };
 
-  const handleCloseDialog = () => {
-    setOpenDialog(false);
-    setServiceToEdit(defaultService);
+  const startEdit = (svc) => {
+    setEditing(svc);
+    setForm({
+      serviceName: svc.serviceName || '',
+      price: Number(svc.price || 0),
+      sortOrder: Number(svc.sortOrder || 0),
+      active: Boolean(svc.active ?? true),
+    });
+    setOpen(true);
   };
 
-  const handleInputChange = (e) => {
-    setServiceToEdit({ ...serviceToEdit, [e.target.name]: e.target.value });
+  const close = () => {
+    setOpen(false);
+    setEditing(null);
   };
 
-  const handleSaveService = async (event) => {
-    event.preventDefault();
-    const data = {
-      ...serviceToEdit,
-      price: Number(serviceToEdit.price) || null,
-      sortOrder: Number(serviceToEdit.sortOrder) || 0, // Ensure sortOrder is a number
-    };
+  const onChange = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+
+  const save = async () => {
+    const name = form.serviceName.trim();
+    const price = Number(form.price);
+    const sortOrder = Number(form.sortOrder);
+    const active = Boolean(form.active);
+
+    if (!name) return alert('Service name is required.');
+    if (Number.isNaN(price)) return alert('Price must be a number.');
+    if (Number.isNaN(sortOrder)) return alert('Sort order must be a number.');
+
+    // prevent duplicate names (best-effort)
+    const qDup = query(collection(db, 'services'), where('serviceName', '==', name));
+    const dup = await getDocs(qDup);
+    const isEditingSameName = editing && editing.serviceName === name;
+    if (!isEditingSameName && !dup.empty) {
+      return alert('A service with that name already exists.');
+    }
 
     try {
-      if (isEditing) {
-        const docRef = doc(db, "services", serviceToEdit.id);
-        await updateDoc(docRef, data);
+      if (editing) {
+        await updateDoc(doc(db, 'services', editing.id), { serviceName: name, price, sortOrder, active });
       } else {
-        await addDoc(collection(db, "services"), data);
+        await addDoc(collection(db, 'services'), { serviceName: name, price, sortOrder, active });
       }
-      handleCloseDialog();
-    } catch (error) {
-      console.error("Error saving service:", error);
-      alert("Failed to save service.");
+      close();
+    } catch (e) {
+      console.error('Save service failed:', e);
+      alert('Failed to save service.');
     }
   };
 
-  const handleDeleteService = async (id) => {
-    if (window.confirm("Are you sure you want to permanently delete this service?")) {
-      try {
-        await deleteDoc(doc(db, "services", id));
-      } catch (error) {
-        console.error("Error deleting service:", error);
-        alert("Failed to delete service.");
-      }
+  const remove = async (svc) => {
+    if (!window.confirm(`Delete "${svc.serviceName}"?`)) return;
+    try {
+      await deleteDoc(doc(db, 'services', svc.id));
+    } catch (e) {
+      console.error('Delete service failed:', e);
+      alert('Failed to delete service.');
     }
   };
+
+  const activeCount = useMemo(() => services.filter(s => s.active).length, [services]);
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h5">Manage Services</Typography>
-        <Button variant="contained" onClick={() => handleOpenDialog()}>Add New Service</Button>
-      </Box>
-      <TableContainer component={Paper}>
-        <Table>
-          <TableHead>
-            <TableRow>
-              <TableCell>Sort Order</TableCell>
-              <TableCell>Service Name</TableCell>
-              <TableCell>Price</TableCell>
-              <TableCell>Category</TableCell>
-              <TableCell align="right">Actions</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {services.map((service) => (
-              <TableRow key={service.id}>
-                <TableCell>{service.sortOrder}</TableCell>
-                <TableCell>{service.serviceName}</TableCell>
-                <TableCell>{service.price ? `₱${service.price.toFixed(2)}` : 'N/A'}</TableCell>
-                <TableCell sx={{ textTransform: 'capitalize' }}>{service.category}</TableCell>
-                <TableCell align="right">
-                  <IconButton onClick={() => handleOpenDialog(service)}><EditIcon /></IconButton>
-                  <IconButton onClick={() => handleDeleteService(service.id)}><DeleteIcon color="error" /></IconButton>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
+        <Typography variant="h5">Services</Typography>
+        <Button variant="contained" startIcon={<AddIcon />} onClick={resetAndOpen}>
+          Add Service
+        </Button>
+      </Stack>
 
-      <Dialog open={openDialog} onClose={handleCloseDialog}>
-        <DialogTitle>{isEditing ? 'Edit Service' : 'Add New Service'}</DialogTitle>
-        <Box component="form" onSubmit={handleSaveService}>
-          <DialogContent>
-            <Stack spacing={2} sx={{ pt: 1, minWidth: 400 }}>
-              <TextField name="serviceName" label="Service Name" value={serviceToEdit.serviceName} onChange={handleInputChange} required autoFocus />
-              <TextField name="price" label="Price (optional)" type="number" value={serviceToEdit.price} onChange={handleInputChange} />
-              <TextField name="sortOrder" label="Sort Order" type="number" value={serviceToEdit.sortOrder} onChange={handleInputChange} required />
-              <FormControl fullWidth>
-                <InputLabel>Category</InputLabel>
-                <Select name="category" value={serviceToEdit.category} label="Category" onChange={handleInputChange}>
-                  <MenuItem value="Debit">Debit (Sale)</MenuItem>
-                  <MenuItem value="Credit">Credit (Expense)</MenuItem>
-                </Select>
-              </FormControl>
-            </Stack>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={handleCloseDialog}>Cancel</Button>
-            <Button type="submit">Save</Button>
-          </DialogActions>
-        </Box>
+      <Card>
+        <CardContent>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            {activeCount}/{services.length} services active
+          </Typography>
+          <TableContainer>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell width="40%">Name</TableCell>
+                  <TableCell width="20%" align="right">Price</TableCell>
+                  <TableCell width="20%" align="right">Sort</TableCell>
+                  <TableCell width="10%" align="center">Active</TableCell>
+                  <TableCell width="10%" align="center">Actions</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {services.map((svc) => (
+                  <TableRow key={svc.id} hover>
+                    <TableCell>{svc.serviceName}</TableCell>
+                    <TableCell align="right">₱{Number(svc.price || 0).toFixed(2)}</TableCell>
+                    <TableCell align="right">{svc.sortOrder}</TableCell>
+                    <TableCell align="center">{svc.active ? 'Yes' : 'No'}</TableCell>
+                    <TableCell align="center">
+                      <Tooltip title="Edit">
+                        <IconButton size="small" onClick={() => startEdit(svc)}>
+                          <EditIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Delete">
+                        <IconButton size="small" color="error" onClick={() => remove(svc)}>
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {services.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={5}>
+                      <Typography variant="body2" sx={{ opacity: 0.7 }}>
+                        No services yet. Click “Add Service”.
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </CardContent>
+      </Card>
+
+      {/* Add / Edit Dialog */}
+      <Dialog open={open} onClose={close} fullWidth maxWidth="sm">
+        <DialogTitle>{editing ? 'Edit Service' : 'Add Service'}</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2}>
+            <TextField
+              label="Service Name"
+              value={form.serviceName}
+              onChange={(e) => onChange('serviceName', e.target.value)}
+              fullWidth
+              autoFocus
+            />
+            <TextField
+              label="Price"
+              type="number"
+              value={form.price}
+              onChange={(e) => onChange('price', e.target.value)}
+              fullWidth
+            />
+            <TextField
+              label="Sort Order"
+              type="number"
+              value={form.sortOrder}
+              onChange={(e) => onChange('sortOrder', e.target.value)}
+              fullWidth
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={form.active}
+                  onChange={(e) => onChange('active', e.target.checked)}
+                />
+              }
+              label="Active"
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={close}>Cancel</Button>
+          <Button variant="contained" onClick={save}>
+            {editing ? 'Save Changes' : 'Add Service'}
+          </Button>
+        </DialogActions>
       </Dialog>
     </Box>
   );
 }
-
-export default ServiceManagement;

@@ -1,135 +1,273 @@
-import React, { useState, useEffect } from 'react';
-import { Dialog, DialogTitle, DialogContent, TextField, List, ListItemText, ListItemButton, Box, Typography, Divider, Paper, IconButton } from '@mui/material';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Dialog, DialogTitle, DialogContent,
+  TextField, Button, Box, List, ListItemButton, ListItemText,
+  Divider, Typography, Stack, IconButton, Paper
+} from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import { db } from '../firebase';
-import { collection, query, where, getDocs, onSnapshot, orderBy } from 'firebase/firestore';
+import {
+  collection, query, orderBy, startAt, endAt, getDocs, where, limit
+} from 'firebase/firestore';
 
-function CustomerSearch({ onSelect }) {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [customers, setCustomers] = useState([]);
+export default function DebtLookupDialog({ open, onClose }) {
+  // search + results
+  const [search, setSearch] = useState('');
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
 
+  // selection + details
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [debtLoading, setDebtLoading] = useState(false);
+  const [debtSummary, setDebtSummary] = useState({ newDebt: 0, paid: 0, balance: 0 });
+  const [debtTx, setDebtTx] = useState([]); // recent debt rows
+
+  const lowerSearch = useMemo(() => search.trim().toLowerCase(), [search]);
+
+  // Case variants to make fullName prefix search more forgiving
+  const nameVariants = useMemo(() => {
+    const raw = search.trim();
+    if (!raw) return [];
+    const lower = raw.toLowerCase();
+    const title = lower.replace(/\b\w/g, c => c.toUpperCase());
+    const capFirst = raw.charAt(0).toUpperCase() + raw.slice(1);
+    const seen = new Set();
+    return [raw, lower, title, capFirst].filter(v => v && !seen.has(v) && seen.add(v));
+  }, [search]);
+
+  // Fetch customers only when typing begins
   useEffect(() => {
-    const searchCustomers = async () => {
-      if (typeof searchTerm !== 'string' || searchTerm.trim() === '') {
-        setCustomers([]);
+    let cancelled = false;
+
+    const fetch = async () => {
+      if (!open || lowerSearch.length === 0) {
+        setResults([]);
         return;
       }
-      const lowerCaseSearchTerm = searchTerm.toLowerCase();
-      const customersRef = collection(db, "customers");
-      const q = query(customersRef, where("username", ">=", lowerCaseSearchTerm), where("username", "<=", lowerCaseSearchTerm + '\uf8ff'));
-      const querySnapshot = await getDocs(q);
-      setCustomers(querySnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })));
+      setLoading(true);
+      try {
+        const customersCol = collection(db, 'customers');
+
+        const qUser = query(
+          customersCol,
+          orderBy('username'),
+          startAt(lowerSearch),
+          endAt(`${lowerSearch}\uf8ff`),
+          limit(20)
+        );
+
+        const nameQs = nameVariants.map(nv =>
+          query(customersCol, orderBy('fullName'), startAt(nv), endAt(`${nv}\uf8ff`), limit(20))
+        );
+
+        const [snapUser, ...nameSnaps] = await Promise.all([
+          getDocs(qUser),
+          ...nameQs.map(q => getDocs(q)),
+        ]);
+
+        const map = new Map();
+        snapUser.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
+        nameSnaps.forEach(snap => snap.forEach(d => map.set(d.id, { id: d.id, ...d.data() })));
+
+        const merged = Array.from(map.values());
+        merged.sort((a, b) => (a.username || '').localeCompare(b.username || ''));
+
+        if (!cancelled) setResults(merged.slice(0, 30));
+      } catch (e) {
+        if (!cancelled) setResults([]);
+        console.error('DebtLookup search error:', e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     };
-    const debounceSearch = setTimeout(() => searchCustomers(), 300);
-    return () => clearTimeout(debounceSearch);
-  }, [searchTerm]);
 
-  return (
-    <Box>
-      <TextField
-        autoFocus
-        margin="dense"
-        label="Search by username..."
-        type="text"
-        fullWidth
-        variant="outlined"
-        value={searchTerm}
-        onChange={(e) => setSearchTerm(e.target.value)}
-      />
-      <List sx={{ maxHeight: 200, overflow: 'auto' }}>
-        {(customers || []).map(customer => (
-          <ListItemButton key={customer.id} onClick={() => onSelect(customer)}>
-            <ListItemText primary={customer.fullName} secondary={`@${customer.username}`} />
-          </ListItemButton>
-        ))}
-      </List>
-    </Box>
-  );
-}
+    const t = setTimeout(fetch, 250);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [open, lowerSearch, nameVariants]);
 
-function DebtHistory({ customer }) {
-  const [transactions, setTransactions] = useState([]);
-  const [balance, setBalance] = useState(0);
+  // Load debt details for a selected customer from transactions
+  const loadDebtFor = async (cust) => {
+    setSelectedCustomer(cust);
+    setDebtLoading(true);
+    setDebtSummary({ newDebt: 0, paid: 0, balance: 0 });
+    setDebtTx([]);
 
-  useEffect(() => {
-    if (!customer?.id) return;
+    try {
+      // We assume “transactions” contains both: item === 'New Debt' and item === 'Paid Debt'
+      // and each row stores `customerId`, `customerName`, `total`, `isDeleted`
+      const txCol = collection(db, 'transactions');
 
-    const q = query(
-      collection(db, "transactions"),
-      where("customerId", "==", customer.id),
-      where("item", "in", ["New Debt", "Paid Debt"]),
-      orderBy("timestamp", "desc")
-    );
+      // Get recent debt-related tx for this customer
+      const qRecent = query(
+        txCol,
+        where('customerId', '==', cust.id),
+        where('isDeleted', '==', false),
+        // Fetch more than we need and filter in memory for items of interest
+        orderBy('timestamp', 'desc'),
+        limit(50)
+      );
 
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      const fetchedTransactions = querySnapshot.docs.map(doc => doc.data());
-      setTransactions(fetchedTransactions);
+      const snap = await getDocs(qRecent);
+      const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .filter(r => r.item === 'New Debt' || r.item === 'Paid Debt');
 
-      const calculatedBalance = fetchedTransactions.reduce((bal, tx) => {
-        if (tx.item === 'New Debt') return bal + tx.total;
-        if (tx.item === 'Paid Debt') return bal - tx.total;
-        return bal;
-      }, 0);
-      setBalance(calculatedBalance);
-    });
+      // Summaries
+      const newDebt = rows.filter(r => r.item === 'New Debt').reduce((s, r) => s + Number(r.total || 0), 0);
+      const paid = rows.filter(r => r.item === 'Paid Debt').reduce((s, r) => s + Number(r.total || 0), 0);
+      const balance = newDebt - paid;
 
-    return () => unsubscribe();
-  }, [customer]);
-
-  return (
-    <Box sx={{ mt: 2 }}>
-      <Typography variant="h6">{customer.fullName}</Typography>
-      <Typography variant="h5" color={balance > 0 ? 'error.main' : 'success.main'}>
-        Current Balance: ₱{balance.toFixed(2)}
-      </Typography>
-      <Divider sx={{ my: 2 }} />
-      <Box sx={{ maxHeight: 300, overflowY: 'auto' }}>
-        {(transactions || []).map((tx, index) => (
-          <Paper key={index} sx={{ p: 2, mb: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Box>
-              <Typography fontWeight="bold" color={tx.item === 'New Debt' ? 'error.light' : 'success.light'}>{tx.item}</Typography>
-              <Typography variant="caption" display="block">{tx.timestamp && new Date(tx.timestamp.seconds * 1000).toLocaleString()}</Typography>
-              <Typography variant="caption" display="block" sx={{ fontStyle: 'italic' }}>by: {tx.staffEmail}</Typography>
-            </Box>
-            <Typography variant="h6">{tx.item === 'New Debt' ? '+' : '-'} ₱{tx.total.toFixed(2)}</Typography>
-          </Paper>
-        ))}
-      </Box>
-    </Box>
-  );
-}
-
-function DebtLookupDialog({ open, onClose, initialCustomer = null }) {
-  const [selectedCustomer, setSelectedCustomer] = useState(null);
-
-  useEffect(() => {
-    if (initialCustomer) {
-      setSelectedCustomer(initialCustomer);
+      setDebtSummary({ newDebt, paid, balance });
+      setDebtTx(rows.slice(0, 20)); // show most recent 20
+    } catch (e) {
+      console.error('Debt details error:', e);
+    } finally {
+      setDebtLoading(false);
     }
-  }, [initialCustomer, open]);
+  };
 
   const handleClose = () => {
+    setSearch('');
+    setResults([]);
     setSelectedCustomer(null);
-    onClose();
+    setDebtTx([]);
+    setDebtSummary({ newDebt: 0, paid: 0, balance: 0 });
+    onClose?.();
   };
 
   return (
-    <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
-      <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        Debt Look Up
-        <IconButton edge="end" onClick={handleClose}>
+    <Dialog open={open} onClose={handleClose} fullWidth maxWidth="md">
+      <DialogTitle sx={{ pr: 6 }}>
+        Debt Lookup
+        <IconButton
+          onClick={handleClose}
+          size="small"
+          sx={{ position: 'absolute', right: 8, top: 8 }}
+          aria-label="close"
+        >
           <CloseIcon />
         </IconButton>
       </DialogTitle>
-      <DialogContent>
-        {!selectedCustomer ? (
-          <CustomerSearch onSelect={setSelectedCustomer} />
-        ) : (
-          <DebtHistory customer={selectedCustomer} />
-        )}
+
+      <DialogContent dividers sx={{ pt: 1.5 }}>
+        {/* --- SEARCH SECTION --- */}
+        <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+          <Typography variant="subtitle2" sx={{ mb: 3, opacity: 0.85 }}>
+            Search
+          </Typography>
+
+          <TextField
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            fullWidth
+            size="small"
+            placeholder="Search by username or name…"
+          />
+
+          {search.trim().length > 0 && (
+            <Box sx={{ maxHeight: 240, overflowY: 'auto', mt: 1 }}>
+              {loading && <Typography variant="body2">Searching…</Typography>}
+              {!loading && results.length === 0 && (
+                <Typography variant="body2">No customers found.</Typography>
+              )}
+              {!loading && results.length > 0 && (
+                <List dense>
+                  {results.map((c) => (
+                    <ListItemButton key={c.id} onClick={() => loadDebtFor(c)}>
+                      <ListItemText
+                        primary={c.fullName || c.username}
+                        secondary={c.username && c.fullName ? c.username : undefined}
+                      />
+                    </ListItemButton>
+                  ))}
+                </List>
+              )}
+            </Box>
+          )}
+        </Paper>
+
+        {/* --- DETAILS SECTION --- */}
+        <Paper variant="outlined" sx={{ p: 2 }}>
+          <Typography variant="subtitle2" sx={{ mb: 3, opacity: 0.85 }}>
+            Details
+          </Typography>
+
+          {!selectedCustomer && (
+            <Typography variant="body2" sx={{ opacity: 0.8 }}>
+              Select a customer from the search results to see their debt summary.
+            </Typography>
+          )}
+
+          {selectedCustomer && (
+            <>
+              <Stack
+                direction={{ xs: 'column', sm: 'row' }}
+                spacing={2}
+                sx={{ mb: 2, alignItems: { xs: 'flex-start', sm: 'center' } }}
+              >
+                <Box>
+                  <Typography variant="h6" sx={{ lineHeight: 1.2 }}>
+                    {selectedCustomer.fullName || selectedCustomer.username}
+                  </Typography>
+                  {selectedCustomer.fullName && selectedCustomer.username && (
+                    <Typography variant="body2" sx={{ opacity: 0.8 }}>
+                      {selectedCustomer.username}
+                    </Typography>
+                  )}
+                </Box>
+
+                <Box sx={{ flexGrow: 1 }} />
+
+                <Stack direction="row" spacing={3}>
+                  <Box>
+                    <Typography variant="caption" sx={{ opacity: 0.75 }}>New Debt</Typography>
+                    <Typography variant="h6">₱{debtSummary.newDebt.toFixed(2)}</Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" sx={{ opacity: 0.75 }}>Paid</Typography>
+                    <Typography variant="h6">₱{debtSummary.paid.toFixed(2)}</Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" sx={{ opacity: 0.75 }}>Balance</Typography>
+                    <Typography variant="h6" color={debtSummary.balance > 0 ? 'error' : 'success.main'}>
+                      ₱{debtSummary.balance.toFixed(2)}
+                    </Typography>
+                  </Box>
+                </Stack>
+              </Stack>
+
+              <Divider sx={{ my: 1.5 }} />
+
+              <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                Recent Debt Transactions
+              </Typography>
+
+              {debtLoading && <Typography variant="body2">Loading…</Typography>}
+              {!debtLoading && debtTx.length === 0 && (
+                <Typography variant="body2" sx={{ opacity: 0.8 }}>No recent debt transactions.</Typography>
+              )}
+
+              {!debtLoading && debtTx.length > 0 && (
+                <Box sx={{ maxHeight: 280, overflowY: 'auto' }}>
+                  <List dense>
+                    {debtTx.map(tx => (
+                      <ListItemButton key={tx.id} disableRipple>
+                        <ListItemText
+                          primary={`${tx.item} • ₱${Number(tx.total || 0).toFixed(2)}`}
+                          secondary={
+                            tx.timestamp?.seconds
+                              ? new Date(tx.timestamp.seconds * 1000).toLocaleString()
+                              : ''
+                          }
+                        />
+                      </ListItemButton>
+                    ))}
+                  </List>
+                </Box>
+              )}
+            </>
+          )}
+        </Paper>
       </DialogContent>
     </Dialog>
   );
 }
-
-export default DebtLookupDialog;

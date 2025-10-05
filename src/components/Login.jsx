@@ -1,87 +1,148 @@
-import React, { useState } from 'react';
-import { Box, Card, TextField, Select, MenuItem, Button, FormControl, InputLabel, IconButton, InputAdornment, Dialog, DialogTitle, DialogContent, DialogActions, Stack } from '@mui/material';
-import { Visibility, VisibilityOff } from '@mui/icons-material';
+// src/components/Login.jsx
+import React, { useState } from "react";
+import {
+  Box,
+  Card,
+  Typography,
+  TextField,
+  InputAdornment,
+  IconButton,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Select,
+  Button,
+  Tooltip,
+} from "@mui/material";
+import Visibility from "@mui/icons-material/Visibility";
+import VisibilityOff from "@mui/icons-material/VisibilityOff";
+import ShieldPerson from "@mui/icons-material/AdminPanelSettings";
 
-function Login({ onLogin, onAdminLogin }) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [shift, setShift] = useState('');
+const SHIFT_OPTIONS = ["Morning", "Afternoon", "Evening"];
+
+export default function Login({ onLogin, onAdminLogin }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [shiftPeriod, setShiftPeriod] = useState(SHIFT_OPTIONS[0]);
   const [showPassword, setShowPassword] = useState(false);
-  const [adminLoginOpen, setAdminLoginOpen] = useState(false);
 
-  const handleSubmit = (event) => {
-    event.preventDefault();
-    if (!shift) {
-      alert("Please select a shift period.");
-      return;
+  // subtle admin toggle (no large “login as admin” link)
+  const [adminMode, setAdminMode] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (adminMode) {
+      await onAdminLogin(email, password);
+    } else {
+      await onLogin(email, password, shiftPeriod);
     }
-    onLogin(email, password, shift);
   };
-
-  const handleAdminSubmit = (event) => {
-    event.preventDefault();
-    onAdminLogin(email, password);
-    setAdminLoginOpen(false);
-  };
-
-  const handleClickShowPassword = () => setShowPassword((show) => !show);
-  const handleMouseDownPassword = (event) => { event.preventDefault(); };
 
   return (
-    <>
-      <Card sx={{ padding: 4, width: '100%', maxWidth: 400 }}>
-        <Box component="form" onSubmit={handleSubmit} sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
-            <img src="/logo.png" alt="Print+Play Logo" style={{ width: '150px' }} />
-          </Box>
-          <TextField label="Email" variant="outlined" value={email} onChange={(e) => setEmail(e.target.value)} required />
-          <TextField 
-            label="Password" 
-            variant="outlined" 
-            type={showPassword ? 'text' : 'password'} 
-            value={password} 
-            onChange={(e) => setPassword(e.target.value)} 
-            required 
-            InputProps={{
-              endAdornment: (
-                <InputAdornment position="end">
-                  <IconButton aria-label="toggle password visibility" onClick={handleClickShowPassword} onMouseDown={handleMouseDownPassword} edge="end" color="default" sx={{ opacity: 0.7 }}>
-                    {showPassword ? <VisibilityOff /> : <Visibility />}
-                  </IconButton>
-                </InputAdornment>
-              )
-            }}
-          />
+    <Card
+      sx={{
+        width: 480,
+        maxWidth: "92vw",
+        p: 3,
+        position: "relative",
+      }}
+      elevation={6}
+    >
+      {/* subtle admin toggle icon in the corner */}
+      <Tooltip title={adminMode ? "Switch to staff login" : "Login as super admin"}>
+        <IconButton
+          size="small"
+          onClick={() => setAdminMode((v) => !v)}
+          sx={{ position: "absolute", top: 8, right: 8 }}
+        >
+          <ShieldPerson fontSize="small" />
+        </IconButton>
+      </Tooltip>
+
+      <Box sx={{ display: "flex", justifyContent: "center", mb: 1 }}>
+        <Box
+          sx={{
+            width: 64,
+            height: 64,
+            borderRadius: "50%",
+            border: "2px solid",
+            borderColor: "primary.main",
+            display: "grid",
+            placeItems: "center",
+            fontSize: 28,
+          }}
+        >
+          ⚛
+        </Box>
+      </Box>
+
+      <Typography align="center" variant="h5" gutterBottom>
+        Print+Play
+      </Typography>
+
+      {/* No pre-auth shift status check here (Option B) */}
+
+      <Box component="form" onSubmit={handleSubmit} sx={{ mt: 2, display: "grid", gap: 2 }}>
+        <TextField
+          label="Email"
+          type="email"
+          value={email}
+          autoComplete="username"
+          onChange={(e) => setEmail(e.target.value)}
+          fullWidth
+          required
+        />
+
+        <TextField
+          label="Password"
+          type={showPassword ? "text" : "password"}
+          value={password}
+          autoComplete="current-password"
+          onChange={(e) => setPassword(e.target.value)}
+          fullWidth
+          required
+          InputProps={{
+            endAdornment: (
+              <InputAdornment position="end">
+                <IconButton
+                  onClick={() => setShowPassword((s) => !s)}
+                  edge="end"
+                  aria-label="toggle password visibility"
+                >
+                  {showPassword ? <VisibilityOff /> : <Visibility />}
+                </IconButton>
+              </InputAdornment>
+            ),
+          }}
+        />
+
+        {!adminMode && (
           <FormControl fullWidth required>
             <InputLabel>Shift Period</InputLabel>
-            <Select value={shift} label="Shift Period" onChange={(e) => setShift(e.target.value)}>
-              <MenuItem value="Morning">Morning</MenuItem>
-              <MenuItem value="Afternoon">Afternoon</MenuItem>
-              <MenuItem value="Evening">Evening</MenuItem>
+            <Select
+              label="Shift Period"
+              value={shiftPeriod}
+              onChange={(e) => setShiftPeriod(e.target.value)}
+            >
+              {SHIFT_OPTIONS.map((opt) => (
+                <MenuItem key={opt} value={opt}>
+                  {opt}
+                </MenuItem>
+              ))}
             </Select>
           </FormControl>
-          <Button variant="contained" type="submit" sx={{ mt: 2 }}>Start Shift</Button>
-          <Button variant="text" size="small" sx={{ mt: 1 }} onClick={() => setAdminLoginOpen(true)}>Login as Super Admin</Button>
-        </Box>
-      </Card>
+        )}
 
-      <Dialog open={adminLoginOpen} onClose={() => setAdminLoginOpen(false)}>
-        <DialogTitle>Super Admin Login</DialogTitle>
-        <Box component="form" onSubmit={handleAdminSubmit}>
-          <DialogContent>
-            <Stack spacing={2} sx={{ pt: 1 }}>
-              <TextField label="Admin Email" variant="outlined" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
-              <TextField label="Password" type="password" variant="outlined" value={password} onChange={(e) => setPassword(e.target.value)} required />
-            </Stack>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setAdminLoginOpen(false)}>Cancel</Button>
-            <Button type="submit">Login</Button>
-          </DialogActions>
-        </Box>
-      </Dialog>
-    </>
+        <Button
+          type="submit"
+          variant="contained"
+          disabled={!email || !password || (!adminMode && !shiftPeriod)}
+          sx={{ mt: 1 }}
+          fullWidth
+        >
+          {adminMode ? "LOGIN AS SUPER ADMIN" : "START SHIFT"}
+        </Button>
+      </Box>
+    </Card>
   );
 }
-
-export default Login;

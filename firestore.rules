@@ -1,0 +1,84 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- helpers ----------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin';
+    }
+
+    // ---------- public doc needed at login ----------
+    // The login screen needs to read this BEFORE auth.
+    match /app_status/current_shift {
+      // Allow anyone to read the current shift status.
+      allow read: if true;
+
+      // Writes only by signed-in users who either:
+      //  - are superadmin, OR
+      //  - set/clear a lock for themselves (staffEmail == their email)
+      allow write: if isSignedIn() && (
+        isAdmin() ||
+        (request.resource.data.staffEmail == request.auth.token.email)
+      );
+    }
+
+    // ---------- users ----------
+    match /users/{uid} {
+      // Let signed-in users read user docs (for role checks, staff lists, etc.)
+      allow read: if isSignedIn();
+
+      // A user can write their own doc; admins can write any.
+      allow write: if isSignedIn() && (
+        uid == request.auth.uid || isAdmin()
+      );
+    }
+
+    // ---------- shifts ----------
+    match /shifts/{shiftId} {
+      // Staff and admins can read shifts
+      allow read: if isSignedIn();
+
+      // Staff can create a shift for themselves
+      allow create: if isSignedIn() &&
+        request.resource.data.staffEmail == request.auth.token.email;
+
+      // Staff can update their own shift; admins can update any
+      allow update: if isSignedIn() && (
+        resource.data.staffEmail == request.auth.token.email || isAdmin()
+      );
+    }
+
+    // ---------- transactions ----------
+    match /transactions/{txId} {
+      // App shows transactions only to signed-in users
+      allow read: if isSignedIn();
+
+      // Staff and admins create/update (soft-delete, edits)
+      allow create, update: if isSignedIn();
+    }
+
+    // ---------- services ----------
+    match /services/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ---------- customers ----------
+    match /customers/{id} {
+      // Staff search & add customers during a shift
+      allow read, write: if isSignedIn();
+    }
+
+    // ---------- expenses ----------
+    match /expenses/{id} {
+      // Staff logs expenses; admins manage/report
+      allow read, write: if isSignedIn();
+    }
+  }
+}
