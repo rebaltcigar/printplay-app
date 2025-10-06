@@ -46,6 +46,8 @@ import {
   serverTimestamp,
   deleteDoc,
   Timestamp,
+  getDoc,     // NEW
+  setDoc,     // NEW
 } from "firebase/firestore";
 
 /* ----------------- helpers ----------------- */
@@ -67,6 +69,24 @@ const currency = (n) => `₱${Number(n || 0).toFixed(2)}`;
 const LiveDot = ({ color = "success.main", size = 10 }) => (
   <FiberManualRecordIcon sx={{ color, fontSize: size }} />
 );
+
+/** Clear the global shift lock if it points to the given shiftId */
+async function clearShiftLockIfMatches(shiftId, endedByEmail) {
+  const statusRef = doc(db, "app_status", "current_shift");
+  const snap = await getDoc(statusRef);
+  const data = snap.exists() ? snap.data() : null;
+  if (data?.activeShiftId === shiftId) {
+    await setDoc(
+      statusRef,
+      {
+        activeShiftId: null,
+        endedBy: endedByEmail || "admin",
+        endedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+  }
+}
 
 /* ----------------- component ----------------- */
 export default function AdminHome() {
@@ -283,9 +303,15 @@ export default function AdminHome() {
     if (!shift?.id) return;
     if (!window.confirm("Force end this shift now?")) return;
     try {
+      const endedBy = auth.currentUser?.email || "admin";
+      // 1) mark shift as ended (and who ended it)
       await updateDoc(doc(db, "shifts", shift.id), {
         endTime: Timestamp.fromDate(new Date()),
+        endedBy,
+        status: "ended",
       });
+      // 2) clear global lock if it still points at this shift
+      await clearShiftLockIfMatches(shift.id, endedBy);
       setLastWrite(new Date());
     } catch (e) {
       console.error(e);
@@ -794,8 +820,7 @@ function StaffLeaderboard({ transactions }) {
                 </TableCell>
                 <TableCell align="right">{currency(r.sales)}</TableCell>
                 <TableCell align="right" sx={{ display: { xs: "none", sm: "table-cell" } }}>
-                  {currency(r.expenses)}
-                </TableCell>
+                  {currency(r.expenses)}</TableCell>
                 <TableCell align="right">{currency(r.revenue)}</TableCell>
               </TableRow>
             ))

@@ -6,7 +6,8 @@ import {
   TableBody, TableRow, TableCell, TableContainer, Collapse, Menu as MuiMenu, useMediaQuery
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import MenuIcon from '@mui/icons-material/Menu'; // NEW (mobile)
+import MenuIcon from '@mui/icons-material/Menu';
+import LogoutIcon from '@mui/icons-material/Logout';
 import EditIcon from '@mui/icons-material/Edit';
 import HistoryIcon from '@mui/icons-material/History';
 import ClearIcon from '@mui/icons-material/Clear';
@@ -89,15 +90,37 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
   const controlsRef = useRef(null);
   const [menuAnchor, setMenuAnchor] = useState(null); // hamburger menu
 
+  // NEW: staff name dropdown anchor (for hidden logout)
+  const [staffMenuAnchor, setStaffMenuAnchor] = useState(null);
+
+  // --- LOGOUT (no DB writes, no shift changes) ---
+  const handleLogoutOnly = () => {
+    try {
+      auth.signOut(); // pure sign-out; does not touch Firestore
+    } catch (e) {
+      console.error('Logout failed:', e);
+    }
+  };
+
+  // ---------- Polished MUI popups (replace window.*) ----------
+  // Generic error dialog
+  const [errorDialog, setErrorDialog] = useState({ open: false, message: '' });
+  const showError = (message) => setErrorDialog({ open: true, message });
+
+  // Delete Selected dialog (reason + confirm)
+  const [deleteDialog, setDeleteDialog] = useState({ open: false, reason: '' });
+
+  // Edit reason dialog (when updating an entry)
+  const [editReasonDialog, setEditReasonDialog] = useState({ open: false, reason: '' });
+  const [pendingEditData, setPendingEditData] = useState(null); // holds transactionData while we ask for reason
+
   // Auto-open controls & scroll up when editing on mobile
   const openControlsAndScroll = () => {
     setControlsOpen(true);
-    // Wait for Collapse to expand, then scroll
     setTimeout(() => {
       controlsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      // Focus the first field
       itemInputRef.current?.focus?.();
-    }, 220); // matches Collapse default transition (~200ms)
+    }, 220);
   };
 
   /* ---------- Load shift start (for the header timer) ---------- */
@@ -117,7 +140,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     return () => unsub();
   }, [activeShiftId]);
 
-  // Tick the elapsed time based on saved shiftStart (persists across reloads)
+  // Tick the elapsed time
   useEffect(() => {
     if (!shiftStart) return;
     const id = setInterval(() => {
@@ -131,7 +154,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     return () => clearInterval(id);
   }, [shiftStart]);
 
-  /* ---------- Load Staff list (for Salary/S. Advance) ---------- */
+  /* ---------- Load Staff list ---------- */
   useEffect(() => {
     const loadStaff = async () => {
       try {
@@ -154,7 +177,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     loadStaff();
   }, []);
 
-  // Resolve header staff name (prefer users.fullName by current email)
+  // Resolve header staff name
   useEffect(() => {
     let isMounted = true;
     (async () => {
@@ -212,7 +235,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
       setSelectedCustomer(null);
     }
 
-    // Focus & auto-open controls on mobile
     if (isMobile) openControlsAndScroll();
     else setTimeout(() => itemInputRef.current?.focus?.(), 0);
   }, [currentlyEditing, isMobile]);
@@ -246,27 +268,35 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
   const handleEndShiftClick = () => setOpenEndShiftDialog(true);
   const handleCloseDialog = () => setOpenEndShiftDialog(false);
 
-  const handleDeleteSelected = async () => {
+  // --- Delete selected -> open dialog instead of confirm/prompt ---
+  const handleDeleteSelected = () => {
     if (selectedTransactions.length === 0) return;
-    const reason = window.prompt("Please provide a reason for deleting these entries:");
-    if (!reason) return alert("Deletion cancelled. A reason is required.");
-    if (window.confirm(`Are you sure you want to delete ${selectedTransactions.length} selected entries?`)) {
-      try {
-        const batch = writeBatch(db);
-        selectedTransactions.forEach(id => {
-          const docRef = doc(db, "transactions", id);
-          batch.update(docRef, {
-            isDeleted: true,
-            deletedAt: serverTimestamp(),
-            deletedBy: user.email,
-            deleteReason: reason
-          });
+    setDeleteDialog({ open: true, reason: '' });
+  };
+
+  const performDeleteSelected = async () => {
+    const reason = (deleteDialog.reason || '').trim();
+    if (!reason) {
+      showError('A reason is required to delete entries.');
+      return;
+    }
+    try {
+      const batch = writeBatch(db);
+      selectedTransactions.forEach(id => {
+        const docRef = doc(db, "transactions", id);
+        batch.update(docRef, {
+          isDeleted: true,
+          deletedAt: serverTimestamp(),
+          deletedBy: user.email,
+          deleteReason: reason
         });
-        await batch.commit();
-        setSelectedTransactions([]);
-      } catch (error) {
-        console.error("Error performing soft delete: ", error);
-      }
+      });
+      await batch.commit();
+      setSelectedTransactions([]);
+      setDeleteDialog({ open: false, reason: '' });
+    } catch (error) {
+      console.error("Error performing soft delete: ", error);
+      showError('Failed to delete the selected entries.');
     }
   };
 
@@ -286,21 +316,21 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
   const handleTransactionSubmit = async (event) => {
     event.preventDefault();
 
-    // Expense policy validations
+    // --- validations (use error dialog instead of alert) ---
     if (item === 'Expenses') {
-      if (!expenseType) return alert('Please select an expense type.');
+      if (!expenseType) return showError('Please select an expense type.');
       if (!isAdmin && expenseType === 'Misc' && !String(notes || '').trim()) {
-        return alert('Notes are required when expense type is “Misc”.');
+        return showError('Notes are required when expense type is “Misc”.');
       }
       if ((expenseType === 'Salary' || expenseType === 'Salary Advance') && !expenseStaffId) {
-        return alert('Please select a staff for Salary or Salary Advance.');
+        return showError('Please select a staff for Salary or Salary Advance.');
       }
       if (!isAdmin && !EXPENSE_TYPES_STAFF.includes(expenseType)) {
-        return alert('This expense type is not allowed for staff.');
+        return showError('This expense type is not allowed for staff.');
       }
     }
     if (isDebtItem && !selectedCustomer && !currentlyEditing) {
-      return alert("Please select a customer for this transaction.");
+      return showError('Please select a customer for this transaction.');
     }
 
     const transactionData = {
@@ -318,55 +348,29 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     };
 
     if (currentlyEditing) {
-      const reason = window.prompt("Please provide a reason for this edit:");
-      if (!reason) return alert("Update cancelled. A reason is required.");
-      try {
-        const transactionRef = doc(db, "transactions", currentlyEditing.id);
-        const historyRef = collection(transactionRef, "editHistory");
-        await addDoc(historyRef, {
-          previousData: {
-            item: currentlyEditing.item,
-            expenseType: currentlyEditing.expenseType || null,
-            expenseStaffId: currentlyEditing.expenseStaffId || null,
-            expenseStaffName: currentlyEditing.expenseStaffName || null,
-            expenseStaffEmail: currentlyEditing.expenseStaffEmail || null,
-            quantity: currentlyEditing.quantity,
-            price: currentlyEditing.price,
-            total: currentlyEditing.total,
-            notes: currentlyEditing.notes
-          },
-          updatedAt: serverTimestamp(),
-          updatedBy: user.email,
-          updateReason: reason
-        });
-        await updateDoc(transactionRef, {
-          ...transactionData,
-          isEdited: true,
-          lastUpdatedAt: serverTimestamp()
-        });
-      } catch (error) {
-        console.error("Error updating transaction: ", error);
-        alert("Error updating transaction.");
-      }
-    } else {
-      const newTransactionData = {
-        ...transactionData,
-        shiftId: activeShiftId,
-        timestamp: serverTimestamp(),
-        staffEmail: user.email,
-        isDeleted: false,
-        isEdited: false
-      };
-      try {
-        await addDoc(collection(db, "transactions"), newTransactionData);
-      } catch (error) {
-        console.error("Error adding transaction: ", error);
-        alert("Error saving transaction.");
-      }
+      // Open reason dialog; perform update after confirmation
+      setPendingEditData(transactionData);
+      setEditReasonDialog({ open: true, reason: '' });
+      return;
     }
-    clearForm();
-    // On small screens, collapse the controls after adding (keeps things tidy)
-    if (isMobile) setControlsOpen(false);
+
+    // New entry
+    const newTransactionData = {
+      ...transactionData,
+      shiftId: activeShiftId,
+      timestamp: serverTimestamp(),
+      staffEmail: user.email,
+      isDeleted: false,
+      isEdited: false
+    };
+    try {
+      await addDoc(collection(db, "transactions"), newTransactionData);
+      clearForm();
+      if (isMobile) setControlsOpen(false);
+    } catch (error) {
+      console.error("Error adding transaction: ", error);
+      showError('Error saving transaction.');
+    }
   };
 
   const handleSelectCustomer = (customer) => {
@@ -419,11 +423,11 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     return servicesTotal - expensesTotal + pcRentalNum;
   }, [servicesTotal, expensesTotal, pcRentalNum]);
 
-  // Detailed breakdowns for End Shift & Receipt (sales here EXCLUDE PC rental; we show PC rental separately)
+  // Detailed breakdowns for dialogs
   const salesBreakdown = useMemo(() => {
     const m = new Map();
     transactions.forEach(tx => {
-      if (tx.item === 'Expenses' || tx.item === 'New Debt') return; // not sales
+      if (tx.item === 'Expenses' || tx.item === 'New Debt') return;
       const key = tx.item || '—';
       m.set(key, (m.get(key) || 0) + Number(tx.total || 0));
     });
@@ -455,7 +459,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
 
   const handleConfirmEndShift = async () => {
     if (pcRental === '') {
-      alert('Enter PC Rental total.');
+      showError('Enter PC Rental total.');
       return;
     }
     const summary = {
@@ -474,7 +478,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
       setShowReceipt(true);
     } catch (e) {
       console.error(e);
-      alert('Failed to end shift.');
+      showError('Failed to end shift.');
     }
   };
 
@@ -496,12 +500,34 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         <Toolbar sx={{ gap: 1 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <img src={logo} alt="logo" width={20} height={20} />
-            <Typography variant="subtitle2" sx={{ opacity: 0.9 }}>
-              {staffDisplayName} ({shiftPeriod} Shift) | {elapsed}
-            </Typography>
+            {/* Staff name -> dropdown trigger */}
+            <Box
+              onClick={(e) => setStaffMenuAnchor(e.currentTarget)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setStaffMenuAnchor(e.currentTarget);
+                }
+              }}
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                cursor: 'pointer',
+                userSelect: 'none',
+              }}
+              aria-haspopup="menu"
+              aria-controls={staffMenuAnchor ? 'staff-menu' : undefined}
+              aria-expanded={Boolean(staffMenuAnchor)}
+            >
+              <Typography variant="subtitle2" sx={{ opacity: 0.9 }}>
+                {staffDisplayName} ({shiftPeriod} Shift) | {elapsed}
+              </Typography>
+            </Box>
           </Box>
 
-          {/* Desktop buttons unchanged; mobile gets hamburger */}
+          {/* Desktop actions */}
           <Box sx={{ ml: 'auto', display: { xs: 'none', sm: 'flex' }, gap: 1 }}>
             <Button size="small" variant="outlined" onClick={() => { setPresetCustomer(null); setOpenDebtDialog(true); }}>
               Debt Lookup
@@ -511,7 +537,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             </Button>
           </Box>
 
-          {/* NEW (mobile): hamburger menu */}
+          {/* Mobile actions */}
           <IconButton
             sx={{ ml: 'auto', display: { xs: 'inline-flex', sm: 'none' } }}
             onClick={(e) => setMenuAnchor(e.currentTarget)}
@@ -527,6 +553,26 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             <MenuItem onClick={() => { setMenuAnchor(null); setPresetCustomer(null); setOpenDebtDialog(true); }}>Debt Lookup</MenuItem>
             <MenuItem onClick={() => { setMenuAnchor(null); handleEndShiftClick(); }}>End Shift</MenuItem>
           </MuiMenu>
+
+          {/* Staff dropdown (hidden logout) */}
+          <MuiMenu
+            id="staff-menu"
+            anchorEl={staffMenuAnchor}
+            open={Boolean(staffMenuAnchor)}
+            onClose={() => setStaffMenuAnchor(null)}
+          >
+            <MenuItem
+              onClick={() => {
+                setStaffMenuAnchor(null);
+                handleLogoutOnly();
+              }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <LogoutIcon fontSize="small" />
+                Logout
+              </Box>
+            </MenuItem>
+          </MuiMenu>
         </Toolbar>
       </AppBar>
 
@@ -540,11 +586,10 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
           p: 2,
           width: '100%',
           alignItems: 'stretch',
-          // NEW (mobile): stack vertically on mobile
           flexDirection: { xs: 'column', sm: 'row' },
         }}
       >
-        {/* LEFT: controls (card on desktop, collapsible on mobile) */}
+        {/* LEFT: controls */}
         <Box
           ref={controlsRef}
           sx={{
@@ -564,7 +609,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             </Button>
           </Stack>
 
-          {/* Desktop: always visible card. Mobile: collapsible. */}
+          {/* Form card */}
           <Collapse in={controlsOpen} timeout="auto" collapsedSize={0} unmountOnExit={false} sx={{ display: { xs: 'block', sm: 'block' } }}>
             <Card
               sx={{
@@ -572,11 +617,9 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 2,
-                // tighter spacing on mobile
                 '& .MuiFormControl-root, & .MuiTextField-root': { my: { xs: 0, sm: 0 } },
               }}
             >
-              {/* Keep the visible header only on desktop to avoid duplicates */}
               <Typography variant="subtitle1" fontWeight={600} sx={{ display: { xs: 'none', sm: 'block' }}}>
                 Log Entry
               </Typography>
@@ -662,7 +705,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
                 onChange={(e) => setNotes(e.target.value)}
               />
 
-              {/* Add / Cancel buttons right after Notes */}
+              {/* Add / Cancel */}
               <Stack direction="row" spacing={1}>
                 <Button
                   onClick={handleTransactionSubmit}
@@ -690,7 +733,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
               <Box sx={{ flexGrow: 1 }} />
               <Tooltip title={tableDisabled ? "Finish editing to delete" : "Delete Selected"}>
                 <Box component="span" sx={{ display: { xs: 'none', sm: 'inline-block' } }}>
-                  {/* Hide the delete button on xs to reduce clutter; keep behavior same on web */}
                   <Button
                     size="small"
                     variant="outlined"
@@ -716,7 +758,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
                 stickyHeader
                 size="small"
                 sx={{
-                  // NEW (mobile): compact cells
                   '& th, & td': {
                     py: { xs: 0.5, sm: 1 },
                     px: { xs: 0.75, sm: 1.5 },
@@ -767,7 +808,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
                           {tx.notes && <Tooltip title={tx.notes}><CommentIcon fontSize="inherit" /></Tooltip>}
                           {tx.isEdited && <Tooltip title="Edited"><HistoryIcon fontSize="inherit" /></Tooltip>}
                         </Box>
-                        {/* On mobile, show Identifier under Item to save a column */}
                         <Typography
                           variant="caption"
                           sx={{ display: { xs: 'block', sm: 'none' }, opacity: 0.8 }}
@@ -797,7 +837,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
               </Table>
             </TableContainer>
 
-            {/* NEW (mobile): a lean delete button below table to keep feature parity without crowding header */}
+            {/* mobile delete button */}
             <Box sx={{ display: { xs: 'flex', sm: 'none' }, mt: 1 }}>
               <Button
                 size="small"
@@ -814,12 +854,11 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         </Paper>
       </Box>
 
-      {/* End Shift dialog (with full breakdown) */}
+      {/* End Shift dialog */}
       <Dialog open={openEndShiftDialog} onClose={handleCloseDialog} fullWidth maxWidth="sm">
         <DialogTitle>End of Shift</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
-            {/* PC Rental first */}
             <TextField
               autoFocus
               label="PC Rental Total"
@@ -830,7 +869,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
               fullWidth
             />
 
-            {/* Sales (credits/incoming) - PC rental is shown separately but included in Total Sales below */}
             <Typography variant="subtitle2" sx={{ mt: 1 }}>Sales</Typography>
             {salesBreakdown.length === 0 && (
               <Typography variant="body2" sx={{ opacity: 0.7 }}>No sales entries.</Typography>
@@ -844,7 +882,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
 
             <Divider />
 
-            {/* Expenses */}
             <Typography variant="subtitle2">Expenses</Typography>
             {expensesBreakdown.length === 0 && (
               <Typography variant="body2" sx={{ opacity: 0.7 }}>No expense entries.</Typography>
@@ -858,7 +895,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
 
             <Divider />
 
-            {/* Totals */}
             <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
               <Typography>Total Sales</Typography>
               <Typography>₱{salesTotalWithPc.toFixed(2)}</Typography>
@@ -882,7 +918,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         </DialogActions>
       </Dialog>
 
-      {/* Receipt (with full breakdown) */}
+      {/* Receipt */}
       <Dialog open={showReceipt} onClose={() => {}} fullWidth maxWidth="xs">
         <DialogTitle>Shift Summary Receipt</DialogTitle>
         <DialogContent dividers>
@@ -891,13 +927,11 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             {shiftPeriod} Shift — {receiptData?.endTime?.toLocaleDateString?.() || new Date().toLocaleDateString()}
           </Typography>
 
-          {/* PC Rental */}
           <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
             <Typography>PC Rental</Typography>
             <Typography>₱{pcRentalNum.toFixed(2)}</Typography>
           </Box>
 
-          {/* Sales */}
           <Typography variant="subtitle2" sx={{ mt: 1 }}>Sales</Typography>
           {salesBreakdown.length === 0 && (
             <Typography variant="body2" sx={{ opacity: 0.7 }}>No sales entries.</Typography>
@@ -911,7 +945,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
 
           <Divider sx={{ my: 2 }} />
 
-          {/* Expenses */}
           <Typography variant="subtitle2">Expenses</Typography>
           {expensesBreakdown.length === 0 && (
             <Typography variant="body2" sx={{ opacity: 0.7 }}>No expense entries.</Typography>
@@ -925,7 +958,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
 
           <Divider sx={{ my: 2 }} />
 
-          {/* Totals */}
           <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
             <Typography>Total Sales</Typography>
             <Typography>₱{salesTotalWithPc.toFixed(2)}</Typography>
@@ -948,7 +980,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
               try {
                 await setDoc(doc(db, 'app_status', 'current_shift'), { activeShiftId: null, staffEmail: user.email }, { merge: true });
               } catch {}
-              auth.signOut(); // exits to login
+              auth.signOut();
             }}
           >
             Close & Logout
@@ -956,6 +988,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         </DialogActions>
       </Dialog>
 
+      {/* Customer picker */}
       <CustomerDialog
         open={openCustomerDialog}
         onClose={() => setOpenCustomerDialog(false)}
@@ -963,13 +996,112 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         user={user}
       />
 
-      {/* Read-only debt lookup for staff */}
+      {/* Read-only debt lookup */}
       <StaffDebtLookupDialog
         open={openDebtDialog}
         onClose={() => setOpenDebtDialog(false)}
         presetCustomer={presetCustomer}
         selectToken={selectToken}
       />
+
+      {/* --------- Reusable Dialogs (polished replacements) --------- */}
+
+      {/* Error dialog */}
+      <Dialog open={errorDialog.open} onClose={() => setErrorDialog({ open: false, message: '' })} maxWidth="xs" fullWidth>
+        <DialogTitle>Error</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">{errorDialog.message}</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setErrorDialog({ open: false, message: '' })} autoFocus>OK</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Selected dialog */}
+      <Dialog open={deleteDialog.open} onClose={() => setDeleteDialog({ open: false, reason: '' })} maxWidth="xs" fullWidth>
+        <DialogTitle>Delete Selected</DialogTitle>
+        <DialogContent sx={{ display: 'grid', gap: 2 }}>
+          <Typography variant="body2">
+            You are about to delete <b>{selectedTransactions.length}</b> entr{selectedTransactions.length === 1 ? 'y' : 'ies'}.
+            This is a soft delete and can be audited later.
+          </Typography>
+          <TextField
+            label="Reason (required)"
+            value={deleteDialog.reason}
+            onChange={(e) => setDeleteDialog(d => ({ ...d, reason: e.target.value }))}
+            fullWidth
+            autoFocus
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialog({ open: false, reason: '' })}>Cancel</Button>
+          <Button color="error" variant="contained" onClick={performDeleteSelected}>Delete</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Edit reason dialog */}
+      <Dialog open={editReasonDialog.open} onClose={() => setEditReasonDialog({ open: false, reason: '' })} maxWidth="xs" fullWidth>
+        <DialogTitle>Reason for Edit</DialogTitle>
+        <DialogContent sx={{ display: 'grid', gap: 2 }}>
+          <Typography variant="body2">
+            Please provide a brief reason for updating this entry.
+          </Typography>
+          <TextField
+            label="Reason (required)"
+            value={editReasonDialog.reason}
+            onChange={(e) => setEditReasonDialog(d => ({ ...d, reason: e.target.value }))}
+            fullWidth
+            autoFocus
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditReasonDialog({ open: false, reason: '' })}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={async () => {
+              const reason = (editReasonDialog.reason || '').trim();
+              if (!reason) {
+                showError('A reason is required to update this entry.');
+                return;
+              }
+              try {
+                const transactionRef = doc(db, "transactions", currentlyEditing.id);
+                const historyRef = collection(transactionRef, "editHistory");
+                await addDoc(historyRef, {
+                  previousData: {
+                    item: currentlyEditing.item,
+                    expenseType: currentlyEditing.expenseType || null,
+                    expenseStaffId: currentlyEditing.expenseStaffId || null,
+                    expenseStaffName: currentlyEditing.expenseStaffName || null,
+                    expenseStaffEmail: currentlyEditing.expenseStaffEmail || null,
+                    quantity: currentlyEditing.quantity,
+                    price: currentlyEditing.price,
+                    total: currentlyEditing.total,
+                    notes: currentlyEditing.notes
+                  },
+                  updatedAt: serverTimestamp(),
+                  updatedBy: user.email,
+                  updateReason: reason
+                });
+                await updateDoc(transactionRef, {
+                  ...pendingEditData,
+                  isEdited: true,
+                  lastUpdatedAt: serverTimestamp()
+                });
+                setEditReasonDialog({ open: false, reason: '' });
+                setPendingEditData(null);
+                clearForm();
+                if (isMobile) setControlsOpen(false);
+              } catch (error) {
+                console.error("Error updating transaction: ", error);
+                showError('Error updating transaction.');
+              }
+            }}
+          >
+            Save Update
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }
