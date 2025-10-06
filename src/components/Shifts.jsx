@@ -1,5 +1,5 @@
 // src/components/Shifts.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import {
   Box,
   Typography,
@@ -53,14 +53,12 @@ import {
 /* -------------------- helpers -------------------- */
 const SHIFT_PERIODS = ["Morning", "Afternoon", "Evening"];
 
-// Firestore batch limit is 500 — keep headroom
 const chunk = (arr, size = 400) => {
   const out = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
 };
 
-// Robust string/date -> Firestore Timestamp
 const toTimestamp = (val) => {
   if (!val) return null;
   let d = new Date(val);
@@ -72,7 +70,6 @@ const toTimestamp = (val) => {
   return Timestamp.fromDate(d);
 };
 
-// Firestore Timestamp/Date -> "YYYY-MM-DDTHH:mm" for <input type="datetime-local">
 const toLocalInput = (tsOrDate) => {
   if (!tsOrDate) return "";
   let d;
@@ -88,37 +85,73 @@ const toLocalInput = (tsOrDate) => {
   return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
 };
 
-// Display mapping for service names
-const displayServiceName = (name = "") => {
-  const n = String(name).toLowerCase();
-  if (n === "paid debt") return "Paid";
-  if (n === "new debt") return "Debt";
-  return name;
-};
+const normalize = (s) => String(s ?? "").trim().toLowerCase();
 
-// Insert a special marker for PC Rental before "Print" (if present)
-const buildServiceColumnOrder = (services) => {
-  const idxPrint = services.findIndex((s) => String(s).toLowerCase() === "print");
-  if (idxPrint >= 0) {
-    return [...services.slice(0, idxPrint), "__PC_RENTAL__", services[idxPrint], ...services.slice(idxPrint + 1)];
+/* -------------------- aggregation (spec-compliant) -------------------- */
+/**
+ * txList: list of transactions for a shift (already filtered by shiftId and !isDeleted)
+ * serviceMeta: [{ name: serviceName, category: "Debit"|"Credit" }]
+ * pcRental: number from shift
+ *
+ * - match tx.item to service.name via lowercase+trim
+ * - amount = tx.total OR (price*quantity)
+ * - skip unmatched items entirely
+ * - per-service sums are signed (if they net negative, show negative)
+ * - sales = sum of Debit + pcRental
+ * - expenses = sum of Credit
+ * - systemTotal = sales - expenses
+ */
+const aggregateShiftTransactions = (txList, serviceMeta, pcRental = 0) => {
+  const nameToCategory = {};
+  const orderedNames = [];
+  for (const s of serviceMeta || []) {
+    const n = normalize(s.name);
+    if (!n) continue;
+    nameToCategory[n] = s.category || "";
+    orderedNames.push(s.name); // keep display case
   }
-  return [...services, "__PC_RENTAL__"];
-};
 
-// Totals per shift per new rule:
-// total = (sum of all debit/sales + pcRental) - (credits: New Debt + Expenses)
-const computeShiftTotal = (shift) => {
-  const salesSum = Object.values(shift?.salesBreakdown || {}).reduce((a, v) => a + Number(v || 0), 0);
-  const credits = shift?.creditsBreakdown || {};
-  const creditDebt = Number(credits["New Debt"] || 0);
-  const creditExpenses = Number(credits["Expenses"] || 0);
-  const pc = Number(shift?.pcRentalTotal || 0);
+  const serviceTotals = {}; // display by original/case name
+  let sales = 0;
+  let expenses = 0;
+
+  for (const tx of txList) {
+    if (!tx || tx.isDeleted === true) continue;
+
+    const itemName = normalize(tx.item);
+    if (!itemName) continue;
+
+    const cat = nameToCategory[itemName];
+    if (!cat) {
+      // unmatched -> SKIP ENTIRELY (per spec)
+      continue;
+    }
+
+    let amt = Number(tx.total);
+    if (!Number.isFinite(amt)) {
+      const price = Number(tx.price);
+      const qty = Number(tx.quantity);
+      amt = Number.isFinite(price) && Number.isFinite(qty) ? price * qty : 0;
+    }
+    if (!Number.isFinite(amt)) amt = 0;
+
+    // accumulate per-service totals (signed)
+    const displayName = (serviceMeta.find((s) => normalize(s.name) === itemName)?.name) || tx.item || "Unknown";
+    serviceTotals[displayName] = (serviceTotals[displayName] || 0) + amt;
+
+    // classify for sales/expenses
+    if (normalize(cat) === "debit") sales += amt;
+    else if (normalize(cat) === "credit") expenses += amt;
+  }
+
+  const salesWithPc = Number(sales) + Number(pcRental || 0);
+  const systemTotal = salesWithPc - Number(expenses);
+
   return {
-    salesSum,
-    creditDebt,
-    creditExpenses,
-    pc,
-    total: salesSum + pc - (creditDebt + creditExpenses),
+    serviceTotals, // keyed by display serviceName
+    sales: salesWithPc,
+    expenses,
+    systemTotal,
   };
 };
 
@@ -128,14 +161,14 @@ export default function Shifts() {
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
 
   const [shifts, setShifts] = useState([]);
-  const [allServices, setAllServices] = useState([]);
+  const [services, setServices] = useState([]); // [{name, category}]
   const [userMap, setUserMap] = useState({});
   const [viewingShift, setViewingShift] = useState(null);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [view, setView] = useState("summary"); // summary | detailed
 
-  // Add shift dialog
+  // dialogs
   const [addOpen, setAddOpen] = useState(false);
   const [newStaffEmail, setNewStaffEmail] = useState("");
   const [newShiftPeriod, setNewShiftPeriod] = useState(SHIFT_PERIODS[0]);
@@ -143,7 +176,6 @@ export default function Shifts() {
   const [newEnd, setNewEnd] = useState("");
   const [staffOptions, setStaffOptions] = useState([]);
 
-  // Edit shift dialog
   const [editOpen, setEditOpen] = useState(false);
   const [editShift, setEditShift] = useState(null);
   const [editStaffEmail, setEditStaffEmail] = useState("");
@@ -153,10 +185,13 @@ export default function Shifts() {
   const [editPcRental, setEditPcRental] = useState("");
   const [editSystemTotal, setEditSystemTotal] = useState("");
 
-  // Delete dialog
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [shiftToDelete, setShiftToDelete] = useState(null);
   const [deleteMode, setDeleteMode] = useState("unlink"); // unlink | purge
+
+  // live aggregates keyed by shift.id
+  const [txAggByShift, setTxAggByShift] = useState({});
+  const txUnsubsRef = useRef({}); // { [shiftId]: unsubscribe }
 
   /* --------- Shifts (with date filters) --------- */
   useEffect(() => {
@@ -180,7 +215,7 @@ export default function Shifts() {
     return () => unsub();
   }, [startDate, endDate]);
 
-  /* --------- Users map (email -> fullName) --------- */
+  /* --------- Users map --------- */
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "users"), (snap) => {
       const map = {};
@@ -193,7 +228,7 @@ export default function Shifts() {
     return () => unsub();
   }, []);
 
-  /* --------- Staff list for Add/Edit dropdowns --------- */
+  /* --------- Staff list --------- */
   useEffect(() => {
     const qRef = query(collection(db, "users"), where("role", "==", "staff"));
     const unsub = onSnapshot(qRef, (snap) => {
@@ -210,39 +245,98 @@ export default function Shifts() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* --------- Services (for detailed headers) --------- */
+  /* --------- Services (serviceName + category only) --------- */
   useEffect(() => {
     const qRef = query(collection(db, "services"), orderBy("sortOrder"));
     const unsub = onSnapshot(qRef, (snap) => {
-      setAllServices(snap.docs.map((d) => d.data().serviceName));
+      const meta = snap.docs.map((d) => {
+        const v = d.data() || {};
+        return {
+          name: v.serviceName || "",
+          category: v.category || "",
+        };
+      });
+      setServices(meta.filter((s) => s.name));
     });
     return () => unsub();
   }, []);
 
-  const serviceColumns = useMemo(() => buildServiceColumnOrder(allServices), [allServices]);
+  const serviceNames = useMemo(() => services.map((s) => s.name), [services]);
+  const serviceIndexByLower = useMemo(() => {
+    const m = new Map();
+    services.forEach((s) => m.set(normalize(s.name), s));
+    return m;
+  }, [services]);
 
-  /* ---------- Aggregations ---------- */
-  const perServiceTotals = useMemo(() => {
-    // sum (sales+credits) per service for totals row
-    const totals = Object.fromEntries(allServices.map((n) => [n, 0]));
+  /* --------- subscribe to transactions per shift (shiftId only) --------- */
+  useEffect(() => {
+    // cleanup listeners for removed shifts
+    const desired = new Set(shifts.map((s) => s.id));
+    for (const id of Object.keys(txUnsubsRef.current)) {
+      if (!desired.has(id)) {
+        try { txUnsubsRef.current[id](); } catch {}
+        delete txUnsubsRef.current[id];
+      }
+    }
+
     shifts.forEach((s) => {
-      allServices.forEach((name) => {
-        totals[name] += Number(s.salesBreakdown?.[name] || 0) + Number(s.creditsBreakdown?.[name] || 0);
-      });
+      if (txUnsubsRef.current[s.id]) return;
+
+      const q1 = query(collection(db, "transactions"), where("shiftId", "==", s.id));
+      const unsub = onSnapshot(
+        q1,
+        (snap) => {
+          const txs = snap.docs.map((d) => d.data()).filter((t) => t && t.isDeleted !== true);
+          const aggregated = aggregateShiftTransactions(txs, services, s.pcRentalTotal);
+          setTxAggByShift((prev) => ({ ...prev, [s.id]: aggregated }));
+        },
+        (e) => console.warn("transactions listener failed for shift", s.id, e)
+      );
+
+      txUnsubsRef.current[s.id] = unsub;
     });
+
+    return () => {
+      for (const id of Object.keys(txUnsubsRef.current)) {
+        try { txUnsubsRef.current[id](); } catch {}
+      }
+      txUnsubsRef.current = {};
+    };
+  }, [shifts, services]);
+
+  /* ---------- Columns: Date | Staff | Shift | PC Rental | (all services) | Sales | Expenses | System Total ---------- */
+  const serviceColumns = useMemo(() => ["__PC_RENTAL__", ...serviceNames, "__SALES__", "__EXPENSES__", "__SYSTEM__"], [serviceNames]);
+
+  /* ---------- Totals for footer ---------- */
+  const perServiceTotals = useMemo(() => {
+    const totals = {};
+    serviceNames.forEach((n) => (totals[n] = 0));
+    for (const s of shifts) {
+      const agg = txAggByShift[s.id];
+      if (!agg) continue;
+      for (const [svc, amt] of Object.entries(agg.serviceTotals || {})) {
+        totals[svc] = (totals[svc] || 0) + Number(amt || 0);
+      }
+    }
     return totals;
-  }, [shifts, allServices]);
+  }, [shifts, serviceNames, txAggByShift]);
 
   const grand = useMemo(() => {
     let pcRental = 0;
-    let total = 0;
-    shifts.forEach((s) => {
-      const c = computeShiftTotal(s);
-      pcRental += c.pc;
-      total += c.total;
-    });
-    return { pcRental, total };
-  }, [shifts]);
+    let sales = 0;
+    let expenses = 0;
+    let system = 0;
+    for (const s of shifts) {
+      const agg = txAggByShift[s.id];
+      pcRental += Number(s?.pcRentalTotal || 0);
+      if (agg) {
+        sales += Number(agg.sales || 0);
+        expenses += Number(agg.expenses || 0);
+        system += Number(agg.systemTotal || 0);
+      }
+    }
+    return { pcRental, sales, expenses, system };
+  }, [shifts, txAggByShift]);
 
   /* -------------------- CSV Export -------------------- */
   const handleExportToCSV = () => {
@@ -250,35 +344,42 @@ export default function Shifts() {
     let rows;
 
     if (view === "summary") {
-      headers = ["Date", "Staff", "Shift", "PC Rental", "Total"];
+      headers = ["Date", "Staff", "Shift", "PC Rental", "Sales", "Expenses", "Total"];
       rows = shifts.map((s) => {
-        const c = computeShiftTotal(s);
+        const agg = txAggByShift[s.id] || {};
         return [
           s.startTime ? new Date(s.startTime.seconds * 1000).toLocaleDateString() : "N/A",
           userMap[s.staffEmail] || s.staffEmail,
           s.shiftPeriod || "",
-          c.pc.toFixed(2),
-          c.total.toFixed(2),
+          Number(s.pcRentalTotal || 0).toFixed(2),
+          Number(agg.sales || 0).toFixed(2),
+          Number(agg.expenses || 0).toFixed(2),
+          Number(agg.systemTotal || 0).toFixed(2),
         ].join(",");
       });
     } else {
-      // detailed: service columns (with PC Rental before Print), then Total
-      headers = ["Date", "Staff", "Shift", ...serviceColumns.map((n) => (n === "__PC_RENTAL__" ? "PC Rental" : displayServiceName(n))), "Total"];
+      headers = [
+        "Date",
+        "Staff",
+        "Shift",
+        "PC Rental",
+        ...serviceNames,
+        "Sales",
+        "Expenses",
+        "Total",
+      ];
       rows = shifts.map((s) => {
-        const cells = serviceColumns.map((n) => {
-          if (n === "__PC_RENTAL__") return Number(s.pcRentalTotal || 0).toFixed(2);
-          const val =
-            Number(s.salesBreakdown?.[n] || 0) +
-            Number(s.creditsBreakdown?.[n] || 0);
-          return val.toFixed(2);
-        });
-        const c = computeShiftTotal(s);
+        const agg = txAggByShift[s.id] || { serviceTotals: {} };
+        const perSvc = serviceNames.map((n) => Number(agg.serviceTotals?.[n] || 0).toFixed(2));
         return [
           s.startTime ? new Date(s.startTime.seconds * 1000).toLocaleDateString() : "N/A",
           userMap[s.staffEmail] || s.staffEmail,
           s.shiftPeriod || "",
-          ...cells,
-          c.total.toFixed(2),
+          Number(s.pcRentalTotal || 0).toFixed(2),
+          ...perSvc,
+          Number(agg.sales || 0).toFixed(2),
+          Number(agg.expenses || 0).toFixed(2),
+          Number(agg.systemTotal || 0).toFixed(2),
         ].join(",");
       });
     }
@@ -294,7 +395,7 @@ export default function Shifts() {
     document.body.removeChild(a);
   };
 
-  /* -------------------- Add/Edit/Delete handlers (unchanged logic) -------------------- */
+  /* -------------------- Add/Edit/Delete handlers (unchanged) -------------------- */
   const handleAddShift = async () => {
     try {
       if (!newStaffEmail || !newStart) {
@@ -363,10 +464,10 @@ export default function Shifts() {
     try {
       const txSnap = await getDocs(query(collection(db, "transactions"), where("shiftId", "==", shiftToDelete.id)));
       const txDocs = txSnap.docs;
-      const chunks = chunk(txDocs);
+      const chunksArr = chunk(txDocs);
 
       if (deleteMode === "unlink") {
-        for (const ck of chunks) {
+        for (const ck of chunksArr) {
           const batch = writeBatch(db);
           ck.forEach((d) =>
             batch.update(d.ref, {
@@ -377,7 +478,7 @@ export default function Shifts() {
           await batch.commit();
         }
       } else if (deleteMode === "purge") {
-        for (const ck of chunks) {
+        for (const ck of chunksArr) {
           const batch = writeBatch(db);
           ck.forEach((d) => batch.delete(d.ref));
           await batch.commit();
@@ -403,7 +504,6 @@ export default function Shifts() {
     <Box sx={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
       {/* CONTROLS */}
       {!isMobile ? (
-        // Web: unchanged layout, just new labels apply elsewhere
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2, flexWrap: "wrap" }}>
           <ToggleButtonGroup value={view} exclusive onChange={(e, v) => v && setView(v)}>
             <ToggleButton value="summary">Summary</ToggleButton>
@@ -438,82 +538,30 @@ export default function Shifts() {
           </Stack>
         </Box>
       ) : (
-        // Mobile: more breathing room (INJECTED)
-        <Card
-          elevation={0}
-          sx={{
-            p: 2.25,
-            mb: 1.5,
-            border: (t) => `1px solid ${t.palette.divider}`,
-            borderRadius: 2,
-          }}
-        >
+        <Card elevation={0} sx={{ p: 2.25, mb: 1.5, border: (t) => `1px solid ${t.palette.divider}`, borderRadius: 2 }}>
           <Stack spacing={1.75}>
-            {/* Summary | Detailed */}
             <ToggleButtonGroup
               value={view}
               exclusive
               onChange={(e, v) => v && setView(v)}
               size="small"
               fullWidth
-              sx={{
-                "& .MuiToggleButton-root": { py: 1.1, fontWeight: 600 },
-              }}
+              sx={{ "& .MuiToggleButton-root": { py: 1.1, fontWeight: 600 } }}
             >
               <ToggleButton value="summary">Summary</ToggleButton>
               <ToggleButton value="detailed">Detailed</ToggleButton>
             </ToggleButtonGroup>
 
-            {/* Date filters */}
-            <Box
-              sx={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: 1.75,
-              }}
-            >
-              <TextField
-                label="Start"
-                type="date"
-                size="small"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                InputLabelProps={{ shrink: true }}
-              />
-              <TextField
-                label="End"
-                type="date"
-                size="small"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                InputLabelProps={{ shrink: true }}
-              />
+            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1.75 }}>
+              <TextField label="Start" type="date" size="small" value={startDate} onChange={(e) => setStartDate(e.target.value)} InputLabelProps={{ shrink: true }} />
+              <TextField label="End" type="date" size="small" value={endDate} onChange={(e) => setEndDate(e.target.value)} InputLabelProps={{ shrink: true }} />
             </Box>
 
-            {/* Action buttons */}
-            <Box
-              sx={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: 1.75,
-              }}
-            >
-              <Button
-                variant="contained"
-                startIcon={<AddIcon />}
-                onClick={() => setAddOpen(true)}
-                size="small"
-                sx={{ py: 1.1 }}
-              >
+            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1.75 }}>
+              <Button variant="contained" startIcon={<AddIcon />} onClick={() => setAddOpen(true)} size="small" sx={{ py: 1.1 }}>
                 Add
               </Button>
-              <Button
-                variant="outlined"
-                onClick={handleExportToCSV}
-                disabled={shifts.length === 0}
-                size="small"
-                sx={{ py: 1.1 }}
-              >
+              <Button variant="outlined" onClick={handleExportToCSV} disabled={shifts.length === 0} size="small" sx={{ py: 1.1 }}>
                 Export
               </Button>
             </Box>
@@ -523,33 +571,22 @@ export default function Shifts() {
 
       {/* TABLES */}
       {view === "summary" && (
-        <TableContainer
-          component={Paper}
-          sx={{
-            flex: 1,
-            minHeight: 0,
-            overflow: "auto",
-            maxHeight: { xs: "66vh", md: "70vh" },
-          }}
-        >
+        <TableContainer component={Paper} sx={{ flex: 1, minHeight: 0, overflow: "auto", maxHeight: { xs: "66vh", md: "70vh" } }}>
           <Table size={isMobile ? "small" : "medium"} stickyHeader>
             <TableHead>
               <TableRow>
                 <TableCell sx={{ whiteSpace: "nowrap" }}>Date</TableCell>
-                <TableCell>Staff</TableCell>
-                {/* Hide separate shift column on mobile; show a mini chip under Date */}
                 <TableCell sx={{ display: { xs: "none", sm: "table-cell" } }}>Shift</TableCell>
+                <TableCell>Staff</TableCell>
+                <TableCell align="right">Sales</TableCell>
+                <TableCell align="right">Expenses</TableCell>
                 <TableCell align="right">Total</TableCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {shifts.map((s) => {
-                const dateStr = s.startTime ? new Date(s.startTime.seconds * 1000).toLocaleDateString() : "N/A";
-                const staff = userMap[s.staffEmail] || s.staffEmail;
-                const shiftPeriod = s.shiftPeriod || "—";
-                const c = computeShiftTotal(s);
-
+                const agg = txAggByShift[s.id] || {};
                 return (
                   <TableRow
                     key={s.id}
@@ -561,24 +598,25 @@ export default function Shifts() {
                     }}
                   >
                     <TableCell sx={{ whiteSpace: "nowrap" }}>
-                      {dateStr}
+                      {s.startTime ? new Date(s.startTime.seconds * 1000).toLocaleDateString() : "N/A"}
                       <Box sx={{ display: { xs: "block", sm: "none" } }}>
-                        <Chip size="small" label={shiftPeriod} sx={{ mt: 0.5, fontSize: 10 }} variant="outlined" />
+                        <Chip size="small" label={s.shiftPeriod || "—"} sx={{ mt: 0.5, fontSize: 10 }} variant="outlined" />
                       </Box>
                     </TableCell>
 
+
+
+                    <TableCell sx={{ display: { xs: "none", sm: "table-cell" } }}>{s.shiftPeriod || "—"}</TableCell>
+                    
                     <TableCell sx={{ pr: 1 }}>
                       <Typography variant="body2" noWrap>
-                        {staff}
+                        {userMap[s.staffEmail] || s.staffEmail}
                       </Typography>
                     </TableCell>
-
-                    {/* Desktop/tablet: normal "Shift" column */}
-                    <TableCell sx={{ display: { xs: "none", sm: "table-cell" } }}>{shiftPeriod}</TableCell>
-
-                    <TableCell align="right" sx={{ pl: 1, whiteSpace: "nowrap" }}>
-                      ₱{c.total.toFixed(2)}
-                    </TableCell>
+                    
+                    <TableCell align="right">₱{Number(agg.sales || 0).toFixed(2)}</TableCell>
+                    <TableCell align="right">₱{Number(agg.expenses || 0).toFixed(2)}</TableCell>
+                    <TableCell align="right">₱{Number(agg.systemTotal || 0).toFixed(2)}</TableCell>
 
                     <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
                       <Tooltip title="Edit shift">
@@ -608,34 +646,29 @@ export default function Shifts() {
             minHeight: 0,
             overflow: "auto",
             maxHeight: { xs: "66vh", md: "70vh" },
-            // Horizontal scroll only if needed on mobile
-            "& table": { minWidth: { xs: Math.max(680, 280 + serviceColumns.length * 120), sm: "auto" } },
+            "& table": { minWidth: { xs: Math.max(900, 520 + serviceColumns.length * 120), sm: "auto" } },
           }}
         >
           <Table size="small" stickyHeader>
             <TableHead>
               <TableRow>
                 <TableCell>Date</TableCell>
-                <TableCell>Staff</TableCell>
                 <TableCell sx={{ pl: { xs: 1, sm: 2 } }}>Shift</TableCell>
-                {serviceColumns.map((h) =>
-                  h === "__PC_RENTAL__" ? (
-                    <TableCell key="__PC_RENTAL__" align="right">
-                      PC Rental
-                    </TableCell>
-                  ) : (
-                    <TableCell key={h} align="right">
-                      {displayServiceName(h)}
-                    </TableCell>
-                  )
-                )}
-                <TableCell align="right">Total</TableCell>
+                <TableCell>Staff</TableCell>
+                <TableCell align="right">PC</TableCell>
+                {serviceNames.map((h) => (
+                  <TableCell key={h} align="right">{h}</TableCell>
+                ))}
+                <TableCell align="right">Total Sales</TableCell>
+                <TableCell align="right">Total Expenses</TableCell>
+                <TableCell align="right">System Total</TableCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {shifts.map((s) => {
-                const c = computeShiftTotal(s);
+                const agg = txAggByShift[s.id];
+
                 return (
                   <TableRow
                     key={s.id}
@@ -650,31 +683,32 @@ export default function Shifts() {
                       {s.startTime ? new Date(s.startTime.seconds * 1000).toLocaleDateString() : "N/A"}
                     </TableCell>
 
-                    <TableCell sx={{ maxWidth: 220 }}>
-                      <Typography noWrap>{userMap[s.staffEmail] || s.staffEmail}</Typography>
-                    </TableCell>
-
-                    {/* tighter space between staff and shift */}
                     <TableCell sx={{ pl: { xs: 1, sm: 2 }, whiteSpace: "nowrap" }}>
                       {s.shiftPeriod}
                     </TableCell>
 
-                    {serviceColumns.map((h) =>
-                      h === "__PC_RENTAL__" ? (
-                        <TableCell key="__PC_RENTAL__" align="right">
-                          ₱{Number(s.pcRentalTotal || 0).toFixed(2)}
-                        </TableCell>
-                      ) : (
-                        <TableCell key={h} align="right">
-                          ₱{(
-                            Number(s.salesBreakdown?.[h] || 0) +
-                            Number(s.creditsBreakdown?.[h] || 0)
-                          ).toFixed(2)}
-                        </TableCell>
-                      )
-                    )}
+                    <TableCell sx={{ maxWidth: 220 }}>
+                      <Typography noWrap>{userMap[s.staffEmail] || s.staffEmail}</Typography>
+                    </TableCell>
 
-                    <TableCell align="right">₱{c.total.toFixed(2)}</TableCell>
+
+
+                    {/* PC Rental */}
+                    <TableCell align="right">
+                      ₱{Number(s.pcRentalTotal || 0).toFixed(2)}
+                    </TableCell>
+
+                    {/* Per-service columns */}
+                    {serviceNames.map((h) => (
+                      <TableCell key={h} align="right">
+                        ₱{Number(agg?.serviceTotals?.[h] || 0).toFixed(2)}
+                      </TableCell>
+                    ))}
+
+                    {/* Totals */}
+                    <TableCell align="right">₱{Number(agg?.sales || 0).toFixed(2)}</TableCell>
+                    <TableCell align="right">₱{Number(agg?.expenses || 0).toFixed(2)}</TableCell>
+                    <TableCell align="right">₱{Number(agg?.systemTotal || 0).toFixed(2)}</TableCell>
 
                     <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
                       <Tooltip title="Edit shift">
@@ -698,21 +732,29 @@ export default function Shifts() {
                   <strong>Totals</strong>
                 </TableCell>
 
-                {serviceColumns.map((h) =>
-                  h === "__PC_RENTAL__" ? (
-                    <TableCell key="__PC_RENTAL__" align="right">
-                      <strong>₱{grand.pcRental.toFixed(2)}</strong>
-                    </TableCell>
-                  ) : (
-                    <TableCell key={h} align="right">
-                      <strong>₱{Number(perServiceTotals[h] || 0).toFixed(2)}</strong>
-                    </TableCell>
-                  )
-                )}
-
+                {/* PC Rental grand */}
                 <TableCell align="right">
-                  <strong>₱{grand.total.toFixed(2)}</strong>
+                  <strong>₱{grand.pcRental.toFixed(2)}</strong>
                 </TableCell>
+
+                {/* Per-service grand */}
+                {serviceNames.map((h) => (
+                  <TableCell key={h} align="right">
+                    <strong>₱{Number(perServiceTotals[h] || 0).toFixed(2)}</strong>
+                  </TableCell>
+                ))}
+
+                {/* Grand totals */}
+                <TableCell align="right">
+                  <strong>₱{Number(grand.sales || 0).toFixed(2)}</strong>
+                </TableCell>
+                <TableCell align="right">
+                  <strong>₱{Number(grand.expenses || 0).toFixed(2)}</strong>
+                </TableCell>
+                <TableCell align="right">
+                  <strong>₱{Number(grand.system || 0).toFixed(2)}</strong>
+                </TableCell>
+
                 <TableCell />
               </TableRow>
             </TableBody>
@@ -839,7 +881,7 @@ export default function Shifts() {
               fullWidth
             />
             <TextField
-              label="System Total (optional)"
+              label="Total (optional)"
               type="number"
               value={editSystemTotal}
               onChange={(e) => setEditSystemTotal(e.target.value)}
