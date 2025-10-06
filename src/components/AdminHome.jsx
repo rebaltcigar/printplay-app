@@ -46,8 +46,8 @@ import {
   serverTimestamp,
   deleteDoc,
   Timestamp,
-  getDoc,     // NEW
-  setDoc,     // NEW
+  getDoc,
+  setDoc,
 } from "firebase/firestore";
 
 /* ----------------- helpers ----------------- */
@@ -69,6 +69,7 @@ const currency = (n) => `₱${Number(n || 0).toFixed(2)}`;
 const LiveDot = ({ color = "success.main", size = 10 }) => (
   <FiberManualRecordIcon sx={{ color, fontSize: size }} />
 );
+const normalize = (s) => String(s ?? "").trim().toLowerCase();
 
 /** Clear the global shift lock if it points to the given shiftId */
 async function clearShiftLockIfMatches(shiftId, endedByEmail) {
@@ -91,10 +92,9 @@ async function clearShiftLockIfMatches(shiftId, endedByEmail) {
 /* ----------------- component ----------------- */
 export default function AdminHome() {
   const theme = useTheme();
-  // Treat <= md as “mobile/tablet” for stacking + accordions
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
 
-  // date scope
+  // date scope (affects KPIs + scoped lists)
   const [scope, setScope] = useState("month"); // month | 7d | today
   const { start, end } = useMemo(() => {
     if (scope === "today") return { start: startOfToday(), end: endOfToday() };
@@ -106,12 +106,23 @@ export default function AdminHome() {
   const [transactions, setTransactions] = useState([]);
   const [txLoading, setTxLoading] = useState(true);
 
-  // keep debt stream only to compute Outstanding Debt KPI
   const [debtTxAll, setDebtTxAll] = useState([]);
   const [debtLoading, setDebtLoading] = useState(true);
 
-  const [shiftsToday, setShiftsToday] = useState([]);
+  // shifts in SCOPE (for PC Rental in KPI math)
+  const [shiftsScope, setShiftsScope] = useState([]);
   const [shiftsLoading, setShiftsLoading] = useState(true);
+
+  // shifts TODAY (for Active Shift section only)
+  const [shiftsToday, setShiftsToday] = useState([]);
+
+  // services (for Debit/Credit classification)
+  const [services, setServices] = useState([]); // [{name, category}]
+  const serviceCategory = useMemo(() => {
+    const m = new Map();
+    services.forEach((s) => m.set(normalize(s.name), String(s.category || "")));
+    return m;
+  }, [services]);
 
   const [connOk, setConnOk] = useState(true);
   const [lastWrite, setLastWrite] = useState(null);
@@ -142,6 +153,66 @@ export default function AdminHome() {
     return () => unsub();
   }, [start, end]);
 
+  /* --------- services (serviceName + category only) --------- */
+  useEffect(() => {
+    const qRef = query(collection(db, "services"), orderBy("sortOrder"));
+    const unsub = onSnapshot(
+      qRef,
+      (snap) => {
+        const meta = snap.docs
+          .map((d) => {
+            const v = d.data() || {};
+            return { name: v.serviceName || "", category: v.category || "" };
+          })
+          .filter((s) => s.name);
+        setServices(meta);
+      },
+      (err) => console.error("services stream error", err)
+    );
+    return () => unsub();
+  }, []);
+
+  /* --------- shifts IN SCOPE (for PC Rental KPI) --------- */
+  useEffect(() => {
+    setShiftsLoading(true);
+    const qRef = query(
+      collection(db, "shifts"),
+      where("startTime", ">=", Timestamp.fromDate(start)),
+      where("startTime", "<=", Timestamp.fromDate(end)),
+      orderBy("startTime", "asc")
+    );
+    const unsub = onSnapshot(
+      qRef,
+      (snap) => {
+        setShiftsScope(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setShiftsLoading(false);
+      },
+      (err) => {
+        console.error("shifts (scope) stream error", err);
+        setShiftsLoading(false);
+      }
+    );
+    return () => unsub();
+  }, [start, end]);
+
+  /* --------- today shifts (for Active section) --------- */
+  useEffect(() => {
+    const s = startOfToday();
+    const e = endOfToday();
+    const qRef = query(
+      collection(db, "shifts"),
+      where("startTime", ">=", Timestamp.fromDate(s)),
+      where("startTime", "<=", Timestamp.fromDate(e)),
+      orderBy("startTime", "asc")
+    );
+    const unsub = onSnapshot(
+      qRef,
+      (snap) => setShiftsToday(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+      (err) => console.error("shifts (today) stream error", err)
+    );
+    return () => unsub();
+  }, []);
+
   /* --------- all-time debt tx (for outstanding KPI) --------- */
   useEffect(() => {
     setDebtLoading(true);
@@ -163,53 +234,53 @@ export default function AdminHome() {
     return () => unsub();
   }, []);
 
-  /* --------- today shifts (to detect active) --------- */
-  useEffect(() => {
-    setShiftsLoading(true);
-    const s = startOfToday();
-    const e = endOfToday();
-    const qRef = query(
-      collection(db, "shifts"),
-      where("startTime", ">=", Timestamp.fromDate(s)),
-      where("startTime", "<=", Timestamp.fromDate(e)),
-      orderBy("startTime", "asc")
-    );
-    const unsub = onSnapshot(
-      qRef,
-      (snap) => {
-        setShiftsToday(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setShiftsLoading(false);
-      },
-      (err) => {
-        console.error("shifts stream error", err);
-        setShiftsLoading(false);
-      }
-    );
-    return () => unsub();
-  }, []);
-
   /* --------- derived --------- */
   const visibleTx = useMemo(
     () => transactions.filter((t) => t.isDeleted !== true),
     [transactions]
   );
 
-  // revenue/expenses/net (scoped)
-  const kpi = useMemo(() => {
-    let revenue = 0;
-    let expenses = 0;
-    const byItem = new Map();
-    visibleTx.forEach((t) => {
-      const item = String(t.item || "");
-      const amt = Number(t.total || 0);
-      byItem.set(item, (byItem.get(item) || 0) + amt);
-      if (item === "Expenses") expenses += amt;
-      else revenue += amt; // include all non-Expenses (incl. debt items & services)
-    });
-    return { revenue, expenses, net: revenue - expenses, byItem };
-  }, [visibleTx]);
+  // PC Rental (scope)
+  const pcRentalScopeTotal = useMemo(
+    () =>
+      shiftsScope.reduce(
+        (sum, s) => sum + Number(s?.pcRentalTotal || 0),
+        0
+      ),
+    [shiftsScope]
+  );
 
-  // Outstanding Debt KPI only
+  // SALES / EXPENSES / NET (scope) using Services.category + PC Rental
+  const kpi = useMemo(() => {
+    let sales = 0;
+    let expenses = 0;
+
+    for (const t of visibleTx) {
+      const name = normalize(t.item);
+      if (!name) continue;
+      const cat = serviceCategory.get(name); // Debit / Credit
+      if (!cat) continue; // skip unmatched per our rules
+
+      let amt = Number(t.total);
+      if (!Number.isFinite(amt)) {
+        const price = Number(t.price);
+        const qty = Number(t.quantity);
+        amt = Number.isFinite(price) && Number.isFinite(qty) ? price * qty : 0;
+      }
+      if (!Number.isFinite(amt)) amt = 0;
+
+      const catL = normalize(cat);
+      if (catL === "debit") sales += amt;
+      else if (catL === "credit") expenses += amt;
+    }
+
+    // add PC Rental from shifts in scope
+    sales += Number(pcRentalScopeTotal || 0);
+
+    return { sales, expenses, net: sales - expenses };
+  }, [visibleTx, serviceCategory, pcRentalScopeTotal]);
+
+  // Outstanding Debt (all time): sum customer balances (New Debt - Paid Debt) >= 1
   const outstandingDebt = useMemo(() => {
     const per = new Map();
     debtTxAll.forEach((t) => {
@@ -226,35 +297,11 @@ export default function AdminHome() {
       .reduce((a, b) => a + b, 0);
   }, [debtTxAll]);
 
-  // expense breakdown (MTD)
-  const monthExpenses = useMemo(() => {
-    const s = startOfMonth();
-    const e = endOfMonth();
-    const map = new Map();
-    transactions.forEach((t) => {
-      if (t.isDeleted || t.item !== "Expenses") return;
-      const ts = t.timestamp?.seconds
-        ? new Date(t.timestamp.seconds * 1000)
-        : t.timestamp
-        ? new Date(t.timestamp)
-        : null;
-      if (!ts || ts < s || ts > e) return;
-      let type = t.expenseType || "Misc";
-      if (type === "Salary Advance") type = "Salary"; // merged as requested
-      map.set(type, (map.get(type) || 0) + Number(t.total || 0));
-    });
-    const list = Array.from(map.entries())
-      .map(([type, amount]) => ({ type, amount }))
-      .sort((a, b) => b.amount - a.amount);
-    const total = list.reduce((a, b) => a + b.amount, 0);
-    return { list, total };
-  }, [transactions]);
-
-  // sales breakdown (MTD) — include PC Rental + all debit items + all other non-Expenses
+  // Sales breakdown (This Month) — keep as-is (non-expense items), informational only
   const monthSales = useMemo(() => {
     const s = startOfMonth();
     const e = endOfMonth();
-    const map = new Map(); // item -> amount
+    const map = new Map();
     transactions.forEach((t) => {
       if (t.isDeleted) return;
       const ts = t.timestamp?.seconds
@@ -264,17 +311,53 @@ export default function AdminHome() {
         : null;
       if (!ts || ts < s || ts > e) return;
       const item = String(t.item || "");
-      if (item === "Expenses") return; // exclude expenses from sales
+      const cat = serviceCategory.get(normalize(item));
+      if (!cat || normalize(cat) !== "debit") return; // only debit items in sales breakdown
       map.set(item, (map.get(item) || 0) + Number(t.total || 0));
     });
+    // add PC Rental as its own line
+    const pc = shiftsScope
+      .filter((sh) => {
+        const st = sh.startTime?.seconds ? new Date(sh.startTime.seconds * 1000) : null;
+        return st && st >= s && st <= e;
+      })
+      .reduce((a, sh) => a + Number(sh.pcRentalTotal || 0), 0);
+    if (pc) map.set("PC Rental", (map.get("PC Rental") || 0) + pc);
+
     const list = Array.from(map.entries())
       .map(([item, amount]) => ({ item, amount }))
       .sort((a, b) => b.amount - a.amount);
     const total = list.reduce((a, b) => a + b.amount, 0);
     return { list, total };
-  }, [transactions]);
+  }, [transactions, services, shiftsScope]);
 
-  // Active shifts
+  // Expense breakdown (This Month)
+  const monthExpenses = useMemo(() => {
+    const s = startOfMonth();
+    const e = endOfMonth();
+    const map = new Map();
+    transactions.forEach((t) => {
+      if (t.isDeleted) return;
+      const ts = t.timestamp?.seconds
+        ? new Date(t.timestamp.seconds * 1000)
+        : t.timestamp
+        ? new Date(t.timestamp)
+        : null;
+      if (!ts || ts < s || ts > e) return;
+      const item = String(t.item || "");
+      const cat = serviceCategory.get(normalize(item));
+      if (!cat || normalize(cat) !== "credit") return; // only credit
+      const type = t.expenseType || "Misc";
+      map.set(type, (map.get(type) || 0) + Number(t.total || 0));
+    });
+    const list = Array.from(map.entries())
+      .map(([type, amount]) => ({ type, amount }))
+      .sort((a, b) => b.amount - a.amount);
+    const total = list.reduce((a, b) => a + b.amount, 0);
+    return { list, total };
+  }, [transactions, services]);
+
+  // Active shifts (today)
   const activeShifts = useMemo(() => {
     const now = new Date();
     return shiftsToday.filter((s) => {
@@ -304,13 +387,11 @@ export default function AdminHome() {
     if (!window.confirm("Force end this shift now?")) return;
     try {
       const endedBy = auth.currentUser?.email || "admin";
-      // 1) mark shift as ended (and who ended it)
       await updateDoc(doc(db, "shifts", shift.id), {
         endTime: Timestamp.fromDate(new Date()),
         endedBy,
         status: "ended",
       });
-      // 2) clear global lock if it still points at this shift
       await clearShiftLockIfMatches(shift.id, endedBy);
       setLastWrite(new Date());
     } catch (e) {
@@ -348,7 +429,7 @@ export default function AdminHome() {
     }
   };
 
-  /* ---------------- section bodies (content only, no outer Card/Accordion) ---------------- */
+  /* ---------------- section bodies ---------------- */
   const ActiveShiftBody = () => (
     <>
       {shiftsLoading && <LinearProgress sx={{ mt: 0.5 }} />}
@@ -358,30 +439,18 @@ export default function AdminHome() {
         </Paper>
       ) : (
         <>
-          <Stack
-            direction="row"
-            spacing={1}
-            sx={{ flexWrap: "wrap", gap: { xs: 1, sm: 1 }, mb: 0.5 }}
-          >
+          <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", gap: { xs: 1, sm: 1 }, mb: 0.5 }}>
             {activeShifts.map((s) => {
               const st = s.startTime?.seconds ? new Date(s.startTime.seconds * 1000) : null;
               return (
                 <Paper
                   key={s.id}
                   variant="outlined"
-                  sx={{
-                    px: 1,
-                    py: 0.75,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 1,
-                    borderRadius: 1.5,
-                  }}
+                  sx={{ px: 1, py: 0.75, display: "flex", alignItems: "center", gap: 1, borderRadius: 1.5 }}
                 >
                   <LiveDot color="error.main" />
                   <Typography variant="body2" sx={{ fontSize: { xs: 12, sm: 14 } }}>
-                    {s.shiftPeriod || "Shift"} — {s.staffEmail} • Start{" "}
-                    {st ? st.toLocaleTimeString() : "—"}
+                    {s.shiftPeriod || "Shift"} — {s.staffEmail} • Start {st ? st.toLocaleTimeString() : "—"}
                   </Typography>
                   <Tooltip title="Force End Shift (sets end time = now)">
                     <IconButton size="small" color="error" onClick={() => forceEndShift(s)}>
@@ -428,10 +497,7 @@ export default function AdminHome() {
                       <TableRow key={r.id} hover sx={{ opacity: r.isDeleted ? 0.55 : 1 }}>
                         <TableCell>{dt ? dt.toLocaleTimeString() : "—"}</TableCell>
                         <TableCell>{r.item}</TableCell>
-                        <TableCell
-                          align="right"
-                          sx={{ display: { xs: "none", sm: "table-cell" } }}
-                        >
+                        <TableCell align="right" sx={{ display: { xs: "none", sm: "table-cell" } }}>
                           {r.quantity ?? ""}
                         </TableCell>
                         <TableCell align="right">{currency(r.total)}</TableCell>
@@ -492,11 +558,7 @@ export default function AdminHome() {
                     {row.item}
                   </Typography>
                 </Box>
-                <LinearProgress
-                  variant="determinate"
-                  value={Math.min(100, pct)}
-                  sx={{ flex: 1, height: 8, borderRadius: 999 }}
-                />
+                <LinearProgress variant="determinate" value={Math.min(100, pct)} sx={{ flex: 1, height: 8, borderRadius: 999 }} />
                 <Box sx={{ width: { xs: 120, sm: 160 }, textAlign: "right" }}>
                   <Typography variant="body2">
                     {currency(row.amount)} ({pct.toFixed(1)}%)
@@ -525,11 +587,7 @@ export default function AdminHome() {
                     {row.type}
                   </Typography>
                 </Box>
-                <LinearProgress
-                  variant="determinate"
-                  value={Math.min(100, pct)}
-                  sx={{ flex: 1, height: 8, borderRadius: 999 }}
-                />
+                <LinearProgress variant="determinate" value={Math.min(100, pct)} sx={{ flex: 1, height: 8, borderRadius: 999 }} />
                 <Box sx={{ width: { xs: 120, sm: 160 }, textAlign: "right" }}>
                   <Typography variant="body2">
                     {currency(row.amount)} ({pct.toFixed(1)}%)
@@ -544,13 +602,7 @@ export default function AdminHome() {
   );
 
   const SystemHealthBody = () => (
-    <Box
-      sx={{
-        display: { xs: "block", sm: "flex" },
-        alignItems: { sm: "center" },
-        gap: { xs: 1, sm: 2 },
-      }}
-    >
+    <Box sx={{ display: { xs: "block", sm: "flex" }, alignItems: { sm: "center" }, gap: { xs: 1, sm: 2 } }}>
       <Chip
         icon={connOk ? <CheckCircleIcon /> : <WarningAmberIcon />}
         label={connOk ? "Firestore connected" : "Firestore error"}
@@ -558,9 +610,7 @@ export default function AdminHome() {
         size="small"
       />
       <Divider orientation="vertical" flexItem sx={{ display: { xs: "none", sm: "block" } }} />
-      <Typography variant="body2">
-        Last write: {lastWrite ? new Date(lastWrite).toLocaleString() : "—"}
-      </Typography>
+      <Typography variant="body2">Last write: {lastWrite ? new Date(lastWrite).toLocaleString() : "—"}</Typography>
     </Box>
   );
 
@@ -578,21 +628,11 @@ export default function AdminHome() {
     >
       {/* Header */}
       <Box sx={{ display: "flex", alignItems: "center", gap: { xs: 1, sm: 2 } }}>
-        <img
-          src={logoUrl}
-          alt="logo"
-          style={{ height: 36 }}
-          onError={(e) => (e.currentTarget.style.display = "none")}
-        />
+        <img src={logoUrl} alt="logo" style={{ height: 36 }} onError={(e) => (e.currentTarget.style.display = "none")} />
         <Typography variant="h6" sx={{ fontWeight: 700, fontSize: { xs: 16, sm: 20 } }}>
           Admin Home
         </Typography>
-        <Chip
-          size="small"
-          color={connOk ? "success" : "error"}
-          icon={<LiveDot size={10} />}
-          label={connOk ? "Live" : "Offline"}
-        />
+        <Chip size="small" color={connOk ? "success" : "error"} icon={<LiveDot size={10} />} label={connOk ? "Live" : "Offline"} />
         <Box sx={{ flexGrow: 1 }} />
         <FormControl size="small" sx={{ minWidth: { xs: 140, sm: 180 } }}>
           <InputLabel>Date Scope</InputLabel>
@@ -604,7 +644,7 @@ export default function AdminHome() {
         </FormControl>
       </Box>
 
-      {/* KPIs: equal-width responsive grid */}
+      {/* KPIs */}
       <Box
         sx={{
           display: "grid",
@@ -613,27 +653,30 @@ export default function AdminHome() {
           width: "100%",
         }}
       >
-        <KpiCard title="Revenue" loading={txLoading} value={currency(kpi.revenue)} />
+        <KpiCard title="Sales" loading={txLoading || shiftsLoading} value={currency(kpi.sales)} />
         <KpiCard title="Expenses" loading={txLoading} value={currency(kpi.expenses)} />
         <KpiCard
           title="Net"
-          loading={txLoading}
+          loading={txLoading || shiftsLoading}
           value={currency(kpi.net)}
           emphasize={kpi.net >= 0 ? "good" : "bad"}
         />
-        <KpiCard title="Outstanding Debt" loading={debtLoading} value={currency(outstandingDebt)} />
+        <KpiCard title="Outstanding Debt (All Time)" loading={debtLoading} value={currency(outstandingDebt)} />
       </Box>
 
-      {/* CONTENT: mobile = single column + accordions; desktop = original grid */}
+      {/* CONTENT */}
       {isMobile ? (
-        // -------- MOBILE: single column, one after another, collapsible
         <Stack spacing={1.5} sx={{ flex: 1, minHeight: 0 }}>
           <MobileSection title="Active shift's transactions" defaultExpanded>
             <ActiveShiftBody />
           </MobileSection>
 
           <MobileSection title="Staff Leaderboard (This Month)" defaultExpanded>
-            <StaffLeaderboard transactions={transactions} />
+            <StaffLeaderboard
+              transactions={transactions}
+              services={services}
+              shiftsForMonth={shiftsScope}
+            />
           </MobileSection>
 
           <MobileSection title="System Health">
@@ -649,7 +692,6 @@ export default function AdminHome() {
           </MobileSection>
         </Stack>
       ) : (
-        // -------- DESKTOP: keep the same layout as before
         <Box
           sx={{
             display: "grid",
@@ -659,7 +701,7 @@ export default function AdminHome() {
             minHeight: 0,
           }}
         >
-          {/* LEFT COLUMN */}
+          {/* LEFT */}
           <Box sx={{ display: "grid", gridAutoRows: "minmax(180px, auto)", gap: 2, minHeight: 0 }}>
             <Card sx={{ p: 2, display: "flex", flexDirection: "column", gap: 1.25, minHeight: 240 }}>
               <SectionHeader title="Active shift's transactions" />
@@ -667,28 +709,24 @@ export default function AdminHome() {
             </Card>
           </Box>
 
-          {/* RIGHT COLUMN — order: Staff Leaderboard, System Health */}
+          {/* RIGHT */}
           <Box sx={{ display: "grid", gridAutoRows: "minmax(180px, auto)", gap: 2, minHeight: 0 }}>
             <Card sx={{ p: 2, display: "flex", flexDirection: "column", gap: 1.25, minHeight: 240 }}>
               <SectionHeader title="Staff Leaderboard (This Month)" />
-              <StaffLeaderboard transactions={transactions} />
+              <StaffLeaderboard
+                transactions={transactions}
+                services={services}
+                shiftsForMonth={shiftsScope}
+              />
             </Card>
 
-            <Card
-              sx={{
-                p: 2,
-                display: "flex",
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 2,
-              }}
-            >
+            <Card sx={{ p: 2, display: "flex", flexDirection: "row", alignItems: "center", gap: 2 }}>
               <SectionHeader title="System Health" compact />
               <SystemHealthBody />
             </Card>
           </Box>
 
-          {/* FULL-WIDTH ROW: Sales & Expenses side-by-side, same height */}
+          {/* FULL-WIDTH */}
           <Box
             sx={{
               gridColumn: "1 / -1",
@@ -756,12 +794,18 @@ function KpiCard({ title, value, loading, emphasize }) {
   );
 }
 
-function StaffLeaderboard({ transactions }) {
-  // This month, per staff: total sales (non-Expenses), total expenses (Expenses), total revenue = sales - expenses
+function StaffLeaderboard({ transactions, services, shiftsForMonth }) {
+  // Sales by staff for THIS MONTH = sum(Debit tx by staff) + sum(PC Rental from staff's shifts)
   const rows = useMemo(() => {
     const s = startOfMonth();
     const e = endOfMonth();
-    const map = new Map(); // staffEmail -> { sales, expenses }
+
+    const catMap = new Map();
+    (services || []).forEach((svc) => catMap.set(normalize(svc.name), normalize(svc.category)));
+
+    const salesByStaff = new Map(); // staffEmail -> amount
+
+    // debit transactions in current month
     (transactions || []).forEach((t) => {
       if (t.isDeleted) return;
       const ts = t.timestamp?.seconds
@@ -770,22 +814,29 @@ function StaffLeaderboard({ transactions }) {
         ? new Date(t.timestamp)
         : null;
       if (!ts || ts < s || ts > e) return;
-      const staff = t.staffEmail || "—";
-      const rec = map.get(staff) || { sales: 0, expenses: 0 };
-      const amt = Number(t.total || 0);
-      if (t.item === "Expenses") rec.expenses += amt;
-      else rec.sales += amt; // include debt items & services as "sales"
-      map.set(staff, rec);
+
+      const cat = catMap.get(normalize(t.item));
+      if (cat !== "debit") return;
+
+      salesByStaff.set(t.staffEmail || "—", (salesByStaff.get(t.staffEmail || "—") || 0) + Number(t.total || 0));
     });
-    const list = Array.from(map.entries()).map(([staff, v]) => ({
-      staff,
-      sales: v.sales,
-      expenses: v.expenses,
-      revenue: v.sales - v.expenses,
-    }));
-    list.sort((a, b) => b.revenue - a.revenue);
+
+    // add PC Rental from the month’s shifts (assign to shift staff)
+    (shiftsForMonth || []).forEach((sh) => {
+      const st = sh.startTime?.seconds ? new Date(sh.startTime.seconds * 1000) : null;
+      if (!st || st < s || st > e) return;
+      salesByStaff.set(
+        sh.staffEmail || "—",
+        (salesByStaff.get(sh.staffEmail || "—") || 0) + Number(sh.pcRentalTotal || 0)
+      );
+    });
+
+    const list = Array.from(salesByStaff.entries())
+      .map(([staff, sales]) => ({ staff, sales }))
+      .sort((a, b) => b.sales - a.sales);
+
     return list;
-  }, [transactions]);
+  }, [transactions, services, shiftsForMonth]);
 
   return (
     <TableContainer
@@ -793,7 +844,7 @@ function StaffLeaderboard({ transactions }) {
         maxHeight: { xs: 240, sm: 260 },
         overflowX: "auto",
         borderRadius: 1.5,
-        "& table": { minWidth: 520 },
+        "& table": { minWidth: 460 },
       }}
     >
       <Table size="small" stickyHeader>
@@ -801,16 +852,12 @@ function StaffLeaderboard({ transactions }) {
           <TableRow>
             <TableCell>Staff</TableCell>
             <TableCell align="right">Total Sales</TableCell>
-            <TableCell align="right" sx={{ display: { xs: "none", sm: "table-cell" } }}>
-              Total Expenses
-            </TableCell>
-            <TableCell align="right">Total Revenue</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
           {rows.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={4}>No data this month.</TableCell>
+              <TableCell colSpan={2}>No data this month.</TableCell>
             </TableRow>
           ) : (
             rows.map((r) => (
@@ -819,9 +866,6 @@ function StaffLeaderboard({ transactions }) {
                   <Typography noWrap>{r.staff}</Typography>
                 </TableCell>
                 <TableCell align="right">{currency(r.sales)}</TableCell>
-                <TableCell align="right" sx={{ display: { xs: "none", sm: "table-cell" } }}>
-                  {currency(r.expenses)}</TableCell>
-                <TableCell align="right">{currency(r.revenue)}</TableCell>
               </TableRow>
             ))
           )}
@@ -833,22 +877,15 @@ function StaffLeaderboard({ transactions }) {
 
 /* ---------------- helpers: mobile-only collapsible wrapper ---------------- */
 function MobileSection({ title, children, defaultExpanded = false }) {
-  // Accordion ONLY shows on mobile; desktop uses the card layout above.
   return (
     <Accordion
       defaultExpanded={defaultExpanded}
-      sx={{
-        display: { xs: "block", md: "none" },
-        borderRadius: 2,
-        "&:before": { display: "none" },
-      }}
+      sx={{ display: { xs: "block", md: "none" }, borderRadius: 2, "&:before": { display: "none" } }}
     >
       <AccordionSummary expandIcon={<ExpandMoreIcon />}>
         <Typography sx={{ fontWeight: 600 }}>{title}</Typography>
       </AccordionSummary>
-      <AccordionDetails sx={{ pt: 0, px: { xs: 1.5, sm: 2 }, pb: 1.5 }}>
-        {children}
-      </AccordionDetails>
+      <AccordionDetails sx={{ pt: 0, px: { xs: 1.5, sm: 2 }, pb: 1.5 }}>{children}</AccordionDetails>
     </Accordion>
   );
 }
