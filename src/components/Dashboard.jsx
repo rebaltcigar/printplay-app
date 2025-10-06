@@ -139,7 +139,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     let isMounted = true;
     (async () => {
       try {
-        // Try to resolve from users collection by email (works for staff/admin)
         const qMe = query(collection(db, 'users'), where('email', '==', user.email));
         const snap = await getDocs(qMe);
         if (!isMounted) return;
@@ -147,7 +146,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
           const d = snap.docs[0].data() || {};
           setStaffDisplayName(d.fullName || d.name || d.displayName || user.email);
         } else {
-          // fallback to staffOptions (if available)
           const mo = staffOptions.find(s => s.email === user.email);
           setStaffDisplayName(mo?.fullName || user.email);
         }
@@ -169,6 +167,34 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expenseType, staffOptions]);
+
+  // --- NEW: hydrate form when clicking Edit on a row ---
+  useEffect(() => {
+    if (!currentlyEditing) return;
+
+    // Core fields
+    setItem(currentlyEditing.item || '');
+    setExpenseType(currentlyEditing.expenseType || '');
+    setExpenseStaffId(currentlyEditing.expenseStaffId || '');
+    setExpenseStaffName(currentlyEditing.expenseStaffName || '');
+    setExpenseStaffEmail(currentlyEditing.expenseStaffEmail || '');
+    setQuantity(String(currentlyEditing.quantity ?? ''));
+    setPrice(String(currentlyEditing.price ?? ''));
+    setNotes(currentlyEditing.notes || '');
+
+    // Debt customer (if applicable)
+    if (currentlyEditing.customerId) {
+      setSelectedCustomer({
+        id: currentlyEditing.customerId,
+        fullName: currentlyEditing.customerName || '',
+      });
+    } else {
+      setSelectedCustomer(null);
+    }
+
+    // Focus the Item field for quick edits
+    setTimeout(() => itemInputRef.current?.focus?.(), 0);
+  }, [currentlyEditing]);
 
   // --- CORE HANDLERS ---
   const handleItemChange = (event) => {
@@ -649,7 +675,11 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
                       <TableCell align="right">₱{(tx.total || 0).toFixed(2)}</TableCell>
                       <TableCell>{identifierText(tx)}</TableCell>
                       <TableCell align="right">
-                        <IconButton size="small" onClick={() => setCurrentlyEditing(tx)} disabled={tableDisabled && (!currentlyEditing || currentlyEditing?.id !== tx.id)}>
+                        <IconButton
+                          size="small"
+                          onClick={() => setCurrentlyEditing(tx)}
+                          disabled={tableDisabled && (!currentlyEditing || currentlyEditing?.id !== tx.id)}
+                        >
                           <EditIcon fontSize="inherit" />
                         </IconButton>
                         {/* Soft delete is via bulk selection for audit-trail reasons */}
