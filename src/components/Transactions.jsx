@@ -27,13 +27,18 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  Collapse,
+  useMediaQuery,
+  useTheme,
 } from "@mui/material";
 import DownloadIcon from "@mui/icons-material/Download";
 import ClearAllIcon from "@mui/icons-material/ClearAll";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
-import { db, auth } from "../firebase";
+import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import {
   collection,
   onSnapshot,
@@ -43,7 +48,10 @@ import {
   doc,
   updateDoc,
   serverTimestamp,
+  writeBatch,
+  deleteDoc,
 } from "firebase/firestore";
+import { db, auth } from "../firebase";
 
 /* ---------- helpers ---------- */
 const startOfMonth = (d = new Date()) =>
@@ -66,6 +74,15 @@ const toTimeInput = (d) => {
   return `${HH}:${MM}`;
 };
 
+const toDatetimeLocal = (d) => {
+  const x = new Date(d);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}T${pad(
+    x.getHours()
+  )}:${pad(x.getMinutes())}`;
+};
+const fromDatetimeLocal = (s) => new Date(s);
+
 const fmtDateTime = (ts) => {
   if (!ts) return "";
   if (ts.seconds) return new Date(ts.seconds * 1000).toLocaleString();
@@ -84,7 +101,6 @@ const identifierText = (tx) => {
 
 const currency = (n) => `₱${Number(n || 0).toFixed(2)}`;
 
-/* Expense type policy for admin edit */
 const EXPENSE_TYPES_ALL = [
   "Supplies",
   "Maintenance",
@@ -101,38 +117,53 @@ export default function Transactions() {
   // Filters
   const [start, setStart] = useState(toDateInput(startOfMonth()));
   const [end, setEnd] = useState(toDateInput(endOfMonth()));
-  const [staffEmail, setStaffEmail] = useState(""); // "" = all
-  const [shiftId, setShiftId] = useState(""); // "" = all
+  const [staffEmail, setStaffEmail] = useState("");
+  const [shiftId, setShiftId] = useState("");
   const [showDeleted, setShowDeleted] = useState(true);
   const [onlyDeleted, setOnlyDeleted] = useState(false);
   const [onlyEdited, setOnlyEdited] = useState(false);
-  const [servicesFilter, setServicesFilter] = useState([]); // multi-select
+  const [servicesFilter, setServicesFilter] = useState([]);
 
   // Option lists
   const [staffOptions, setStaffOptions] = useState([]); // [{email, name, id}]
   const [shiftOptions, setShiftOptions] = useState([]); // [{id, label}]
-  const [serviceItems, setServiceItems] = useState([]); // services for filter and editor
+  const [serviceItems, setServiceItems] = useState([]);
 
   // Data
   const [tx, setTx] = useState([]);
-  const [liveMode, setLiveMode] = useState("month"); // "month" | "all"
+  const [liveMode, setLiveMode] = useState("month");
   const unsubRef = useRef(null);
 
-  // Edit dialog
+  // Row selection (bulk)
+  const [selectedIds, setSelectedIds] = useState([]);
+
+  // Edit dialog (single row)
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [editItem, setEditItem] = useState("");
   const [editExpenseType, setEditExpenseType] = useState("");
-  const [editExpenseStaffName, setEditExpenseStaffName] = useState(""); // display only
-  const [editExpenseStaffId, setEditExpenseStaffId] = useState(""); // if you want to change it
+  const [editExpenseStaffName, setEditExpenseStaffName] = useState("");
+  const [editExpenseStaffId, setEditExpenseStaffId] = useState("");
   const [editQuantity, setEditQuantity] = useState("");
   const [editPrice, setEditPrice] = useState("");
   const [editNotes, setEditNotes] = useState("");
-  const [staffSelectOptions, setStaffSelectOptions] = useState([]); // for salary edits
-  const [editDate, setEditDate] = useState(""); // NEW
-  const [editTime, setEditTime] = useState(""); // NEW
+  const [staffSelectOptions, setStaffSelectOptions] = useState([]);
+  const [editDate, setEditDate] = useState("");
+  const [editTime, setEditTime] = useState("");
 
-  /* ---- Load staff for filter ---- */
+  // Bulk date dialog
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkDT, setBulkDT] = useState(toDatetimeLocal(new Date()));
+
+  // --- Mobile state (collapsibles) ---
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  const [datesOpen, setDatesOpen] = useState(true);
+  const [peopleOpen, setPeopleOpen] = useState(false);
+  const [otherOpen, setOtherOpen] = useState(false);
+  const datesRef = useRef(null);
+
+  /* ---- Load staff ---- */
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "users"), (snap) => {
       const arr = snap.docs
@@ -149,12 +180,12 @@ export default function Transactions() {
         (a.name || "").localeCompare(b.name || "", "en", { sensitivity: "base" })
       );
       setStaffOptions(arr);
-      setStaffSelectOptions(arr); // reuse for editor salary field
+      setStaffSelectOptions(arr);
     });
     return () => unsub();
   }, []);
 
-  /* ---- Load shifts for filter (recent first) ---- */
+  /* ---- Load shifts ---- */
   useEffect(() => {
     const qRef = query(collection(db, "shifts"), orderBy("startTime", "desc"));
     const unsub = onSnapshot(qRef, (snap) => {
@@ -176,13 +207,12 @@ export default function Transactions() {
     return () => unsub();
   }, []);
 
-  /* ---- services list for filters & editor ---- */
+  /* ---- Load services ---- */
   useEffect(() => {
     const unsub = onSnapshot(
       query(collection(db, "services"), orderBy("sortOrder")),
       (snap) => {
         const list = snap.docs.map((d) => d.data().serviceName);
-        // Also ensure special items exist if you use them
         const specials = ["Expenses", "New Debt", "Paid Debt"];
         const merged = Array.from(new Set([...list, ...specials]));
         setServiceItems(merged);
@@ -191,27 +221,23 @@ export default function Transactions() {
     return () => unsub();
   }, []);
 
-  /* ---- Live transactions stream (current month by default) ---- */
+  /* ---- Live transactions stream ---- */
   const attachStream = (mode = liveMode) => {
-    // Clean previous
     if (unsubRef.current) {
       try {
         unsubRef.current();
-      } catch (_) {}
+      } catch {}
       unsubRef.current = null;
     }
 
     let qRef;
     if (mode === "all") {
-      // All transactions ever (caution: large collections)
       qRef = query(collection(db, "transactions"), orderBy("timestamp", "desc"));
     } else {
-      // Month/default (date range only to keep indexes simple)
       const s = new Date(start);
       s.setHours(0, 0, 0, 0);
       const e = new Date(end);
       e.setHours(23, 59, 59, 999);
-
       qRef = query(
         collection(db, "transactions"),
         where("timestamp", ">=", s),
@@ -222,9 +248,7 @@ export default function Transactions() {
 
     const unsub = onSnapshot(
       qRef,
-      (snap) => {
-        setTx(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      },
+      (snap) => setTx(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
       (err) => {
         console.error("Transactions stream error:", err);
         setTx([]);
@@ -233,7 +257,6 @@ export default function Transactions() {
     unsubRef.current = unsub;
   };
 
-  // initial stream + when switching modes
   useEffect(() => {
     attachStream("month");
     setLiveMode("month");
@@ -242,8 +265,6 @@ export default function Transactions() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // re-attach when date range changes in month mode
   useEffect(() => {
     if (liveMode !== "month") return;
     attachStream("month");
@@ -253,34 +274,22 @@ export default function Transactions() {
   /* ---- Client-side filtered rows ---- */
   const rows = useMemo(() => {
     let rows = tx.slice();
-
-    if (staffEmail) {
-      rows = rows.filter((r) => (r.staffEmail || "") === staffEmail);
-    }
-    if (shiftId) {
-      rows = rows.filter((r) => (r.shiftId || "") === shiftId);
-    }
-    if (!showDeleted) {
-      rows = rows.filter((r) => r.isDeleted !== true);
-    }
-    if (onlyDeleted) {
-      rows = rows.filter((r) => r.isDeleted === true);
-    }
-    if (onlyEdited) {
-      rows = rows.filter((r) => r.isEdited === true);
-    }
+    if (staffEmail) rows = rows.filter((r) => (r.staffEmail || "") === staffEmail);
+    if (shiftId) rows = rows.filter((r) => (r.shiftId || "") === shiftId);
+    if (!showDeleted) rows = rows.filter((r) => r.isDeleted !== true);
+    if (onlyDeleted) rows = rows.filter((r) => r.isDeleted === true);
+    if (onlyEdited) rows = rows.filter((r) => r.isEdited === true);
     if (servicesFilter.length > 0) {
       const set = new Set(servicesFilter);
       rows = rows.filter((r) => set.has(r.item));
     }
-
     return rows;
   }, [tx, staffEmail, shiftId, showDeleted, onlyDeleted, onlyEdited, servicesFilter]);
 
   /* ---- Totals (visible set) ---- */
   const totals = useMemo(() => {
-    let sales = 0;
-    let expenses = 0;
+    let sales = 0,
+      expenses = 0;
     rows.forEach((r) => {
       const amt = Number(r.total || 0);
       if (r.item === "Expenses" || r.item === "New Debt") expenses += amt;
@@ -312,7 +321,6 @@ export default function Transactions() {
       "Last Updated At",
     ];
     const lines = [headers.join(",")];
-
     rows.forEach((r) => {
       const line = [
         `"${fmtDateTime(r.timestamp).replace(/"/g, '""')}"`,
@@ -336,7 +344,6 @@ export default function Transactions() {
       ];
       lines.push(line.join(","));
     });
-
     const csv = lines.join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -353,12 +360,12 @@ export default function Transactions() {
     setLiveMode("all");
     attachStream("all");
   };
-
   const backToMonth = () => {
     setLiveMode("month");
     attachStream("month");
+    // scroll back to the top of controls on mobile
+    setTimeout(() => datesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
   };
-
   const resetFilters = () => {
     setStart(toDateInput(startOfMonth()));
     setEnd(toDateInput(endOfMonth()));
@@ -374,7 +381,7 @@ export default function Transactions() {
     }
   };
 
-  /* ---- Delete (soft) ---- */
+  /* ---- Delete (soft, single) ---- */
   const softDelete = async (row) => {
     const reason = window.prompt("Reason for deleting this transaction?");
     if (!reason) return;
@@ -385,14 +392,133 @@ export default function Transactions() {
         deletedBy: auth.currentUser?.email || "admin",
         deleteReason: reason,
       });
+      setSelectedIds((prev) => prev.filter((id) => id !== row.id));
     } catch (e) {
       console.error(e);
       alert("Failed to delete transaction.");
     }
   };
 
-  /* ---- Edit dialog helpers ---- */
-  const openEdit = (row) => {
+  /* ---- HARD DELETE (single) ---- */
+  const hardDelete = async (row) => {
+    const ok = window.confirm(
+      "PERMANENTLY delete this transaction? This cannot be undone."
+    );
+    if (!ok) return;
+    try {
+      await deleteDoc(doc(db, "transactions", row.id));
+      setSelectedIds((prev) => prev.filter((id) => id !== row.id));
+    } catch (e) {
+      console.error(e);
+      alert("Hard delete failed. (Do you have permission?)");
+    }
+  };
+
+  /* ---- Selection helpers ---- */
+  const toggleSelect = (id) =>
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  const selectAllVisible = () => setSelectedIds(rows.map((r) => r.id));
+  const clearSelection = () => setSelectedIds([]);
+
+  /* ---- Bulk date edit ---- */
+  const openBulkDateDialog = () => {
+    if (selectedIds.length === 1) {
+      const r = rows.find((x) => x.id === selectedIds[0]);
+      const d =
+        r?.timestamp?.seconds
+          ? new Date(r.timestamp.seconds * 1000)
+          : r?.timestamp instanceof Date
+          ? r.timestamp
+          : new Date();
+      setBulkDT(toDatetimeLocal(d));
+    } else {
+      setBulkDT(toDatetimeLocal(new Date()));
+    }
+    setBulkOpen(true);
+  };
+
+  const saveBulkDate = async () => {
+    if (!selectedIds.length) return;
+    const reason =
+      window.prompt(
+        "Reason for changing the date/time for the selected entries?"
+      ) || "(bulk date edit)";
+    const when = fromDatetimeLocal(bulkDT);
+    try {
+      const batch = writeBatch(db);
+      selectedIds.forEach((id) => {
+        batch.update(doc(db, "transactions", id), {
+          timestamp: when,
+          isEdited: true,
+          editedBy: auth.currentUser?.email || "admin",
+          editReason: reason,
+          lastUpdatedAt: serverTimestamp(),
+        });
+      });
+      await batch.commit();
+      setBulkOpen(false);
+      clearSelection();
+    } catch (e) {
+      console.error(e);
+      alert("Failed to update dates.");
+    }
+  };
+
+  /* ---- Bulk SOFT delete ---- */
+  async function bulkSoftDelete() {
+    if (!selectedIds.length) return;
+    const reason = window.prompt(
+      `Reason for deleting ${selectedIds.length} transaction(s)?`
+    );
+    if (!reason) return;
+    if (
+      !window.confirm(
+        `Soft delete ${selectedIds.length} selected transaction(s)?`
+      )
+    )
+      return;
+
+    try {
+      const batch = writeBatch(db);
+      selectedIds.forEach((id) => {
+        batch.update(doc(db, "transactions", id), {
+          isDeleted: true,
+          deletedAt: new Date(),
+          deletedBy: auth.currentUser?.email || "admin",
+          deleteReason: reason,
+        });
+      });
+      await batch.commit();
+      setSelectedIds([]);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to delete selected transactions.");
+    }
+  }
+
+  /* ---- Bulk HARD delete ---- */
+  async function bulkHardDelete() {
+    if (!selectedIds.length) return;
+    const ok = window.confirm(
+      `PERMANENTLY delete ${selectedIds.length} transaction(s)? This cannot be undone.`
+    );
+    if (!ok) return;
+
+    try {
+      const batch = writeBatch(db);
+      selectedIds.forEach((id) => batch.delete(doc(db, "transactions", id)));
+      await batch.commit();
+      setSelectedIds([]);
+    } catch (e) {
+      console.error(e);
+      alert("Hard delete failed. (Do you have permission?)");
+    }
+  }
+
+  /* ---- Edit dialog helpers (single row) ---- */
+  function openEdit(row) {
     setEditing(row);
     setEditItem(row.item || "");
     setEditExpenseType(row.expenseType || "");
@@ -401,81 +527,77 @@ export default function Transactions() {
     setEditQuantity(String(row.quantity ?? ""));
     setEditPrice(String(row.price ?? ""));
     setEditNotes(row.notes || "");
-
-    // Populate date/time from timestamp
     let dt = new Date();
     if (row.timestamp?.seconds) dt = new Date(row.timestamp.seconds * 1000);
     else if (row.timestamp instanceof Date) dt = row.timestamp;
     setEditDate(toDateInput(dt));
     setEditTime(toTimeInput(dt));
-
     setEditOpen(true);
-  };
+  }
 
-  const closeEdit = () => {
+  function closeEdit() {
     setEditOpen(false);
     setEditing(null);
-  };
+  }
 
-  const saveEdit = async () => {
+  async function saveEdit() {
     if (!editing) return;
-
-    // If editing an expense, ensure type; if Salary/Advance ensure staff
     if (editItem === "Expenses") {
-      if (!editExpenseType) return alert("Select an expense type.");
+      if (!editExpenseType) {
+        alert("Select an expense type.");
+        return;
+      }
       if (
         (editExpenseType === "Salary" || editExpenseType === "Salary Advance") &&
         !editExpenseStaffId &&
         !editExpenseStaffName
       ) {
-        return alert("Choose a staff for Salary or Salary Advance.");
+        alert("Choose a staff for Salary or Salary Advance.");
+        return;
       }
     }
-
     const qty = Number(editQuantity || 0);
     const price = Number(editPrice || 0);
     const total = qty * price;
 
-    // Build new timestamp from editDate + editTime (local time)
     let newTimestamp = null;
     if (editDate && editTime) {
       const [yyyy, mm, dd] = editDate.split("-").map(Number);
       const [HH, MM] = editTime.split(":").map(Number);
       newTimestamp = new Date(yyyy, (mm || 1) - 1, dd || 1, HH || 0, MM || 0, 0, 0);
     } else {
-      // fallback to previous timestamp if either field is missing
-      if (editing.timestamp?.seconds) newTimestamp = new Date(editing.timestamp.seconds * 1000);
-      else if (editing.timestamp instanceof Date) newTimestamp = editing.timestamp;
+      if (editing.timestamp?.seconds)
+        newTimestamp = new Date(editing.timestamp.seconds * 1000);
+      else if (editing.timestamp instanceof Date)
+        newTimestamp = editing.timestamp;
       else newTimestamp = new Date();
     }
 
     const update = {
       item: editItem,
       quantity: qty,
-      price: price,
+      price,
       total,
       notes: editNotes || "",
-      timestamp: newTimestamp, // <-- UPDATED DATE/TIME
+      timestamp: newTimestamp,
       isEdited: true,
       editedBy: auth.currentUser?.email || "admin",
-      editReason: window.prompt("Reason for this edit?") || "(edited in Transactions view)",
+      editReason:
+        window.prompt("Reason for this edit?") || "(edited in Transactions view)",
       lastUpdatedAt: serverTimestamp(),
     };
 
     if (editItem === "Expenses") {
       update.expenseType = editExpenseType || null;
-      // If a staff was chosen from dropdown, store id/name/email; otherwise keep prior
       const chosen = staffSelectOptions.find((s) => s.id === editExpenseStaffId);
       if (chosen) {
         update.expenseStaffId = chosen.id;
         update.expenseStaffName = chosen.name;
         update.expenseStaffEmail = chosen.email;
       } else if (editExpenseStaffName) {
-        // preserve name if provided but no id change
         update.expenseStaffName = editExpenseStaffName;
       }
     } else {
-      // clear expense fields if not an expense
       update.expenseType = null;
       update.expenseStaffId = null;
       update.expenseStaffName = null;
@@ -489,7 +611,7 @@ export default function Transactions() {
       console.error(e);
       alert("Failed to save edit.");
     }
-  };
+  }
 
   /* ---- VIEW ---- */
   return (
@@ -504,14 +626,22 @@ export default function Transactions() {
         alignItems: "stretch",
       }}
     >
-      {/* LEFT: Filters / Controls */}
-      <Card sx={{ width: 360, p: 2, display: "flex", flexDirection: "column", gap: 2 }}>
+      {/* LEFT: Filters / Controls (WEB) */}
+      <Card
+        sx={{
+          width: 240,
+          p: 2,
+          display: { xs: "none", sm: "flex" }, // unchanged web layout
+          flexDirection: "column",
+          gap: 2,
+        }}
+      >
         <Typography variant="subtitle1" fontWeight={600}>
-          Transactions — {liveMode === "all" ? "All Time" : "Current Month"}
+          {liveMode === "all" ? "All Time" : "Current Month"}
         </Typography>
         <Divider />
 
-        {/* Date range (active in month mode) */}
+        {/* Date range */}
         <Stack spacing={1.5} sx={{ opacity: liveMode === "all" ? 0.5 : 1 }}>
           <TextField
             label="Start"
@@ -549,7 +679,7 @@ export default function Transactions() {
                 onClick={loadAll}
                 fullWidth
               >
-                All transactions (EVER)
+                All Transactions
               </Button>
             )}
           </Stack>
@@ -591,7 +721,7 @@ export default function Transactions() {
           </Select>
         </FormControl>
 
-        {/* Services multi-select (checkbox) */}
+        {/* Services multi-select */}
         <FormControl fullWidth>
           <InputLabel>Services</InputLabel>
           <Select
@@ -617,9 +747,8 @@ export default function Transactions() {
               onChange={(e) => setShowDeleted(e.target.checked)}
             />
           }
-          label="Show deleted transactions"
+          label="Show Deleted"
         />
-
         <FormControlLabel
           control={
             <Checkbox
@@ -627,9 +756,8 @@ export default function Transactions() {
               onChange={(e) => setOnlyDeleted(e.target.checked)}
             />
           }
-          label="Only show deleted"
+          label="Only Deleted"
         />
-
         <FormControlLabel
           control={
             <Checkbox
@@ -637,11 +765,10 @@ export default function Transactions() {
               onChange={(e) => setOnlyEdited(e.target.checked)}
             />
           }
-          label="Only show edited"
+          label="Only Edited"
         />
 
         <Divider sx={{ my: 1 }} />
-
         <Stack spacing={1}>
           <Tooltip title="Export the visible list (after filters)">
             <Button startIcon={<DownloadIcon />} variant="outlined" onClick={exportCSV}>
@@ -655,7 +782,7 @@ export default function Transactions() {
 
         <Divider sx={{ my: 2 }} />
 
-        {/* quick totals of visible rows */}
+        {/* quick totals */}
         <Box sx={{ display: "grid", gap: 0.5 }}>
           <Typography variant="caption" sx={{ opacity: 0.7 }}>
             Visible Totals
@@ -676,12 +803,46 @@ export default function Transactions() {
         </Box>
       </Card>
 
-      {/* RIGHT: Table */}
-      <Paper sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-        <Box sx={{ p: 2, pb: 1, display: "flex", alignItems: "center", gap: 2 }}>
-          <Typography variant="subtitle1" fontWeight={600}>All Transactions</Typography>
+      {/* RIGHT: Table (WEB) */}
+      <Paper
+        sx={{
+          flex: 1,
+          minWidth: 0,
+          display: { xs: "none", sm: "flex" }, // unchanged on web
+          flexDirection: "column",
+        }}
+      >
+        {/* Bulk toolbar */}
+        <Box
+          sx={{ p: 2, pt: 1, display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}
+        >
+          <Typography variant="subtitle1" fontWeight={600}>
+            All Transactions
+          </Typography>
           <Box sx={{ flexGrow: 1 }} />
-          <Typography variant="body2" sx={{ opacity: 0.7 }}>
+          {selectedIds.length > 0 && (
+            <>
+              <Typography variant="body2">{selectedIds.length} selected</Typography>
+              <Button size="small" variant="outlined" onClick={openBulkDateDialog}>
+                Edit Dates
+              </Button>
+              <Button size="small" variant="outlined" color="warning" onClick={bulkSoftDelete}>
+                Soft Delete Selected
+              </Button>
+              <Button size="small" variant="contained" color="error" onClick={bulkHardDelete}>
+                Hard Delete Selected
+              </Button>
+              <Button size="small" onClick={clearSelection}>
+                Clear Selection
+              </Button>
+            </>
+          )}
+          {selectedIds.length === 0 && rows.length > 0 && (
+            <Button size="small" onClick={selectAllVisible}>
+              Select All Visible
+            </Button>
+          )}
+          <Typography variant="body2" sx={{ opacity: 0.7, ml: "auto" }}>
             {rows.length.toLocaleString()} rows
           </Typography>
         </Box>
@@ -690,6 +851,7 @@ export default function Transactions() {
           <Table size="small" stickyHeader>
             <TableHead>
               <TableRow>
+                <TableCell padding="checkbox" />
                 <TableCell>Time</TableCell>
                 <TableCell>Item</TableCell>
                 <TableCell align="right">Qty</TableCell>
@@ -714,11 +876,18 @@ export default function Transactions() {
             <TableBody>
               {rows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={19}>No transactions for the current filters.</TableCell>
+                  <TableCell colSpan={20}>No transactions for the current filters.</TableCell>
                 </TableRow>
               ) : (
                 rows.map((r) => (
                   <TableRow key={r.id} hover sx={{ opacity: r.isDeleted ? 0.55 : 1 }}>
+                    <TableCell padding="checkbox">
+                      <Checkbox
+                        size="small"
+                        checked={selectedIds.includes(r.id)}
+                        onChange={() => toggleSelect(r.id)}
+                      />
+                    </TableCell>
                     <TableCell>{fmtDateTime(r.timestamp)}</TableCell>
                     <TableCell>{r.item}</TableCell>
                     <TableCell align="right">{r.quantity}</TableCell>
@@ -770,14 +939,21 @@ export default function Transactions() {
                           <EditIcon fontSize="inherit" />
                         </IconButton>
                       </Tooltip>
-                      <Tooltip title="Delete (soft)">
-                        <IconButton
-                          size="small"
-                          color="error"
-                          onClick={() => softDelete(r)}
-                          disabled={r.isDeleted}
-                        >
-                          <DeleteIcon fontSize="inherit" />
+                      <Tooltip title="Soft delete">
+                        <span>
+                          <IconButton
+                            size="small"
+                            color="warning"
+                            onClick={() => softDelete(r)}
+                            disabled={r.isDeleted}
+                          >
+                            <DeleteIcon fontSize="inherit" />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                      <Tooltip title="Hard delete (permanent)">
+                        <IconButton size="small" color="error" onClick={() => hardDelete(r)}>
+                          <DeleteForeverIcon fontSize="inherit" />
                         </IconButton>
                       </Tooltip>
                     </TableCell>
@@ -789,7 +965,428 @@ export default function Transactions() {
         </TableContainer>
       </Paper>
 
-      {/* EDIT DIALOG */}
+      {/* --------- MOBILE LAYOUT --------- */}
+      <Box
+        sx={{
+          display: { xs: "flex", sm: "none" },
+          flexDirection: "column",
+          gap: 1.25,
+          height: "100%",
+          overflowY: "auto",
+          WebkitOverflowScrolling: "touch",
+          pb: "calc(env(safe-area-inset-bottom, 0) + 8px)",
+        }}
+      >
+        {/* GROUP 1: Dates & Range */}
+        <Card
+          ref={datesRef}
+          sx={{
+            p: 1,
+            overflow: "visible",
+            position: "relative",
+            mb: datesOpen ? 1.25 : 1,
+          }}
+        >
+          <Box sx={{ display: "flex", alignItems: "center" }}>
+            <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
+              {liveMode === "all" ? "All Time" : "Date Range"}
+            </Typography>
+            <IconButton size="small" onClick={() => setDatesOpen((v) => !v)}>
+              {datesOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+            </IconButton>
+          </Box>
+          <Collapse in={datesOpen} unmountOnExit={false} timeout={250} sx={{ overflow: "visible" }}>
+            <Box sx={{ pt: 1 }}>
+              <Stack spacing={1.25} sx={{ opacity: liveMode === "all" ? 0.6 : 1 }}>
+                <TextField
+                  label="Start"
+                  type="date"
+                  value={start}
+                  onChange={(e) => setStart(e.target.value)}
+                  InputLabelProps={{ shrink: true }}
+                  disabled={liveMode === "all"}
+                  fullWidth
+                  size="small"
+                />
+                <TextField
+                  label="End"
+                  type="date"
+                  value={end}
+                  onChange={(e) => setEnd(e.target.value)}
+                  InputLabelProps={{ shrink: true }}
+                  disabled={liveMode === "all"}
+                  fullWidth
+                  size="small"
+                />
+                <Stack direction="row" spacing={1}>
+                  {liveMode === "all" ? (
+                    <Button
+                      startIcon={<RefreshIcon />}
+                      variant="outlined"
+                      onClick={backToMonth}
+                      fullWidth
+                      size="small"
+                    >
+                      Back to Month
+                    </Button>
+                  ) : (
+                    <Button
+                      startIcon={<ClearAllIcon />}
+                      variant="outlined"
+                      color="warning"
+                      onClick={loadAll}
+                      fullWidth
+                      size="small"
+                    >
+                      All Transactions
+                    </Button>
+                  )}
+                </Stack>
+              </Stack>
+            </Box>
+          </Collapse>
+        </Card>
+
+        {/* GROUP 2: Staff / Shift / Services */}
+        <Card
+          sx={{
+            p: 1,
+            overflow: "visible",
+            position: "relative",
+            mb: peopleOpen ? 1.25 : 1,
+          }}
+        >
+          <Box sx={{ display: "flex", alignItems: "center" }}>
+            <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
+              Staff • Shift • Services
+            </Typography>
+            <IconButton size="small" onClick={() => setPeopleOpen((v) => !v)}>
+              {peopleOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+            </IconButton>
+          </Box>
+          <Collapse in={peopleOpen} unmountOnExit={false} timeout={250} sx={{ overflow: "visible" }}>
+            <Stack spacing={1.25} sx={{ pt: 1 }}>
+              <FormControl fullWidth size="small">
+                <InputLabel>Staff</InputLabel>
+                <Select
+                  label="Staff"
+                  value={staffEmail}
+                  onChange={(e) => setStaffEmail(e.target.value)}
+                >
+                  <MenuItem value="">All staff</MenuItem>
+                  {staffOptions.map((s) => (
+                    <MenuItem key={s.email} value={s.email}>
+                      {s.name} — {s.email}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+
+              <FormControl fullWidth size="small">
+                <InputLabel>Shift</InputLabel>
+                <Select
+                  label="Shift"
+                  value={shiftId}
+                  onChange={(e) => setShiftId(e.target.value)}
+                >
+                  <MenuItem value="">All shifts</MenuItem>
+                  {shiftOptions.map((s) => (
+                    <MenuItem key={s.id} value={s.id}>
+                      {s.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+
+              <FormControl fullWidth size="small">
+                <InputLabel>Services</InputLabel>
+                <Select
+                  multiple
+                  label="Services"
+                  value={servicesFilter}
+                  onChange={(e) => setServicesFilter(e.target.value)}
+                  renderValue={(selected) => selected.join(", ")}
+                >
+                  {serviceItems.map((svc) => (
+                    <MenuItem key={svc} value={svc}>
+                      <Checkbox checked={servicesFilter.indexOf(svc) > -1} />
+                      {svc}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Stack>
+          </Collapse>
+        </Card>
+
+        {/* GROUP 3: Other Controls */}
+        <Card
+          sx={{
+            p: 1,
+            overflow: "visible",
+            position: "relative",
+            mb: otherOpen ? 1.25 : 1,
+          }}
+        >
+          <Box sx={{ display: "flex", alignItems: "center" }}>
+            <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
+              Other Controls
+            </Typography>
+            <IconButton size="small" onClick={() => setOtherOpen((v) => !v)}>
+              {otherOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+            </IconButton>
+          </Box>
+          <Collapse in={otherOpen} unmountOnExit={false} timeout={250} sx={{ overflow: "visible" }}>
+            <Stack spacing={1} sx={{ pt: 1 }}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={showDeleted}
+                    onChange={(e) => setShowDeleted(e.target.checked)}
+                    size="small"
+                  />
+                }
+                label="Show Deleted"
+              />
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={onlyDeleted}
+                    onChange={(e) => setOnlyDeleted(e.target.checked)}
+                    size="small"
+                  />
+                }
+                label="Only Deleted"
+              />
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={onlyEdited}
+                    onChange={(e) => setOnlyEdited(e.target.checked)}
+                    size="small"
+                  />
+                }
+                label="Only Edited"
+              />
+
+              {/* Bulk actions */}
+              {selectedIds.length > 0 ? (
+                <Stack direction="row" spacing={1}>
+                  <Button size="small" variant="outlined" onClick={openBulkDateDialog} fullWidth>
+                    Edit Dates
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="warning"
+                    onClick={bulkSoftDelete}
+                    fullWidth
+                  >
+                    Soft Delete
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    color="error"
+                    onClick={bulkHardDelete}
+                    fullWidth
+                  >
+                    Hard Delete
+                  </Button>
+                </Stack>
+              ) : (
+                <Stack direction="row" spacing={1}>
+                  <Button size="small" onClick={selectAllVisible} fullWidth>
+                    Select All Visible
+                  </Button>
+                  <Button size="small" onClick={clearSelection} fullWidth>
+                    Clear Selection
+                  </Button>
+                </Stack>
+              )}
+
+              <Stack direction="row" spacing={1}>
+                <Button
+                  startIcon={<DownloadIcon />}
+                  variant="outlined"
+                  size="small"
+                  onClick={exportCSV}
+                  fullWidth
+                >
+                  Export CSV
+                </Button>
+                <Button variant="text" size="small" onClick={resetFilters} fullWidth>
+                  Reset
+                </Button>
+              </Stack>
+
+              {/* Visible totals */}
+              <Box sx={{ display: "grid", gap: 0.5, mt: 0.5 }}>
+                <Typography variant="caption" sx={{ opacity: 0.7 }}>
+                  Visible Totals
+                </Typography>
+                <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                  <Typography>Sales</Typography>
+                  <Typography>{currency(totals.sales)}</Typography>
+                </Box>
+                <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                  <Typography>Expenses</Typography>
+                  <Typography>{currency(totals.expenses)}</Typography>
+                </Box>
+                <Divider sx={{ my: 0.5 }} />
+                <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                  <Typography variant="subtitle2">Net</Typography>
+                  <Typography variant="subtitle2">{currency(totals.net)}</Typography>
+                </Box>
+              </Box>
+            </Stack>
+          </Collapse>
+        </Card>
+
+        {/* TABLE (mobile compact) */}
+        <Paper
+          sx={{
+            flex: "1 1 auto",
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            position: "relative",
+            zIndex: 0,
+          }}
+        >
+          <Box sx={{ p: 1, pt: 1, display: "flex", alignItems: "center", gap: 1 }}>
+            <Typography variant="subtitle1" fontWeight={600}>
+              Transactions
+            </Typography>
+            <Box sx={{ flexGrow: 1 }} />
+            <Typography variant="caption" sx={{ opacity: 0.7 }}>
+              {rows.length.toLocaleString()} rows
+            </Typography>
+          </Box>
+
+          <TableContainer sx={{ flex: 1, minHeight: 0 }}>
+            <Table
+              size="small"
+              stickyHeader
+              sx={{
+                "& th, & td": {
+                  py: 0.5,
+                  px: 0.75,
+                  borderBottomWidth: 0.5,
+                },
+                "& thead th": {
+                  fontSize: "0.72rem",
+                  whiteSpace: "nowrap",
+                },
+                "& tbody td": {
+                  fontSize: "0.82rem",
+                },
+              }}
+            >
+              <TableHead>
+                <TableRow>
+                  <TableCell padding="checkbox" />
+                  <TableCell>Time</TableCell>
+                  <TableCell>Item</TableCell>
+                  <TableCell align="right">Total</TableCell>
+                  <TableCell align="right">⋯</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {rows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5}>No transactions for the current filters.</TableCell>
+                  </TableRow>
+                ) : (
+                  rows.map((r) => (
+                    <TableRow key={r.id} hover sx={{ opacity: r.isDeleted ? 0.55 : 1 }}>
+                      <TableCell padding="checkbox">
+                        <Checkbox
+                          size="small"
+                          checked={selectedIds.includes(r.id)}
+                          onChange={() => toggleSelect(r.id)}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">
+                          {fmtDateTime(r.timestamp).split(",")[0] || ""}
+                        </Typography>
+                        <Typography variant="caption" sx={{ opacity: 0.8 }}>
+                          {fmtDateTime(r.timestamp).split(",")[1]?.trim() || ""}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
+                          <Typography variant="body2" fontWeight={600}>
+                            {r.item}
+                          </Typography>
+                          {/* Flags */}
+                          {r.isEdited && (
+                            <Typography variant="caption" sx={{ opacity: 0.8 }}>
+                              • Edited
+                            </Typography>
+                          )}
+                          {r.isDeleted && (
+                            <Typography variant="caption" sx={{ opacity: 0.8 }}>
+                              • Deleted
+                            </Typography>
+                          )}
+                        </Box>
+                        <Typography variant="caption" sx={{ display: "block", opacity: 0.8 }}>
+                          {identifierText(r)}
+                        </Typography>
+                        {r.notes && (
+                          <Typography
+                            variant="caption"
+                            sx={{
+                              display: "block",
+                              maxWidth: 260,
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              opacity: 0.8,
+                            }}
+                            title={r.notes}
+                          >
+                            {r.notes}
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell align="right">{currency(r.total)}</TableCell>
+                      <TableCell align="right">
+                        <Tooltip title="Edit">
+                          <IconButton size="small" onClick={() => openEdit(r)}>
+                            <EditIcon fontSize="inherit" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Soft delete">
+                          <span>
+                            <IconButton
+                              size="small"
+                              color="warning"
+                              onClick={() => softDelete(r)}
+                              disabled={r.isDeleted}
+                            >
+                              <DeleteIcon fontSize="inherit" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                        <Tooltip title="Hard delete (permanent)">
+                          <IconButton size="small" color="error" onClick={() => hardDelete(r)}>
+                            <DeleteForeverIcon fontSize="inherit" />
+                          </IconButton>
+                        </Tooltip>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
+      </Box>
+
+      {/* EDIT DIALOG (single) */}
       <Dialog open={editOpen} onClose={closeEdit} fullWidth maxWidth="sm">
         <DialogTitle>Edit Transaction</DialogTitle>
         <DialogContent dividers>
@@ -825,9 +1422,7 @@ export default function Transactions() {
                     ))}
                   </Select>
                 </FormControl>
-
-                {(editExpenseType === "Salary" ||
-                  editExpenseType === "Salary Advance") && (
+                {(editExpenseType === "Salary" || editExpenseType === "Salary Advance") && (
                   <FormControl fullWidth>
                     <InputLabel>Staff</InputLabel>
                     <Select
@@ -852,7 +1447,7 @@ export default function Transactions() {
               </>
             )}
 
-            {/* NEW: Date & Time editors */}
+            {/* Date & Time editors */}
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
               <TextField
                 label="Date"
@@ -899,6 +1494,32 @@ export default function Transactions() {
         <DialogActions>
           <Button onClick={closeEdit}>Cancel</Button>
           <Button variant="contained" onClick={saveEdit}>
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* BULK DATE DIALOG */}
+      <Dialog open={bulkOpen} onClose={() => setBulkOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle>Edit Date/Time for {selectedIds.length} selected</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField
+              label="Date & Time"
+              type="datetime-local"
+              value={bulkDT}
+              onChange={(e) => setBulkDT(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              fullWidth
+            />
+            <Typography variant="caption" sx={{ opacity: 0.75 }}>
+              This will mark all selected rows as edited, with your reason captured.
+            </Typography>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setBulkOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={saveBulkDate}>
             Save
           </Button>
         </DialogActions>

@@ -16,8 +16,21 @@ import {
   TableContainer,
   Stack,
   Chip,
+  Tooltip,
+  IconButton,
 } from "@mui/material";
-import { collection, onSnapshot, orderBy, query, where } from "firebase/firestore";
+import DeleteIcon from "@mui/icons-material/Delete";
+import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
+import {
+  collection,
+  onSnapshot,
+  orderBy,
+  query,
+  where,
+  doc,
+  updateDoc,
+  deleteDoc,
+} from "firebase/firestore";
 import { db } from "../firebase";
 import AdminDebtLookupDialog from "../components/AdminDebtLookupDialog";
 
@@ -94,32 +107,131 @@ export default function DebtManagement({ user }) {
   }, [startDate, endDate]);
 
   // Aggregated balance per customer (ignores isDeleted entries)
+  // Only include rows with balance >= 1
   const balances = useMemo(() => {
     const map = new Map(); // id => { name, newDebt, paid }
     rows.forEach((r) => {
-      if (r.isDeleted) return; // don't include deleted in balances
+      if (r.isDeleted) return;
       if (!r.customerId) return;
       const entry = map.get(r.customerId) || { name: r.customerName || "—", newDebt: 0, paid: 0 };
       if (r.item === "New Debt") entry.newDebt += Number(r.total || 0);
       if (r.item === "Paid Debt") entry.paid += Number(r.total || 0);
       map.set(r.customerId, entry);
     });
-    return Array.from(map.entries()).map(([customerId, v]) => ({
-      customerId,
-      customerName: v.name,
-      newDebt: v.newDebt,
-      paid: v.paid,
-      balance: v.newDebt - v.paid,
-    }));
+    return Array.from(map.entries())
+      .map(([customerId, v]) => ({
+        customerId,
+        customerName: v.name,
+        newDebt: v.newDebt,
+        paid: v.paid,
+        balance: v.newDebt - v.paid,
+      }))
+      .filter((b) => b.balance >= 1);
   }, [rows]);
 
-  // Click: open dialog and preselect this customer
+  // Open dialog and preselect this customer
   const openCustomer = (row) => {
     if (!row.customerId) return;
     setPresetCustomer({ id: row.customerId, fullName: row.customerName || "" });
-    setSelectToken((n) => n + 1); // force re-select inside dialog
+    setSelectToken((n) => n + 1);
     setDlgOpen(true);
   };
+
+  // --- Row actions: SOFT/HARD delete ---
+  const softDelete = async (row) => {
+    const reason = window.prompt("Reason for deleting this debt transaction?");
+    if (!reason) return;
+    try {
+      await updateDoc(doc(db, "transactions", row.id), {
+        isDeleted: true,
+        deletedAt: new Date(),
+        deletedBy: user?.email || "admin",
+        deleteReason: reason,
+      });
+    } catch (e) {
+      console.error(e);
+      alert("Failed to soft delete.");
+    }
+  };
+
+  const hardDelete = async (row) => {
+    const ok = window.confirm("PERMANENTLY delete this debt transaction? This cannot be undone.");
+    if (!ok) return;
+    try {
+      await deleteDoc(doc(db, "transactions", row.id));
+    } catch (e) {
+      console.error(e);
+      alert("Hard delete failed. (Do you have permission?)");
+    }
+  };
+
+  // Build tbody rows as a single array (prevents stray text/whitespace nodes)
+  const tableRows = useMemo(() => {
+    if (rows.length === 0) {
+      return [
+        <TableRow key="empty">
+          <TableCell colSpan={7}>No transactions in range.</TableCell>
+        </TableRow>,
+      ];
+    }
+    return rows.map((r) => {
+      const dt =
+        r.timestamp?.seconds
+          ? new Date(r.timestamp.seconds * 1000)
+          : r.timestamp instanceof Date
+          ? r.timestamp
+          : null;
+      return (
+        <TableRow
+          key={r.id}
+          hover
+          sx={{ cursor: r.customerId ? "pointer" : "default", opacity: r.isDeleted ? 0.5 : 1 }}
+          onClick={() => r.customerId && openCustomer(r)}
+        >
+          <TableCell>{dt ? dt.toLocaleString() : "—"}</TableCell>
+          <TableCell>{r.customerName || "—"}</TableCell>
+          <TableCell>{r.item}</TableCell>
+          <TableCell align="right">₱{Number(r.total || 0).toFixed(2)}</TableCell>
+          <TableCell
+            sx={{
+              maxWidth: 280,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {r.notes || "—"}
+          </TableCell>
+          <TableCell>
+            <Stack direction="row" spacing={1} alignItems="center">
+              {r.isDeleted && <Chip size="small" color="error" label="deleted" />}
+              {r.isEdited && <Chip size="small" variant="outlined" label="edited" />}
+              {r.addedByAdmin && <Chip size="small" variant="outlined" label="admin" />}
+            </Stack>
+          </TableCell>
+          <TableCell align="right" onClick={(e) => e.stopPropagation()}>
+            <Tooltip title={r.isDeleted ? "Already deleted" : "Soft delete"}>
+              <span>
+                <IconButton
+                  size="small"
+                  color="warning"
+                  onClick={() => softDelete(r)}
+                  disabled={r.isDeleted}
+                >
+                  <DeleteIcon fontSize="inherit" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title="Hard delete (permanent)">
+              <IconButton size="small" color="error" onClick={() => hardDelete(r)}>
+                <DeleteForeverIcon fontSize="inherit" />
+              </IconButton>
+            </Tooltip>
+          </TableCell>
+        </TableRow>
+      );
+    });
+  }, [rows]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <Box sx={{ p: 2, height: "100%", display: "flex", flexDirection: "column", gap: 2 }}>
@@ -145,17 +257,32 @@ export default function DebtManagement({ user }) {
             InputLabelProps={{ shrink: true }}
             size="small"
           />
-          <Button variant="contained" onClick={() => { setPresetCustomer(null); setDlgOpen(true); }}>
+          <Button
+            variant="contained"
+            onClick={() => {
+              setPresetCustomer(null);
+              setDlgOpen(true);
+            }}
+          >
             Open Debt Manager
           </Button>
         </Stack>
       </Paper>
 
       {/* Content: two columns — Balances + Transactions */}
-      <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "1fr 2fr" }, gap: 2, minHeight: 0 }}>
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: { xs: "1fr", lg: "1fr 2fr" },
+          gap: 2,
+          minHeight: 0,
+        }}
+      >
         {/* Balances */}
         <Card sx={{ p: 2, minHeight: 0, display: "flex", flexDirection: "column" }}>
-          <Typography variant="subtitle1" fontWeight={600}>Balances (current selection)</Typography>
+          <Typography variant="subtitle1" fontWeight={600}>
+            Balances (current selection)
+          </Typography>
           <Divider sx={{ my: 1 }} />
           <TableContainer sx={{ flex: 1, minHeight: 0 }}>
             <Table size="small" stickyHeader>
@@ -168,24 +295,32 @@ export default function DebtManagement({ user }) {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {balances.length === 0 && (
-                  <TableRow><TableCell colSpan={4}>No balances in range.</TableCell></TableRow>
-                )}
-                {balances.map((b) => (
-                  <TableRow
-                    key={b.customerId}
-                    hover
-                    sx={{ cursor: "pointer" }}
-                    onClick={() => openCustomer({ customerId: b.customerId, customerName: b.customerName })}
-                  >
-                    <TableCell>{b.customerName || "—"}</TableCell>
-                    <TableCell align="right">₱{b.newDebt.toFixed(2)}</TableCell>
-                    <TableCell align="right">₱{b.paid.toFixed(2)}</TableCell>
-                    <TableCell align="right" sx={{ color: b.balance > 0 ? "error.main" : "success.main" }}>
-                      ₱{b.balance.toFixed(2)}
-                    </TableCell>
+                {balances.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={4}>No balances in range.</TableCell>
                   </TableRow>
-                ))}
+                ) : (
+                  balances.map((b) => (
+                    <TableRow
+                      key={b.customerId}
+                      hover
+                      sx={{ cursor: "pointer" }}
+                      onClick={() =>
+                        openCustomer({ customerId: b.customerId, customerName: b.customerName })
+                      }
+                    >
+                      <TableCell>{b.customerName || "—"}</TableCell>
+                      <TableCell align="right">₱{b.newDebt.toFixed(2)}</TableCell>
+                      <TableCell align="right">₱{b.paid.toFixed(2)}</TableCell>
+                      <TableCell
+                        align="right"
+                        sx={{ color: b.balance > 0 ? "error.main" : "success.main" }}
+                      >
+                        ₱{b.balance.toFixed(2)}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
           </TableContainer>
@@ -207,44 +342,10 @@ export default function DebtManagement({ user }) {
                   <TableCell align="right">Amount</TableCell>
                   <TableCell>Notes</TableCell>
                   <TableCell>Status</TableCell>
+                  <TableCell align="right">Controls</TableCell>
                 </TableRow>
               </TableHead>
-              <TableBody>
-                {rows.length === 0 && (
-                  <TableRow><TableCell colSpan={6}>No transactions in range.</TableCell></TableRow>
-                )}
-                {rows.map((r) => {
-                  const dt =
-                    r.timestamp?.seconds
-                      ? new Date(r.timestamp.seconds * 1000)
-                      : r.timestamp instanceof Date
-                      ? r.timestamp
-                      : null;
-                  return (
-                    <TableRow
-                      key={r.id}
-                      hover
-                      sx={{ cursor: r.customerId ? "pointer" : "default", opacity: r.isDeleted ? 0.5 : 1 }}
-                      onClick={() => r.customerId && openCustomer(r)}
-                    >
-                      <TableCell>{dt ? dt.toLocaleString() : "—"}</TableCell>
-                      <TableCell>{r.customerName || "—"}</TableCell>
-                      <TableCell>{r.item}</TableCell>
-                      <TableCell align="right">₱{Number(r.total || 0).toFixed(2)}</TableCell>
-                      <TableCell sx={{ maxWidth: 280, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {r.notes || "—"}
-                      </TableCell>
-                      <TableCell>
-                        <Stack direction="row" spacing={1} alignItems="center">
-                          {r.isDeleted && <Chip size="small" color="error" label="deleted" />}
-                          {r.isEdited && <Chip size="small" variant="outlined" label="edited" />}
-                          {r.addedByAdmin && <Chip size="small" variant="outlined" label="admin" />}
-                        </Stack>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
+              <TableBody>{tableRows}</TableBody>
             </Table>
           </TableContainer>
         </Card>

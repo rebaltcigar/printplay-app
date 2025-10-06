@@ -1,4 +1,3 @@
-// src/components/ExpenseManagement.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
@@ -21,9 +20,14 @@ import {
   Divider,
   IconButton,
   Tooltip,
+  Collapse,
+  useMediaQuery,
+  useTheme,
 } from "@mui/material";
 import EditIcon from "@mui/icons-material/Edit";
 import HistoryIcon from "@mui/icons-material/History";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import {
   collection,
   addDoc,
@@ -84,6 +88,14 @@ export default function ExpenseManagement({ user }) {
     toDateOnlyString(new Date(new Date().setDate(new Date().getDate() - 7)))
   );
   const [filterEnd, setFilterEnd] = useState(toDateOnlyString(new Date()));
+
+  // ----- mobile-only helpers -----
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  const fieldSize = isMobile ? "small" : "medium";
+  const [controlsOpen, setControlsOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false); // New state for mobile filters
+  const controlsRef = useRef(null);
 
   // Load staff (for Salary / Salary Advance)
   useEffect(() => {
@@ -264,6 +276,14 @@ export default function ExpenseManagement({ user }) {
     setFormPrice(String(row.price ?? ""));
     setFormNotes(row.notes || "");
     setTimeout(() => dateInputRef.current?.focus(), 60);
+
+    // Mobile: auto-expand controls and scroll to them
+    if (isMobile) {
+      if (!controlsOpen) setControlsOpen(true);
+      setTimeout(() => {
+        controlsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 80);
+    }
   };
 
   const cancelEdit = () => {
@@ -326,22 +346,127 @@ export default function ExpenseManagement({ user }) {
     }
   };
 
+  /* ---------- shared form content ---------- */
+  const FormContent = (
+    <Stack
+      component="form"
+      onSubmit={currentlyEditing ? handleSaveEdit : handleAddExpense}
+      spacing={2}
+    >
+      <TextField
+        inputRef={dateInputRef}
+        type="date"
+        label="Date"
+        value={formDate}
+        onChange={(e) => setFormDate(e.target.value)}
+        InputLabelProps={{ shrink: true }}
+        required
+        fullWidth
+        size={fieldSize}
+      />
+
+      <FormControl fullWidth required size={fieldSize}>
+        <InputLabel>Expense Type</InputLabel>
+        <Select
+          label="Expense Type"
+          value={formType}
+          onChange={(e) => setFormType(e.target.value)}
+        >
+          {EXPENSE_TYPES_ALL.map((t) => (
+            <MenuItem key={t} value={t}>
+              {t}
+            </MenuItem>
+          ))}
+        </Select>
+      </FormControl>
+
+      {(formType === "Salary" || formType === "Salary Advance") && (
+        <FormControl fullWidth required size={fieldSize}>
+          <InputLabel>Staff</InputLabel>
+          <Select
+            label="Staff"
+            value={formStaffId}
+            onChange={(e) => setFormStaffId(e.target.value)}
+          >
+            {staffOptions.length === 0 ? (
+              <MenuItem value="" disabled>
+                No staff available
+              </MenuItem>
+            ) : (
+              staffOptions.map((s) => (
+                <MenuItem key={s.id} value={s.id}>
+                  {s.fullName}
+                </MenuItem>
+              ))
+            )}
+          </Select>
+        </FormControl>
+      )}
+
+      <TextField
+        type="number"
+        label="Quantity"
+        value={formQuantity}
+        onChange={(e) => setFormQuantity(e.target.value)}
+        required
+        fullWidth
+        size={fieldSize}
+      />
+      <TextField
+        type="number"
+        label="Price"
+        value={formPrice}
+        onChange={(e) => setFormPrice(e.target.value)}
+        required
+        fullWidth
+        size={fieldSize}
+      />
+
+      <TextField
+        label="Notes (Optional)"
+        multiline
+        rows={3}
+        value={formNotes}
+        onChange={(e) => setFormNotes(e.target.value)}
+        fullWidth
+        size={fieldSize}
+      />
+
+      <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
+        <Button type="submit" variant="contained" fullWidth size={fieldSize}>
+          {currentlyEditing ? "Save Changes" : "Add Expense"}
+        </Button>
+        {currentlyEditing && (
+          <Button
+            variant="outlined"
+            color="inherit"
+            onClick={cancelEdit}
+            fullWidth
+            size={fieldSize}
+          >
+            Cancel
+          </Button>
+        )}
+      </Stack>
+    </Stack>
+  );
+
   return (
     <Box
       sx={{
-        // IMPORTANT: not fixed. Fills the parent's content area under the admin header.
         display: "flex",
         flexDirection: "column",
-        height: "100%",     // rely on parent (admin container) to give this area room
+        height: "100%",
         width: "100%",
         minHeight: 0,
       }}
     >
-      {/* Body (two-panel), keeps under header without overlap */}
+      {/* Body (two-panel on web, mobile optimized below) */}
+      {/* --- WEB / DESKTOP (unchanged) --- */}
       <Box
         sx={{
+          display: { xs: "none", sm: "flex" },
           flex: 1,
-          display: "flex",
           minHeight: 0,
           gap: 2,
           p: 2,
@@ -355,101 +480,10 @@ export default function ExpenseManagement({ user }) {
             {currentlyEditing ? "Edit Expense" : "Add Expense (Admin)"}
           </Typography>
           <Divider />
-
-          <Box
-            component="form"
-            onSubmit={currentlyEditing ? handleSaveEdit : handleAddExpense}
-            sx={{ display: "grid", gap: 2 }}
-          >
-            <TextField
-              inputRef={dateInputRef}
-              type="date"
-              label="Date"
-              value={formDate}
-              onChange={(e) => setFormDate(e.target.value)}
-              InputLabelProps={{ shrink: true }}
-              required
-              fullWidth
-            />
-
-            <FormControl fullWidth required>
-              <InputLabel>Expense Type</InputLabel>
-              <Select
-                label="Expense Type"
-                value={formType}
-                onChange={(e) => setFormType(e.target.value)}
-              >
-                {EXPENSE_TYPES_ALL.map((t) => (
-                  <MenuItem key={t} value={t}>
-                    {t}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-
-            {(formType === "Salary" || formType === "Salary Advance") && (
-              <FormControl fullWidth required>
-                <InputLabel>Staff</InputLabel>
-                <Select
-                  label="Staff"
-                  value={formStaffId}
-                  onChange={(e) => setFormStaffId(e.target.value)}
-                >
-                  {staffOptions.length === 0 ? (
-                    <MenuItem value="" disabled>
-                      No staff available
-                    </MenuItem>
-                  ) : (
-                    staffOptions.map((s) => (
-                      <MenuItem key={s.id} value={s.id}>
-                        {s.fullName}
-                      </MenuItem>
-                    ))
-                  )}
-                </Select>
-              </FormControl>
-            )}
-
-            <TextField
-              type="number"
-              label="Quantity"
-              value={formQuantity}
-              onChange={(e) => setFormQuantity(e.target.value)}
-              required
-              fullWidth
-            />
-            <TextField
-              type="number"
-              label="Price"
-              value={formPrice}
-              onChange={(e) => setFormPrice(e.target.value)}
-              required
-              fullWidth
-            />
-
-            <TextField
-              label="Notes (Optional)"
-              multiline
-              rows={3}
-              value={formNotes}
-              onChange={(e) => setFormNotes(e.target.value)}
-              fullWidth
-            />
-
-            <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-              <Button type="submit" variant="contained" fullWidth>
-                {currentlyEditing ? "Save Changes" : "Add Expense"}
-              </Button>
-              {currentlyEditing && (
-                <Button variant="outlined" color="inherit" onClick={cancelEdit} fullWidth>
-                  Cancel
-                </Button>
-              )}
-            </Stack>
-          </Box>
+          {FormContent}
         </Card>
 
-        {/* RIGHT: Filters + Table (fills remaining width, below header, full height) */}
+        {/* RIGHT: Filters + Table */}
         <Paper sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           {/* Filter/header row stays visible; table scrolls under it */}
           <Box sx={{ p: 2, pt: 1, display: "flex", alignItems: "center", gap: 2 }}>
@@ -539,6 +573,194 @@ export default function ExpenseManagement({ user }) {
                             <EditIcon fontSize="inherit" />
                           </IconButton>
                         </Tooltip>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
+      </Box>
+
+      {/* --- MOBILE LAYOUT --- */}
+      <Box
+        sx={{
+          display: { xs: "flex", sm: "none" },
+          flexDirection: "column",
+          gap: 1.25,                              // FIX #3 support spacing
+          p: 2,
+          pt: 1.25,
+          minHeight: 0,
+          flex: 1,
+          overflowY: "auto",                      // FIX #1 allow page to scroll
+          WebkitOverflowScrolling: "touch",
+          pb: "calc(env(safe-area-inset-bottom, 0) + 8px)", // FIX #1 safe area
+        }}
+      >
+        {/* Controls on top (collapsible) */}
+        <Card
+          ref={controlsRef}
+          sx={{
+            p: 1.0,
+            overflow: "visible",                  // FIX #2 prevent clipping
+            position: "relative",                 // FIX #2 stacking context
+            mb: controlsOpen ? 1.25 : 1.0,        // FIX #3 extra space when open
+          }}
+        >
+          <Box sx={{ display: "flex", alignItems: "center" }}>
+            <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
+              {currentlyEditing ? "Edit Expense" : "Add Expense"}
+            </Typography>
+            <IconButton size="small" onClick={() => setControlsOpen((v) => !v)}>
+              {controlsOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+            </IconButton>
+          </Box>
+          <Collapse
+            in={controlsOpen}
+            unmountOnExit={false}                  // FIX #2 keep mounted for measurement
+            timeout={250}
+            sx={{ overflow: "visible" }}          // FIX #2 allow children overflow
+          >
+            <Box sx={{ pt: 2, pb: 1 }}>{FormContent}</Box>
+          </Collapse>
+        </Card>
+
+        {/* Filters (collapsible) */}
+        <Card
+          sx={{
+            p: 1.0,
+            overflow: "visible",                  // FIX #2
+            position: "relative",                 // FIX #2
+            mb: filtersOpen ? 1.25 : 1.0,         // FIX #3
+          }}
+        >
+          <Box sx={{ display: "flex", alignItems: "center" }}>
+            <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
+              Date Filters & Export
+            </Typography>
+            <IconButton size="small" onClick={() => setFiltersOpen((v) => !v)}>
+              {filtersOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+            </IconButton>
+          </Box>
+          <Collapse
+            in={filtersOpen}
+            unmountOnExit={false}                  // FIX #2
+            timeout={250}
+            sx={{ overflow: "visible" }}          // FIX #2
+          >
+            <Box
+              sx={{
+                display: "grid",
+                gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, // FIX #3 1-col on phones
+                gap: 1,
+                mt: 1.25,
+                alignItems: "center",
+              }}
+            >
+              <TextField
+                type="date"
+                label="Start"
+                size="small"
+                value={filterStart}
+                onChange={(e) => setFilterStart(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+              />
+              <TextField
+                type="date"
+                label="End"
+                size="small"
+                value={filterEnd}
+                onChange={(e) => setFilterEnd(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+              />
+              <Button
+                onClick={handleExportCSV}
+                variant="outlined"
+                size="small"
+                sx={{ gridColumn: { xs: "1 / -1", sm: "auto" } }}
+              >
+                Export CSV
+              </Button>
+            </Box>
+          </Collapse>
+        </Card>
+
+        {/* Table area, flexible height */}
+        <Paper
+          sx={{
+            flex: "1 1 auto",
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            position: "relative",
+            zIndex: 0,                            // FIX #4 ensure below cards if stacked
+          }}
+        >
+          <Box sx={{ p: 1.0, pt: 1, display: "flex", alignItems: "center", gap: 1 }}>
+            <Typography variant="subtitle1" fontWeight={600}>
+              Expenses
+            </Typography>
+          </Box>
+
+          <TableContainer sx={{ flex: 1, minHeight: 0 }}>
+            <Table size="small" stickyHeader>
+              <TableHead>
+                <TableRow>
+                  <TableCell>Date</TableCell>
+                  <TableCell>Type</TableCell>
+                  <TableCell align="right">Qty</TableCell>
+                  <TableCell align="right">₱</TableCell>
+                  <TableCell align="right">Total</TableCell>
+                  <TableCell>Staff</TableCell>
+                  <TableCell align="right">⋯</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {loading ? (
+                  <TableRow>
+                    <TableCell colSpan={7}>Loading…</TableCell>
+                  </TableRow>
+                ) : tableRows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7}>No expenses for the selected dates.</TableCell>
+                  </TableRow>
+                ) : (
+                  tableRows.map((r) => (
+                    <TableRow key={r.id} hover>
+                      <TableCell>{r._dateOnly}</TableCell>
+                      <TableCell>
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                          <Typography variant="body2" fontWeight={600}>
+                            {r.expenseType || "—"}
+                          </Typography>
+                          {r.isEdited && (
+                            <HistoryIcon
+                              fontSize="inherit"
+                              style={{ opacity: 0.7 }}
+                              titleAccess="Edited"
+                            />
+                          )}
+                        </Box>
+                      </TableCell>
+                      <TableCell align="right">{r.qty}</TableCell>
+                      <TableCell align="right">{Number(r.price || 0).toFixed(0)}</TableCell>
+                      <TableCell align="right">{Number(r.total || 0).toFixed(0)}</TableCell>
+                      <TableCell
+                        sx={{
+                          maxWidth: 160,
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                        title={r.expenseStaffName || ""}
+                      >
+                        {r.expenseStaffName || ""}
+                      </TableCell>
+                      <TableCell align="right">
+                        <IconButton size="small" onClick={() => startEdit(r)}>
+                          <EditIcon fontSize="inherit" />
+                        </IconButton>
                       </TableCell>
                     </TableRow>
                   ))

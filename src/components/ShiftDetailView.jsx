@@ -22,7 +22,16 @@ import {
   TableContainer,
   Checkbox,
   Stack,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Collapse,
+  useMediaQuery,
+  useTheme,
 } from "@mui/material";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
 import HistoryIcon from "@mui/icons-material/History";
@@ -63,6 +72,19 @@ const EXPENSE_TYPES_ALL = [
 const BILL_DENOMS = [1000, 500, 200, 100, 50, 20];
 const COIN_DENOMS = [20, 10, 5, 1];
 
+/* helpers for datetime-local */
+const toDatetimeLocal = (d) => {
+  const x = new Date(d);
+  const pad = (n) => String(n).padStart(2, "0");
+  const yyyy = x.getFullYear();
+  const mm = pad(x.getMonth() + 1);
+  const dd = pad(x.getDate());
+  const hh = pad(x.getHours());
+  const mi = pad(x.getMinutes());
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+};
+const fromDatetimeLocal = (s) => new Date(s);
+
 export default function ShiftDetailView({ shift, userMap, onBack }) {
   // ----- form state (left) -----
   const [item, setItem] = useState("");
@@ -82,11 +104,20 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
 
   // dialogs
   const [openCustomerDialog, setOpenCustomerDialog] = useState(false);
-  const [openDebtDialog, setOpenDebtDialog] = useState(false);
 
   // ----- table state -----
   const [transactions, setTransactions] = useState([]);
   const [selectedTransactions, setSelectedTransactions] = useState([]);
+
+  // Bulk date edit
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const shiftStart =
+    shift?.startTime?.seconds
+      ? new Date(shift.startTime.seconds * 1000)
+      : shift?.startTime instanceof Date
+      ? shift.startTime
+      : new Date();
+  const [bulkDateTime, setBulkDateTime] = useState(toDatetimeLocal(shiftStart));
 
   // ----- reconciliation -----
   const [pcRental, setPcRental] = useState(
@@ -95,6 +126,19 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
   const [recon, setRecon] = useState({});
 
   const isDebtItem = item === "New Debt" || item === "Paid Debt";
+
+  // --- responsive (mobile tweaks only) ---
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  const fieldSize = isMobile ? "small" : "medium";
+
+  // Mobile collapses
+  const [txControlsOpen, setTxControlsOpen] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [reconOpen, setReconOpen] = useState(false);
+
+  // Refs to scroll to
+  const txControlsRef = useRef(null);
 
   // ----- load services, staff, recon -----
   useEffect(() => {
@@ -256,7 +300,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
         return alert("Please select a staff for Salary or Salary Advance.");
       }
     }
-    if (isDebtItem && !selectedCustomer && !currentlyEditing) {
+    if ((item === "New Debt" || item === "Paid Debt") && !selectedCustomer && !currentlyEditing) {
       return alert("Please select a customer for this transaction.");
     }
 
@@ -286,15 +330,22 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           lastUpdatedAt: serverTimestamp(),
         });
       } else {
+        const tsDate =
+          shift?.startTime?.seconds
+            ? new Date(shift.startTime.seconds * 1000)
+            : shift?.startTime instanceof Date
+            ? shift.startTime
+            : new Date();
+
         await addDoc(collection(db, "transactions"), {
           ...data,
-          shiftId: shift.id,                       // keep associated with this shift
-          staffEmail: shift.staffEmail,            // associate with the staff of the shift
-          addedByAdmin: true,                      // note admin added
-          addedBy: auth.currentUser?.email || "",  // which admin
+          shiftId: shift.id,
+          staffEmail: shift.staffEmail,
+          addedByAdmin: true,
+          addedBy: auth.currentUser?.email || "",
           isDeleted: false,
           isEdited: false,
-          timestamp: serverTimestamp(),
+          timestamp: tsDate,
         });
       }
       clearForm();
@@ -343,6 +394,73 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     } catch (e) {
       console.error(e);
       alert("Failed to bulk delete.");
+    }
+  };
+
+  // ----- Bulk date edit -----
+  const openBulkDateDialog = () => {
+    if (selectedTransactions.length === 1) {
+      const row = transactions.find((t) => t.id === selectedTransactions[0]);
+      const d = row?.timestamp?.seconds
+        ? new Date(row.timestamp.seconds * 1000)
+        : row?.timestamp instanceof Date
+        ? row.timestamp
+        : shiftStart;
+      setBulkDateTime(toDatetimeLocal(d));
+    } else {
+      setBulkDateTime(toDatetimeLocal(shiftStart));
+    }
+    setBulkOpen(true);
+  };
+
+  const saveBulkDate = async () => {
+    if (!selectedTransactions.length) return;
+    const reason =
+      window.prompt("Reason for changing the date/time for the selected entries?") ||
+      "(bulk date edit)";
+    const when = fromDatetimeLocal(bulkDateTime);
+    try {
+      const batch = writeBatch(db);
+      selectedTransactions.forEach((id) => {
+        batch.update(doc(db, "transactions", id), {
+          timestamp: when,
+          isEdited: true,
+          editedBy: auth.currentUser?.email || "admin",
+          editReason: reason,
+          lastUpdatedAt: serverTimestamp(),
+        });
+      });
+      await batch.commit();
+      setBulkOpen(false);
+      setSelectedTransactions([]);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to update dates.");
+    }
+  };
+
+  const quickSetShiftStart = async () => {
+    if (!selectedTransactions.length) return;
+    const reason =
+      window.prompt("Reason for setting selected entries to shift start time?") ||
+      "(bulk date set to shift start)";
+    try {
+      const when = shiftStart;
+      const batch = writeBatch(db);
+      selectedTransactions.forEach((id) => {
+        batch.update(doc(db, "transactions", id), {
+          timestamp: when,
+          isEdited: true,
+          editedBy: auth.currentUser?.email || "admin",
+          editReason: reason,
+          lastUpdatedAt: serverTimestamp(),
+        });
+      });
+      await batch.commit();
+      setSelectedTransactions([]);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to set dates to shift start.");
     }
   };
 
@@ -396,11 +514,10 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           systemTotal,
         });
       } catch (e) {
-        // non-fatal: user may not have perms to edit shift; ignore
         console.warn("Totals write skipped/failed:", e?.message || e);
       }
     };
-    t = setTimeout(write, 500); // debounce small bursts
+    t = setTimeout(write, 500);
     return () => clearTimeout(t);
   }, [servicesTotal, expensesTotal, pcRental, systemTotal, shift.id]);
 
@@ -419,7 +536,210 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
   };
 
   const formatTime = (ts) =>
-    ts?.seconds ? new Date(ts.seconds * 1000).toLocaleTimeString() : "—";
+    ts?.seconds ? new Date(ts.seconds * 1000).toLocaleTimeString() : (ts instanceof Date ? ts.toLocaleTimeString() : "—");
+
+  /* -------- Split content: Form vs Reconciliation -------- */
+  const FormContent = (
+    <>
+      <Typography variant="subtitle1" fontWeight={600}>
+        Log Entry
+      </Typography>
+
+      <FormControl fullWidth required>
+        <InputLabel>Item</InputLabel>
+        <Select
+          value={item}
+          label="Item"
+          onChange={handleItemChange}
+          inputRef={itemInputRef}
+          size={fieldSize}
+        >
+          {serviceItems.map((s) => (
+            <MenuItem key={s.id} value={s.serviceName}>
+              {s.serviceName}
+            </MenuItem>
+          ))}
+        </Select>
+      </FormControl>
+
+      {item === "Expenses" && (
+        <>
+          <FormControl fullWidth required>
+            <InputLabel>Expense Type</InputLabel>
+            <Select
+              label="Expense Type"
+              value={expenseType}
+              onChange={(e) => setExpenseType(e.target.value)}
+              size={fieldSize}
+            >
+              {EXPENSE_TYPES_ALL.map((t) => (
+                <MenuItem key={t} value={t}>
+                  {t}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+
+          {(expenseType === "Salary" || expenseType === "Salary Advance") && (
+            <FormControl fullWidth required>
+              <InputLabel>Staff</InputLabel>
+              <Select
+                label="Staff"
+                value={expenseStaffId}
+                onChange={(e) => handleStaffSelect(e.target.value)}
+                size={fieldSize}
+              >
+                {staffOptions.length === 0 ? (
+                  <MenuItem value="" disabled>
+                    No staff available
+                  </MenuItem>
+                ) : (
+                  staffOptions.map((s) => (
+                    <MenuItem key={s.id} value={s.id}>
+                      {s.fullName}
+                    </MenuItem>
+                  ))
+                )}
+              </Select>
+            </FormControl>
+          )}
+        </>
+      )}
+
+      {(item === "New Debt" || item === "Paid Debt") && (
+        <Box sx={{ mt: 0.5, p: 1, border: "1px dashed grey", borderRadius: 1 }}>
+          <Typography variant="caption">Customer</Typography>
+          {selectedCustomer ? (
+            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <Typography>
+                <strong>{selectedCustomer.fullName}</strong>
+              </Typography>
+              <IconButton size="small" onClick={() => setSelectedCustomer(null)}>
+                <ClearIcon fontSize="small" />
+              </IconButton>
+            </Box>
+          ) : (
+            <Button
+              onClick={() => setOpenCustomerDialog(true)}
+              fullWidth
+              variant="outlined"
+              size={fieldSize}
+              sx={{ mt: 0.5 }}
+            >
+              Select Customer
+            </Button>
+          )}
+        </Box>
+      )}
+
+      <TextField
+        type="number"
+        label="Quantity"
+        value={quantity}
+        onChange={(e) => setQuantity(e.target.value)}
+        required
+        size={fieldSize}
+      />
+      <TextField
+        type="number"
+        label="Price"
+        value={price}
+        onChange={(e) => setPrice(e.target.value)}
+        required
+        size={fieldSize}
+      />
+      <Typography variant="body2">
+        Total: ₱{(Number(quantity || 0) * Number(price || 0)).toFixed(2)}
+      </Typography>
+      <TextField
+        label="Notes (Optional)"
+        multiline
+        rows={3}
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        size={fieldSize}
+      />
+    </>
+  );
+
+  const ReconContent = (
+    <>
+      <Typography variant="subtitle1" fontWeight={600}>
+        Admin Cash Reconciliation
+      </Typography>
+      <TextField
+        label="PC Rental Total"
+        type="number"
+        value={pcRental}
+        onChange={(e) => setPcRental(e.target.value)}
+        fullWidth
+        size={fieldSize}
+      />
+
+      <Typography variant="subtitle2" sx={{ mt: 1 }}>
+        Bills
+      </Typography>
+      <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+        {BILL_DENOMS.map((d) => (
+          <TextField
+            key={d}
+            type="number"
+            size="small"
+            label={`₱${d} x`}
+            value={recon[d] || ""}
+            onChange={(e) => handleReconChange(d, e.target.value)}
+            sx={{ width: 110 }}
+          />
+        ))}
+      </Box>
+
+      <Typography variant="subtitle2">Coins</Typography>
+      <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+        {COIN_DENOMS.map((d) => (
+          <TextField
+            key={d}
+            type="number"
+            size="small"
+            label={`₱${d} x`}
+            value={recon[d] || ""}
+            onChange={(e) => handleReconChange(d, e.target.value)}
+            sx={{ width: 110 }}
+          />
+        ))}
+      </Box>
+
+      <Divider />
+      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+        <Typography>System Total</Typography>
+        <Typography>₱{systemTotal.toFixed(2)}</Typography>
+      </Box>
+      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+        <Typography>Cash on Hand</Typography>
+        <Typography>₱{cashOnHand.toFixed(2)}</Typography>
+      </Box>
+      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+        <Typography variant="subtitle1">Difference</Typography>
+        <Typography
+          variant="subtitle1"
+          color={cashOnHand - systemTotal !== 0 ? "error" : "inherit"}
+        >
+          ₱{(cashOnHand - systemTotal).toFixed(2)}
+        </Typography>
+      </Box>
+    </>
+  );
+
+  // helper: start editing; auto-expand & scroll to controls on mobile
+  const startEdit = (tx) => {
+    setCurrentlyEditing(tx);
+    if (isMobile) {
+      if (!txControlsOpen) setTxControlsOpen(true);
+      // scroll after expand animation kicks in
+      setTimeout(() => {
+        txControlsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 50);
+    }
+  };
 
   // ----- render -----
   return (
@@ -439,121 +759,21 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           : ""}
       </Typography>
 
-      <Box sx={{ display: "flex", gap: 2, alignItems: "stretch", minHeight: 0 }}>
-        {/* LEFT: Log Entry + Reconciliation */}
+      {/* --- DESKTOP / WEB (unchanged) --- */}
+      <Box
+        sx={{
+          display: { xs: "none", sm: "flex" },
+          gap: 2,
+          alignItems: "stretch",
+          minHeight: 0,
+        }}
+      >
+        {/* LEFT: Log Entry + Reconciliation (together as before) */}
         <Box sx={{ width: 360, display: "flex", flexDirection: "column", gap: 2 }}>
-          {/* Log Entry */}
           <Card sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2 }}>
-            <Typography variant="subtitle1" fontWeight={600}>
-              Log Entry
-            </Typography>
-
-            <FormControl fullWidth required>
-              <InputLabel>Item</InputLabel>
-              <Select value={item} label="Item" onChange={handleItemChange} inputRef={itemInputRef}>
-                {serviceItems.map((s) => (
-                  <MenuItem key={s.id} value={s.serviceName}>
-                    {s.serviceName}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-
-            {/* Expense details */}
-            {item === "Expenses" && (
-              <>
-                <FormControl fullWidth required>
-                  <InputLabel>Expense Type</InputLabel>
-                  <Select
-                    label="Expense Type"
-                    value={expenseType}
-                    onChange={(e) => setExpenseType(e.target.value)}
-                  >
-                    {EXPENSE_TYPES_ALL.map((t) => (
-                      <MenuItem key={t} value={t}>
-                        {t}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-
-                {(expenseType === "Salary" || expenseType === "Salary Advance") && (
-                  <FormControl fullWidth required>
-                    <InputLabel>Staff</InputLabel>
-                    <Select
-                      label="Staff"
-                      value={expenseStaffId}
-                      onChange={(e) => handleStaffSelect(e.target.value)}
-                    >
-                      {staffOptions.length === 0 ? (
-                        <MenuItem value="" disabled>
-                          No staff available
-                        </MenuItem>
-                      ) : (
-                        staffOptions.map((s) => (
-                          <MenuItem key={s.id} value={s.id}>
-                            {s.fullName}
-                          </MenuItem>
-                        ))
-                      )}
-                    </Select>
-                  </FormControl>
-                )}
-              </>
-            )}
-
-            {/* Debt customer picker */}
-            {(item === "New Debt" || item === "Paid Debt") && (
-              <Box sx={{ mt: 1, p: 1, border: "1px dashed grey", borderRadius: 1 }}>
-                <Typography variant="caption">Customer</Typography>
-                {selectedCustomer ? (
-                  <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <Typography>
-                      <strong>{selectedCustomer.fullName}</strong>
-                    </Typography>
-                    <IconButton size="small" onClick={() => setSelectedCustomer(null)}>
-                      <ClearIcon fontSize="small" />
-                    </IconButton>
-                  </Box>
-                ) : (
-                  <Button
-                    onClick={() => setOpenCustomerDialog(true)}
-                    fullWidth
-                    variant="outlined"
-                    size="small"
-                    sx={{ mt: 0.5 }}
-                  >
-                    Select Customer
-                  </Button>
-                )}
-              </Box>
-            )}
-
-            <TextField
-              type="number"
-              label="Quantity"
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
-              required
-            />
-            <TextField
-              type="number"
-              label="Price"
-              value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              required
-            />
-            <Typography variant="body2">
-              Total: ₱{(Number(quantity || 0) * Number(price || 0)).toFixed(2)}
-            </Typography>
-            <TextField
-              label="Notes (Optional)"
-              multiline
-              rows={3}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-            />
-
+            {FormContent}
+            <Divider sx={{ my: 1 }} />
+            {ReconContent}
             <Stack direction="row" spacing={1} sx={{ mt: "auto" }}>
               <Button
                 onClick={handleSubmit}
@@ -569,75 +789,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
                 </Button>
               )}
             </Stack>
-          </Card>
-
-          {/* Reconciliation under the form */}
-          <Card sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2 }}>
-            <Typography variant="subtitle1" fontWeight={600}>
-              Admin Cash Reconciliation
-            </Typography>
-            <TextField
-              label="PC Rental Total"
-              type="number"
-              value={pcRental}
-              onChange={(e) => setPcRental(e.target.value)}
-              fullWidth
-            />
-
-            <Typography variant="subtitle2" sx={{ mt: 1 }}>
-              Bills
-            </Typography>
-            <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-              {BILL_DENOMS.map((d) => (
-                <TextField
-                  key={d}
-                  type="number"
-                  size="small"
-                  label={`₱${d} x`}
-                  value={recon[d] || ""}
-                  onChange={(e) => handleReconChange(d, e.target.value)}
-                  sx={{ width: 110 }}
-                />
-              ))}
-            </Box>
-
-            <Typography variant="subtitle2">Coins</Typography>
-            <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-              {COIN_DENOMS.map((d) => (
-                <TextField
-                  key={d}
-                  type="number"
-                  size="small"
-                  label={`₱${d} x`}
-                  value={recon[d] || ""}
-                  onChange={(e) => handleReconChange(d, e.target.value)}
-                  sx={{ width: 110 }}
-                />
-              ))}
-            </Box>
-
-            <Divider />
-            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-              <Typography>System Total</Typography>
-              <Typography>₱{systemTotal.toFixed(2)}</Typography>
-            </Box>
-            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-              <Typography>Cash on Hand</Typography>
-              <Typography>₱{cashOnHand.toFixed(2)}</Typography>
-            </Box>
-            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-              <Typography variant="subtitle1">Difference</Typography>
-              <Typography
-                variant="subtitle1"
-                color={cashOnHand - systemTotal !== 0 ? "error" : "inherit"}
-              >
-                ₱{(cashOnHand - systemTotal).toFixed(2)}
-              </Typography>
-            </Box>
-
-            <Button onClick={saveRecon} variant="contained">
-              Save Reconciliation
-            </Button>
+            <Button onClick={saveRecon} variant="contained">Save Reconciliation</Button>
           </Card>
         </Box>
 
@@ -648,6 +800,30 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
               Transactions
             </Typography>
             <Box sx={{ flexGrow: 1 }} />
+            <Tooltip title="Edit Date/Time for Selected">
+              <Box component="span">
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={openBulkDateDialog}
+                  disabled={selectedTransactions.length === 0}
+                >
+                  Edit Dates
+                </Button>
+              </Box>
+            </Tooltip>
+            <Tooltip title="Set selected to Shift Start time">
+              <Box component="span">
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={quickSetShiftStart}
+                  disabled={selectedTransactions.length === 0}
+                >
+                  Set to Shift Start
+                </Button>
+              </Box>
+            </Tooltip>
             <Tooltip title="Delete Selected">
               <Box component="span">
                 <Button
@@ -724,7 +900,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
                     <TableCell align="right">₱{(tx.total || 0).toFixed(2)}</TableCell>
                     <TableCell>{identifierText(tx)}</TableCell>
                     <TableCell align="right">
-                      <IconButton size="small" onClick={() => setCurrentlyEditing(tx)}>
+                      <IconButton size="small" onClick={() => startEdit(tx)}>
                         <EditIcon fontSize="inherit" />
                       </IconButton>
                       <IconButton size="small" onClick={() => handleRowDelete(tx)}>
@@ -754,6 +930,243 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           </Box>
         </Paper>
       </Box>
+
+      {/* --- MOBILE LAYOUT --- */}
+      <Box
+        sx={{
+          display: { xs: "flex", sm: "none" },
+          flexDirection: "column",
+          gap: 1.25,
+          minHeight: "70vh",
+          flex: 1,
+        }}
+      >
+        {/* Transaction Controls (collapsible) */}
+        <Card ref={txControlsRef} sx={{ p: 1.25 }}>
+          <Box sx={{ display: "flex", alignItems: "center" }}>
+            <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
+              Transaction Controls
+            </Typography>
+            <IconButton size="small" onClick={() => setTxControlsOpen((v) => !v)}>
+              {txControlsOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+            </IconButton>
+          </Box>
+          <Collapse in={txControlsOpen} unmountOnExit>
+            <Stack spacing={1.25} sx={{ mt: 1 }}>
+              {FormContent}
+              {/* ENTRY BUTTONS LIVE HERE ON MOBILE */}
+              <Stack spacing={1} direction="column">
+                <Button
+                  variant="contained"
+                  fullWidth
+                  size="small"
+                  onClick={handleSubmit}
+                  disabled={isDebtItem && !selectedCustomer && !currentlyEditing}
+                >
+                  {currentlyEditing ? "Update Entry" : "Add Entry"}
+                </Button>
+                {currentlyEditing && (
+                  <Button
+                    variant="outlined"
+                    fullWidth
+                    size="small"
+                    onClick={clearForm}
+                  >
+                    Cancel
+                  </Button>
+                )}
+              </Stack>
+            </Stack>
+          </Collapse>
+        </Card>
+
+        {/* Actions (buttons) collapsible, stacked) — BULK TABLE ACTIONS ONLY */}
+        <Card sx={{ p: 1.0 }}>
+          <Box sx={{ display: "flex", alignItems: "center" }}>
+            <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
+              Actions
+            </Typography>
+            <IconButton size="small" onClick={() => setActionsOpen((v) => !v)}>
+              {actionsOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+            </IconButton>
+          </Box>
+          <Collapse in={actionsOpen} unmountOnExit>
+            <Stack spacing={1} sx={{ mt: 1 }}>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={openBulkDateDialog}
+                disabled={selectedTransactions.length === 0}
+                fullWidth
+              >
+                Edit Dates (Selected)
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={quickSetShiftStart}
+                disabled={selectedTransactions.length === 0}
+                fullWidth
+              >
+                Set to Shift Start
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                color="error"
+                onClick={handleBulkDelete}
+                disabled={selectedTransactions.length === 0}
+                fullWidth
+              >
+                Delete Selected
+              </Button>
+            </Stack>
+          </Collapse>
+        </Card>
+
+        {/* Table ~2/3 height */}
+        <Paper
+          sx={{
+            flex: "1 1 auto",
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            height: "66vh",
+          }}
+        >
+          <Box sx={{ p: 1.0, pt: 1, display: "flex", alignItems: "center", gap: 1 }}>
+            <Typography variant="subtitle1" fontWeight={600}>
+              Transactions
+            </Typography>
+          </Box>
+
+          <TableContainer sx={{ flex: 1, minHeight: 0 }}>
+            <Table size="small" stickyHeader>
+              <TableHead>
+                <TableRow>
+                  <TableCell padding="checkbox" />
+                  <TableCell>Time</TableCell>
+                  <TableCell>Item</TableCell>
+                  <TableCell align="right">Qty</TableCell>
+                  <TableCell align="right">₱</TableCell>
+                  <TableCell align="right">Total</TableCell>
+                  <TableCell>Id</TableCell>
+                  <TableCell align="right">⋯</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {transactions.map((tx) => (
+                  <TableRow key={tx.id} hover>
+                    <TableCell padding="checkbox">
+                      <Checkbox
+                        size="small"
+                        checked={selectedTransactions.includes(tx.id)}
+                        onChange={() =>
+                          setSelectedTransactions((prev) =>
+                            prev.includes(tx.id)
+                              ? prev.filter((i) => i !== tx.id)
+                              : [...prev, tx.id]
+                          )
+                        }
+                      />
+                    </TableCell>
+                    <TableCell>{formatTime(tx.timestamp)}</TableCell>
+                    <TableCell>
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
+                        <Typography variant="body2" fontWeight={600}>
+                          {tx.item}
+                        </Typography>
+                        {tx.notes && (
+                          <Tooltip title={tx.notes}>
+                            <CommentIcon fontSize="inherit" />
+                          </Tooltip>
+                        )}
+                        {tx.isEdited && (
+                          <Tooltip title="Edited">
+                            <HistoryIcon fontSize="inherit" />
+                          </Tooltip>
+                        )}
+                      </Box>
+                    </TableCell>
+                    <TableCell align="right">{tx.quantity}</TableCell>
+                    <TableCell align="right">{(tx.price || 0).toFixed(0)}</TableCell>
+                    <TableCell align="right">₱{(tx.total || 0).toFixed(0)}</TableCell>
+                    <TableCell>{identifierText(tx)}</TableCell>
+                    <TableCell align="right">
+                      <IconButton size="small" onClick={() => startEdit(tx)}>
+                        <EditIcon fontSize="inherit" />
+                      </IconButton>
+                      <IconButton size="small" onClick={() => handleRowDelete(tx)}>
+                        <DeleteIcon fontSize="inherit" color="error" />
+                      </IconButton>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+
+          <Divider sx={{ mx: 1, my: 1 }} />
+          <Box sx={{ px: 1, pb: 1 }}>
+            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+              <Typography>Services</Typography>
+              <Typography>₱{servicesTotal.toFixed(0)}</Typography>
+            </Box>
+            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+              <Typography>Expenses</Typography>
+              <Typography>₱{expensesTotal.toFixed(0)}</Typography>
+            </Box>
+            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+              <Typography fontWeight={600}>System Total</Typography>
+              <Typography fontWeight={600}>₱{systemTotal.toFixed(0)}</Typography>
+            </Box>
+          </Box>
+        </Paper>
+
+        {/* Reconciliation (collapsible, separate) */}
+        <Card sx={{ p: 1.25 }}>
+          <Box sx={{ display: "flex", alignItems: "center" }}>
+            <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
+              Reconciliation
+            </Typography>
+            <IconButton size="small" onClick={() => setReconOpen((v) => !v)}>
+              {reconOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+            </IconButton>
+          </Box>
+          <Collapse in={reconOpen} unmountOnExit>
+            <Stack spacing={1.25} sx={{ mt: 1 }}>
+              {ReconContent}
+              <Button onClick={saveRecon} variant="contained" size="small">
+                Save Reconciliation
+              </Button>
+            </Stack>
+          </Collapse>
+        </Card>
+      </Box>
+
+      {/* Bulk Date Edit Dialog */}
+      <Dialog open={bulkOpen} onClose={() => setBulkOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle>Edit Date/Time</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField
+              label="Date & Time"
+              type="datetime-local"
+              value={bulkDateTime}
+              onChange={(e) => setBulkDateTime(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              fullWidth
+            />
+            <Typography variant="caption" sx={{ opacity: 0.75 }}>
+              Updating {selectedTransactions.length} entr{selectedTransactions.length === 1 ? "y" : "ies"}.
+            </Typography>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setBulkOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={saveBulkDate}>Save</Button>
+        </DialogActions>
+      </Dialog>
 
       {/* dialogs */}
       <CustomerDialog

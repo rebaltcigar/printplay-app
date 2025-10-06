@@ -3,8 +3,10 @@ import {
   Box, Typography, AppBar, Toolbar, Card, TextField, Select, MenuItem,
   FormControl, InputLabel, Paper, Checkbox, IconButton, Stack, Tooltip, Dialog,
   DialogTitle, DialogContent, DialogActions, Divider, Button, Table, TableHead,
-  TableBody, TableRow, TableCell, TableContainer
+  TableBody, TableRow, TableCell, TableContainer, Collapse, Menu as MuiMenu, useMediaQuery
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
+import MenuIcon from '@mui/icons-material/Menu'; // NEW (mobile)
 import EditIcon from '@mui/icons-material/Edit';
 import HistoryIcon from '@mui/icons-material/History';
 import ClearIcon from '@mui/icons-material/Clear';
@@ -79,6 +81,24 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
   const isAdmin = userRole === 'superadmin';
   const ALLOWED_EXPENSE_TYPES = isAdmin ? EXPENSE_TYPES_ALL : EXPENSE_TYPES_STAFF;
   const isDebtItem = item === 'New Debt' || item === 'Paid Debt';
+
+  // --- NEW (mobile) ---
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const [controlsOpen, setControlsOpen] = useState(true); // collapsible controls on mobile
+  const controlsRef = useRef(null);
+  const [menuAnchor, setMenuAnchor] = useState(null); // hamburger menu
+
+  // Auto-open controls & scroll up when editing on mobile
+  const openControlsAndScroll = () => {
+    setControlsOpen(true);
+    // Wait for Collapse to expand, then scroll
+    setTimeout(() => {
+      controlsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      // Focus the first field
+      itemInputRef.current?.focus?.();
+    }, 220); // matches Collapse default transition (~200ms)
+  };
 
   /* ---------- Load shift start (for the header timer) ---------- */
   useEffect(() => {
@@ -168,7 +188,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expenseType, staffOptions]);
 
-  // --- NEW: hydrate form when clicking Edit on a row ---
+  // --- hydrate form when clicking Edit on a row ---
   useEffect(() => {
     if (!currentlyEditing) return;
 
@@ -192,9 +212,10 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
       setSelectedCustomer(null);
     }
 
-    // Focus the Item field for quick edits
-    setTimeout(() => itemInputRef.current?.focus?.(), 0);
-  }, [currentlyEditing]);
+    // Focus & auto-open controls on mobile
+    if (isMobile) openControlsAndScroll();
+    else setTimeout(() => itemInputRef.current?.focus?.(), 0);
+  }, [currentlyEditing, isMobile]);
 
   // --- CORE HANDLERS ---
   const handleItemChange = (event) => {
@@ -344,6 +365,8 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
       }
     }
     clearForm();
+    // On small screens, collapse the controls after adding (keeps things tidy)
+    if (isMobile) setControlsOpen(false);
   };
 
   const handleSelectCustomer = (customer) => {
@@ -478,7 +501,8 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             </Typography>
           </Box>
 
-          <Box sx={{ ml: 'auto', display: 'flex', gap: 1 }}>
+          {/* Desktop buttons unchanged; mobile gets hamburger */}
+          <Box sx={{ ml: 'auto', display: { xs: 'none', sm: 'flex' }, gap: 1 }}>
             <Button size="small" variant="outlined" onClick={() => { setPresetCustomer(null); setOpenDebtDialog(true); }}>
               Debt Lookup
             </Button>
@@ -486,6 +510,23 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
               End Shift
             </Button>
           </Box>
+
+          {/* NEW (mobile): hamburger menu */}
+          <IconButton
+            sx={{ ml: 'auto', display: { xs: 'inline-flex', sm: 'none' } }}
+            onClick={(e) => setMenuAnchor(e.currentTarget)}
+            aria-label="menu"
+          >
+            <MenuIcon />
+          </IconButton>
+          <MuiMenu
+            anchorEl={menuAnchor}
+            open={Boolean(menuAnchor)}
+            onClose={() => setMenuAnchor(null)}
+          >
+            <MenuItem onClick={() => { setMenuAnchor(null); setPresetCustomer(null); setOpenDebtDialog(true); }}>Debt Lookup</MenuItem>
+            <MenuItem onClick={() => { setMenuAnchor(null); handleEndShiftClick(); }}>End Shift</MenuItem>
+          </MuiMenu>
         </Toolbar>
       </AppBar>
 
@@ -499,109 +540,147 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
           p: 2,
           width: '100%',
           alignItems: 'stretch',
+          // NEW (mobile): stack vertically on mobile
+          flexDirection: { xs: 'column', sm: 'row' },
         }}
       >
-        {/* LEFT: controls */}
-        <Card sx={{ width: 360, p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <Typography variant="subtitle1" fontWeight={600}>
-            Log Entry
-          </Typography>
+        {/* LEFT: controls (card on desktop, collapsible on mobile) */}
+        <Box
+          ref={controlsRef}
+          sx={{
+            width: { xs: '100%', sm: 360 },
+          }}
+        >
+          {/* Mobile header for controls */}
+          <Stack
+            direction="row"
+            alignItems="center"
+            justifyContent="space-between"
+            sx={{ display: { xs: 'flex', sm: 'none' }, mb: 1 }}
+          >
+            <Typography variant="subtitle1" fontWeight={600}>Log Entry</Typography>
+            <Button size="small" onClick={() => setControlsOpen(v => !v)}>
+              {controlsOpen ? 'Hide' : 'Show'}
+            </Button>
+          </Stack>
 
-          <FormControl fullWidth required>
-            <InputLabel>Item</InputLabel>
-            <Select value={item} label="Item" onChange={handleItemChange} inputRef={itemInputRef}>
-              {serviceItems.map((service) => (
-                <MenuItem key={service.id} value={service.serviceName}>
-                  {service.serviceName}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
+          {/* Desktop: always visible card. Mobile: collapsible. */}
+          <Collapse in={controlsOpen} timeout="auto" collapsedSize={0} unmountOnExit={false} sx={{ display: { xs: 'block', sm: 'block' } }}>
+            <Card
+              sx={{
+                p: 2,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 2,
+                // tighter spacing on mobile
+                '& .MuiFormControl-root, & .MuiTextField-root': { my: { xs: 0, sm: 0 } },
+              }}
+            >
+              {/* Keep the visible header only on desktop to avoid duplicates */}
+              <Typography variant="subtitle1" fontWeight={600} sx={{ display: { xs: 'none', sm: 'block' }}}>
+                Log Entry
+              </Typography>
 
-          {/* Expense details */}
-          {item === 'Expenses' && (
-            <>
               <FormControl fullWidth required>
-                <InputLabel>Expense Type</InputLabel>
-                <Select
-                  label="Expense Type"
-                  value={expenseType}
-                  onChange={(e) => setExpenseType(e.target.value)}
-                >
-                  {ALLOWED_EXPENSE_TYPES.map((t) => (
-                    <MenuItem key={t} value={t}>{t}</MenuItem>
+                <InputLabel>Item</InputLabel>
+                <Select value={item} label="Item" onChange={handleItemChange} inputRef={itemInputRef}>
+                  {serviceItems.map((service) => (
+                    <MenuItem key={service.id} value={service.serviceName}>
+                      {service.serviceName}
+                    </MenuItem>
                   ))}
                 </Select>
               </FormControl>
 
-              {(expenseType === 'Salary' || expenseType === 'Salary Advance') && (
-                <FormControl fullWidth required>
-                  <InputLabel>Staff</InputLabel>
-                  <Select
-                    label="Staff"
-                    value={expenseStaffId}
-                    onChange={(e) => handleStaffSelect(e.target.value)}
-                  >
-                    {staffOptions.length === 0 ? (
-                      <MenuItem value="" disabled>No staff available</MenuItem>
-                    ) : (
-                      staffOptions.map(s => (
-                        <MenuItem key={s.id} value={s.id}>{s.fullName}</MenuItem>
-                      ))
-                    )}
-                  </Select>
-                </FormControl>
-              )}
-            </>
-          )}
+              {/* Expense details */}
+              {item === 'Expenses' && (
+                <>
+                  <FormControl fullWidth required>
+                    <InputLabel>Expense Type</InputLabel>
+                    <Select
+                      label="Expense Type"
+                      value={expenseType}
+                      onChange={(e) => setExpenseType(e.target.value)}
+                    >
+                      {ALLOWED_EXPENSE_TYPES.map((t) => (
+                        <MenuItem key={t} value={t}>{t}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
 
-          {/* Debt customer picker */}
-          {isDebtItem && (
-            <Box sx={{ mt: 1, p: 1, border: '1px dashed grey', borderRadius: 1 }}>
-              <Typography variant="caption">Customer</Typography>
-              {selectedCustomer ? (
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Typography><strong>{selectedCustomer.fullName}</strong></Typography>
-                  <IconButton size="small" onClick={() => setSelectedCustomer(null)}>
-                    <ClearIcon fontSize="small" />
-                  </IconButton>
+                  {(expenseType === 'Salary' || expenseType === 'Salary Advance') && (
+                    <FormControl fullWidth required>
+                      <InputLabel>Staff</InputLabel>
+                      <Select
+                        label="Staff"
+                        value={expenseStaffId}
+                        onChange={(e) => handleStaffSelect(e.target.value)}
+                      >
+                        {staffOptions.length === 0 ? (
+                          <MenuItem value="" disabled>No staff available</MenuItem>
+                        ) : (
+                          staffOptions.map(s => (
+                            <MenuItem key={s.id} value={s.id}>{s.fullName}</MenuItem>
+                          ))
+                        )}
+                      </Select>
+                    </FormControl>
+                  )}
+                </>
+              )}
+
+              {/* Debt customer picker */}
+              {(item === 'New Debt' || item === 'Paid Debt') && (
+                <Box sx={{ mt: 1, p: 1, border: '1px dashed grey', borderRadius: 1 }}>
+                  <Typography variant="caption">Customer</Typography>
+                  {selectedCustomer ? (
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <Typography><strong>{selectedCustomer.fullName}</strong></Typography>
+                      <IconButton size="small" onClick={() => setSelectedCustomer(null)}>
+                        <ClearIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  ) : (
+                    <Button onClick={() => setOpenCustomerDialog(true)} fullWidth variant="outlined" size="small" sx={{ mt: 0.5 }}>
+                      Select Customer
+                    </Button>
+                  )}
                 </Box>
-              ) : (
-                <Button onClick={() => setOpenCustomerDialog(true)} fullWidth variant="outlined" size="small" sx={{ mt: 0.5 }}>
-                  Select Customer
-                </Button>
               )}
-            </Box>
-          )}
 
-          <TextField type="number" label="Quantity" value={quantity} onChange={(e) => setQuantity(e.target.value)} required />
-          <TextField type="number" label="Price" value={price} onChange={(e) => setPrice(e.target.value)} required />
-          <Typography variant="body2">Total: ₱{(Number(quantity || 0) * Number(price || 0)).toFixed(2)}</Typography>
-          <TextField
-            label={item === 'Expenses' && !isAdmin && expenseType === 'Misc' ? "Notes (Required for Misc)" : "Notes (Optional)"}
-            multiline
-            rows={3}
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
+              <Stack direction={{ xs: 'row', sm: 'row' }} spacing={1}>
+                <TextField type="number" label="Quantity" value={quantity} onChange={(e) => setQuantity(e.target.value)} required fullWidth />
+                <TextField type="number" label="Price" value={price} onChange={(e) => setPrice(e.target.value)} required fullWidth />
+              </Stack>
 
-          {/* Add / Cancel buttons right after Notes */}
-          <Stack direction="row" spacing={1}>
-            <Button
-              onClick={handleTransactionSubmit}
-              variant="contained"
-              fullWidth
-              disabled={isDebtItem && !selectedCustomer && !currentlyEditing}
-            >
-              {currentlyEditing ? 'Update Entry' : 'Add Entry'}
-            </Button>
-            {currentlyEditing && (
-              <Button variant="outlined" onClick={clearForm} fullWidth>
-                Cancel
-              </Button>
-            )}
-          </Stack>
-        </Card>
+              <Typography variant="body2">Total: ₱{(Number(quantity || 0) * Number(price || 0)).toFixed(2)}</Typography>
+              <TextField
+                label={item === 'Expenses' && !isAdmin && expenseType === 'Misc' ? "Notes (Required for Misc)" : "Notes (Optional)"}
+                multiline
+                rows={3}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+              />
+
+              {/* Add / Cancel buttons right after Notes */}
+              <Stack direction="row" spacing={1}>
+                <Button
+                  onClick={handleTransactionSubmit}
+                  variant="contained"
+                  fullWidth
+                  disabled={(item === 'New Debt' || item === 'Paid Debt') && !selectedCustomer && !currentlyEditing}
+                >
+                  {currentlyEditing ? 'Update Entry' : 'Add Entry'}
+                </Button>
+                {currentlyEditing && (
+                  <Button variant="outlined" onClick={clearForm} fullWidth>
+                    Cancel
+                  </Button>
+                )}
+              </Stack>
+            </Card>
+          </Collapse>
+        </Box>
 
         {/* RIGHT: table */}
         <Paper sx={{ flex: 1, minHeight: 0, display: 'flex', width: '100%' }}>
@@ -610,7 +689,8 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
               <Typography variant="subtitle1" fontWeight={600}>Logs</Typography>
               <Box sx={{ flexGrow: 1 }} />
               <Tooltip title={tableDisabled ? "Finish editing to delete" : "Delete Selected"}>
-                <Box component="span">
+                <Box component="span" sx={{ display: { xs: 'none', sm: 'inline-block' } }}>
+                  {/* Hide the delete button on xs to reduce clutter; keep behavior same on web */}
                   <Button
                     size="small"
                     variant="outlined"
@@ -632,17 +712,35 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
                 ...(tableDisabled ? { pointerEvents: 'none', opacity: 0.55 } : {}),
               }}
             >
-              <Table stickyHeader size="small">
+              <Table
+                stickyHeader
+                size="small"
+                sx={{
+                  // NEW (mobile): compact cells
+                  '& th, & td': {
+                    py: { xs: 0.5, sm: 1 },
+                    px: { xs: 0.75, sm: 1.5 },
+                    borderBottomWidth: { xs: 0.5, sm: 1 },
+                  },
+                  '& thead th': {
+                    fontSize: { xs: '0.72rem', sm: '0.875rem' },
+                    whiteSpace: { xs: 'nowrap', sm: 'normal' },
+                  },
+                  '& tbody td': {
+                    fontSize: { xs: '0.8rem', sm: '0.875rem' },
+                  },
+                }}
+              >
                 <TableHead>
                   <TableRow>
                     <TableCell padding="checkbox" />
                     <TableCell>Time</TableCell>
                     <TableCell>Item</TableCell>
-                    <TableCell align="right">Qty</TableCell>
-                    <TableCell align="right">Price</TableCell>
+                    <TableCell align="right" sx={{ display: { xs: 'none', sm: 'table-cell' } }}>Qty</TableCell>
+                    <TableCell align="right" sx={{ display: { xs: 'none', sm: 'table-cell' } }}>Price</TableCell>
                     <TableCell align="right">Total</TableCell>
-                    <TableCell>Identifier</TableCell>
-                    <TableCell align="right">Controls</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>Identifier</TableCell>
+                    <TableCell align="right">Edit</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -665,30 +763,53 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
                       </TableCell>
                       <TableCell>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                          <Typography variant="body2" fontWeight={600}>{tx.item}</Typography>
+                          <Typography variant="body2" fontWeight={600} noWrap>{tx.item}</Typography>
                           {tx.notes && <Tooltip title={tx.notes}><CommentIcon fontSize="inherit" /></Tooltip>}
                           {tx.isEdited && <Tooltip title="Edited"><HistoryIcon fontSize="inherit" /></Tooltip>}
                         </Box>
+                        {/* On mobile, show Identifier under Item to save a column */}
+                        <Typography
+                          variant="caption"
+                          sx={{ display: { xs: 'block', sm: 'none' }, opacity: 0.8 }}
+                        >
+                          {identifierText(tx)}
+                        </Typography>
                       </TableCell>
-                      <TableCell align="right">{tx.quantity}</TableCell>
-                      <TableCell align="right">₱{(tx.price || 0).toFixed(2)}</TableCell>
+                      <TableCell align="right" sx={{ display: { xs: 'none', sm: 'table-cell' } }}>{tx.quantity}</TableCell>
+                      <TableCell align="right" sx={{ display: { xs: 'none', sm: 'table-cell' } }}>₱{(tx.price || 0).toFixed(2)}</TableCell>
                       <TableCell align="right">₱{(tx.total || 0).toFixed(2)}</TableCell>
-                      <TableCell>{identifierText(tx)}</TableCell>
+                      <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>{identifierText(tx)}</TableCell>
                       <TableCell align="right">
                         <IconButton
                           size="small"
-                          onClick={() => setCurrentlyEditing(tx)}
+                          onClick={() => {
+                            setCurrentlyEditing(tx);
+                            if (isMobile) openControlsAndScroll();
+                          }}
                           disabled={tableDisabled && (!currentlyEditing || currentlyEditing?.id !== tx.id)}
                         >
                           <EditIcon fontSize="inherit" />
                         </IconButton>
-                        {/* Soft delete is via bulk selection for audit-trail reasons */}
                       </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </TableContainer>
+
+            {/* NEW (mobile): a lean delete button below table to keep feature parity without crowding header */}
+            <Box sx={{ display: { xs: 'flex', sm: 'none' }, mt: 1 }}>
+              <Button
+                size="small"
+                variant="outlined"
+                color="error"
+                onClick={handleDeleteSelected}
+                disabled={tableDisabled || selectedTransactions.length === 0}
+                fullWidth
+              >
+                Delete Selected
+              </Button>
+            </Box>
           </Box>
         </Paper>
       </Box>
