@@ -291,6 +291,12 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     e?.preventDefault?.();
 
     // validations
+    if (!quantity || price === "") {
+        return alert("Please enter both a quantity and a price.");
+    }
+    if (Number(quantity) <= 0) {
+        return alert("Quantity must be a positive number.");
+    }
     if (item === "Expenses") {
       if (!expenseType) return alert("Please select an expense type.");
       if (
@@ -352,6 +358,13 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     } catch (err) {
       console.error(err);
       alert("Failed to save transaction.");
+    }
+  };
+
+  // Handle "Enter" key on quantity and price fields
+  const handleEnterSubmit = (e) => {
+    if (e.key === 'Enter') {
+      handleSubmit(e);
     }
   };
 
@@ -637,6 +650,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
         label="Quantity"
         value={quantity}
         onChange={(e) => setQuantity(e.target.value)}
+        onKeyDown={handleEnterSubmit}
         required
         size={fieldSize}
       />
@@ -645,6 +659,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
         label="Price"
         value={price}
         onChange={(e) => setPrice(e.target.value)}
+        onKeyDown={handleEnterSubmit}
         required
         size={fieldSize}
       />
@@ -768,14 +783,11 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           minHeight: 0,
         }}
       >
-        {/* LEFT: Log Entry + Reconciliation (together as before) */}
+        {/* LEFT: Reconciliation */}
         <Box sx={{ width: 360, display: "flex", flexDirection: "column", gap: 2 }}>
           <Card sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2 }}>
             {FormContent}
-            <Divider sx={{ my: 1 }} />
-            {ReconContent}
-            <Stack direction="row" spacing={1} sx={{ mt: "auto" }}>
-              <Button
+            <Button
                 onClick={handleSubmit}
                 variant="contained"
                 fullWidth
@@ -788,6 +800,10 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
                   Cancel
                 </Button>
               )}
+            <Divider sx={{ my: 1 }} />
+            {ReconContent}
+            <Stack direction="row" spacing={1} sx={{ mt: "auto" }}>
+              
             </Stack>
             <Button onClick={saveRecon} variant="contained">Save Reconciliation</Button>
           </Card>
