@@ -395,7 +395,7 @@ export default function Shifts() {
     document.body.removeChild(a);
   };
 
-  /* -------------------- Add/Edit/Delete handlers (unchanged) -------------------- */
+  /* -------------------- Add/Edit/Delete handlers -------------------- */
   const handleAddShift = async () => {
     try {
       if (!newStaffEmail || !newStart) {
@@ -410,12 +410,21 @@ export default function Shifts() {
         pcRentalTotal: 0,
         systemTotal: 0,
       };
-      await addDoc(collection(db, "shifts"), payload);
+      const docRef = await addDoc(collection(db, "shifts"), payload);
+
+      // Create the new shift object to pass to the detail view
+      const newShiftForView = { id: docRef.id, ...payload };
+
+      // Reset form and close dialog
       setAddOpen(false);
       setNewStaffEmail(staffOptions[0]?.email || "");
       setNewStart("");
       setNewEnd("");
       setNewShiftPeriod(SHIFT_PERIODS[0]);
+      
+      // Automatically open the detail view for the new shift
+      setViewingShift(newShiftForView);
+
     } catch (e) {
       console.error("Add shift failed:", e);
       alert(`Failed to add shift: ${e.message || e.code || e}`);

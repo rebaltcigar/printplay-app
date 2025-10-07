@@ -548,6 +548,12 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     }
   };
 
+  const handleReconEnter = (e) => {
+    if (e.key === 'Enter') {
+      saveRecon();
+    }
+  };
+
   const formatTime = (ts) =>
     ts?.seconds ? new Date(ts.seconds * 1000).toLocaleTimeString() : (ts instanceof Date ? ts.toLocaleTimeString() : "—");
 
@@ -687,6 +693,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
         type="number"
         value={pcRental}
         onChange={(e) => setPcRental(e.target.value)}
+        onKeyDown={handleReconEnter}
         fullWidth
         size={fieldSize}
       />
