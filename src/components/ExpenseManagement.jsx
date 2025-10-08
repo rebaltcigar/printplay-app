@@ -28,6 +28,8 @@ import EditIcon from "@mui/icons-material/Edit";
 import HistoryIcon from "@mui/icons-material/History";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import DeleteIcon from "@mui/icons-material/Delete";
+import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
 import {
   collection,
   addDoc,
@@ -39,6 +41,7 @@ import {
   serverTimestamp,
   onSnapshot,
   getDocs,
+  deleteDoc,
 } from "firebase/firestore";
 import { db } from "../firebase";
 
@@ -61,7 +64,6 @@ function toDateOnlyString(d) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-// --- NEW: Helper function to display both date and time ---
 function toDateTimeString(d) {
   if (!d) return "";
   const dt = new Date(d);
@@ -77,7 +79,6 @@ function toDateTimeString(d) {
 
 function toCurrency(n) {
   const val = Number(n || 0);
-  // Format with commas and two decimal places
   return `₱${val.toLocaleString("en-US", {
     maximumFractionDigits: 2,
     minimumFractionDigits: 2,
@@ -96,7 +97,7 @@ export default function ExpenseManagement({ user }) {
   const [formNotes, setFormNotes] = useState("");
   const [currentlyEditing, setCurrentlyEditing] = useState(null);
 
-  const [staffOptions, setStaffOptions] = useState([]); // {id, fullName, email}
+  const [staffOptions, setStaffOptions] = useState([]);
   const [creditServices, setCreditServices] = useState([]);
   const dateInputRef = useRef(null);
 
@@ -176,7 +177,7 @@ export default function ExpenseManagement({ user }) {
   useEffect(() => {
     setLoading(true);
     const start = new Date(filterStart);
-    start.setHours(0, 0, 0, 0); // Ensure filter starts at the beginning of the day
+    start.setHours(0, 0, 0, 0);
     const end = new Date(filterEnd);
     end.setHours(23, 59, 59, 999);
 
@@ -211,15 +212,14 @@ export default function ExpenseManagement({ user }) {
     return expenses.map((e) => {
       const tsDate = e.timestamp?.seconds
         ? new Date(e.timestamp.seconds * 1000)
-        : new Date(e.timestamp); // Handle different timestamp formats
+        : new Date(e.timestamp);
       return {
         ...e,
-        // --- MODIFIED: Prepare both date-only (for editing) and full datetime (for display) ---
         _dateOnly: toDateOnlyString(tsDate),
         _dateTime: toDateTimeString(tsDate),
         qty: Number(e.quantity || 0),
         price: Number(e.price || 0),
-        total: Number(e.total || (Number(e.quantity || 0) * Number(e.price || 0))),
+        total: Number(e.total || Number(e.quantity || 0) * Number(e.price || 0)),
       };
     });
   }, [expenses]);
@@ -247,7 +247,7 @@ export default function ExpenseManagement({ user }) {
 
     tableRows.forEach((r) => {
       const row = [
-        r._dateTime, // Use the new full date/time string
+        r._dateTime,
         "Expenses",
         r.qty,
         r.price,
@@ -271,7 +271,6 @@ export default function ExpenseManagement({ user }) {
     URL.revokeObjectURL(url);
   };
 
-  // Add expense
   const handleAddExpense = async (e) => {
     e.preventDefault();
 
@@ -284,10 +283,8 @@ export default function ExpenseManagement({ user }) {
     const price = Number(formPrice || 0);
     const total = qty * price;
 
-    // --- MODIFIED: Combine selected date with current time ---
-    const transactionDate = new Date(formDate); // Gets the date from the form (time is midnight)
-    const now = new Date(); // Gets the current time
-    // Set the time of the transaction to the current time
+    const transactionDate = new Date(formDate);
+    const now = new Date();
     transactionDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds());
 
     const selectedStaff = staffOptions.find((s) => s.id === formStaffId) || null;
@@ -304,7 +301,7 @@ export default function ExpenseManagement({ user }) {
       notes: formNotes || "",
       shiftId: null,
       source: "admin_manual",
-      timestamp: transactionDate, // Use the new combined date and time
+      timestamp: transactionDate,
       staffEmail: user?.email || "admin",
       isDeleted: false,
       isEdited: false,
@@ -312,7 +309,6 @@ export default function ExpenseManagement({ user }) {
 
     try {
       await addDoc(collection(db, "transactions"), expenseDoc);
-      // reset except date
       setFormType("");
       setFormStaffId("");
       setFormStaffName("");
@@ -328,7 +324,7 @@ export default function ExpenseManagement({ user }) {
 
   const startEdit = (row) => {
     setCurrentlyEditing(row);
-    setFormDate(row._dateOnly); // Use the date-only string for the picker
+    setFormDate(row._dateOnly);
     setFormType(row.expenseType || "");
     setFormStaffId(row.expenseStaffId || "");
     setFormStaffName(row.expenseStaffName || "");
@@ -370,9 +366,8 @@ export default function ExpenseManagement({ user }) {
     const price = Number(formPrice || 0);
     const total = qty * price;
 
-    // --- MODIFIED: Combine selected date with current time on edit as well ---
-    const transactionDate = new Date(formDate); // Gets the potentially changed date
-    const now = new Date(); // Gets the current time of the edit
+    const transactionDate = new Date(formDate);
+    const now = new Date();
     transactionDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds());
 
     const selectedStaff = staffOptions.find((s) => s.id === formStaffId) || null;
@@ -390,7 +385,7 @@ export default function ExpenseManagement({ user }) {
         price,
         total,
         notes: formNotes || "",
-        timestamp: transactionDate, // Use the new combined date and time
+        timestamp: transactionDate,
         isEdited: true,
         adminEdited: true,
         editedBy: user?.email || "admin",
@@ -405,7 +400,39 @@ export default function ExpenseManagement({ user }) {
     }
   };
 
-  /* ---------- shared form content ---------- */
+  const handleSoftDelete = async (row) => {
+    const reason = window.prompt("Reason for deleting this expense?");
+    if (!reason) {
+      return;
+    }
+    try {
+      await updateDoc(doc(db, "transactions", row.id), {
+        isDeleted: true,
+        deletedReason: reason,
+        deletedBy: user?.email || "admin",
+        deletedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      console.error("Failed to soft delete expense:", err);
+      alert("Failed to delete expense. Please try again.");
+    }
+  };
+
+  const handlePermanentDelete = async (row) => {
+    const confirmation = window.confirm(
+      "DANGER: This will permanently delete the expense and it CANNOT be recovered.\n\nAre you absolutely sure you want to proceed?"
+    );
+    if (!confirmation) {
+      return;
+    }
+    try {
+      await deleteDoc(doc(db, "transactions", row.id));
+    } catch (err) {
+      console.error("Failed to permanently delete expense:", err);
+      alert("Failed to permanently delete expense. Please try again.");
+    }
+  };
+
   const FormContent = (
     <Stack
       component="form"
@@ -528,7 +555,6 @@ export default function ExpenseManagement({ user }) {
           alignItems: "stretch",
         }}
       >
-        {/* LEFT: Add/Edit Expense */}
         <Card sx={{ width: 360, p: 2, display: "flex", flexDirection: "column", gap: 2 }}>
           <Typography variant="subtitle1" fontWeight={600}>
             {currentlyEditing ? "Edit Expense" : "Add Expense (Admin)"}
@@ -537,7 +563,6 @@ export default function ExpenseManagement({ user }) {
           {FormContent}
         </Card>
 
-        {/* RIGHT: Filters + Table */}
         <Paper sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <Box sx={{ p: 2, pt: 1, display: "flex", alignItems: "center", gap: 2 }}>
             <Typography variant="subtitle1" fontWeight={600}>
@@ -570,7 +595,6 @@ export default function ExpenseManagement({ user }) {
             <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>
-                  {/* --- MODIFIED: Table header text --- */}
                   <TableCell>Date / Time</TableCell>
                   <TableCell>Item</TableCell>
                   <TableCell align="right">Qty</TableCell>
@@ -594,7 +618,6 @@ export default function ExpenseManagement({ user }) {
                 ) : (
                   tableRows.map((r) => (
                     <TableRow key={r.id} hover>
-                      {/* --- MODIFIED: Use the new _dateTime property for display --- */}
                       <TableCell>{r._dateTime}</TableCell>
                       <TableCell>
                         Expenses{" "}
@@ -628,6 +651,26 @@ export default function ExpenseManagement({ user }) {
                             <EditIcon fontSize="inherit" />
                           </IconButton>
                         </Tooltip>
+                        {/* --- MODIFIED: Added color="warning" --- */}
+                        <Tooltip title="Delete (Soft)">
+                          <IconButton
+                            size="small"
+                            onClick={() => handleSoftDelete(r)}
+                            color="warning"
+                          >
+                            <DeleteIcon fontSize="inherit" />
+                          </IconButton>
+                        </Tooltip>
+                        {/* --- MODIFIED: Added color="error" --- */}
+                        <Tooltip title="Delete Permanently">
+                          <IconButton
+                            size="small"
+                            onClick={() => handlePermanentDelete(r)}
+                            color="error"
+                          >
+                            <DeleteForeverIcon fontSize="inherit" />
+                          </IconButton>
+                        </Tooltip>
                       </TableCell>
                     </TableRow>
                   ))
@@ -653,7 +696,6 @@ export default function ExpenseManagement({ user }) {
           pb: "calc(env(safe-area-inset-bottom, 0) + 8px)",
         }}
       >
-        {/* Collapsible Controls */}
         <Card
           ref={controlsRef}
           sx={{ p: 1.0, overflow: "visible", position: "relative" }}
@@ -671,7 +713,6 @@ export default function ExpenseManagement({ user }) {
           </Collapse>
         </Card>
 
-        {/* Collapsible Filters */}
         <Card sx={{ p: 1.0, overflow: "visible", position: "relative" }}>
           <Box sx={{ display: "flex", alignItems: "center" }}>
             <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
@@ -719,7 +760,6 @@ export default function ExpenseManagement({ user }) {
           </Collapse>
         </Card>
 
-        {/* Table */}
         <Paper
           sx={{
             flex: "1 1 auto",
@@ -787,6 +827,14 @@ export default function ExpenseManagement({ user }) {
                       <TableCell align="right">
                         <IconButton size="small" onClick={() => startEdit(r)}>
                           <EditIcon fontSize="inherit" />
+                        </IconButton>
+                        {/* --- MODIFIED: Added color="warning" for mobile --- */}
+                        <IconButton
+                          size="small"
+                          onClick={() => handleSoftDelete(r)}
+                          color="warning"
+                        >
+                          <DeleteIcon fontSize="inherit" />
                         </IconButton>
                       </TableCell>
                     </TableRow>

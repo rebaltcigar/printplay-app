@@ -52,7 +52,11 @@ import {
   updateDoc,
   where,
   writeBatch,
+  // --- NEW: Import FieldValue for atomic operations ---
+  FieldValue,
+  deleteField,
 } from "firebase/firestore";
+
 
 import CustomerDialog from "./CustomerDialog";
 import logo from "/icon.ico";
@@ -142,17 +146,14 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     const unsubServices = onSnapshot(qServices, (snap) => {
       const allServices = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-      // Filter for parent services for the main "Item" dropdown
       const parentServices = allServices.filter((s) => !s.parentServiceId);
       setServiceItems(parentServices);
 
-      // Dynamically find the "Expenses" parent service ID
       const expensesParent = allServices.find(
         (s) => s.serviceName === "Expenses"
       );
       const expensesParentId = expensesParent ? expensesParent.id : null;
 
-      // Filter for expense sub-services using the dynamic parent ID
       let expenseSubServices = [];
       if (expensesParentId) {
         expenseSubServices = allServices
@@ -197,7 +198,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     return () => unsubServices();
   }, [shift.id]);
 
-  // load transactions for this shift
   useEffect(() => {
     if (!shift?.id) return;
     const qTx = query(
@@ -212,7 +212,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     return () => unsubTx();
   }, [shift]);
 
-  // preselect staff when Salary/S. Advance chosen
   useEffect(() => {
     if (
       (expenseType === "Salary" || expenseType === "Salary Advance") &&
@@ -230,7 +229,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     }
   }, [expenseType, staffOptions, expenseStaffId, shift.staffEmail]);
 
-  // when picking a service, prefill price
   const handleItemChange = (e) => {
     const val = e.target.value;
     setItem(val);
@@ -268,7 +266,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     return "—";
   };
 
-  // populate form when editing
   useEffect(() => {
     if (!currentlyEditing) return;
     const t = currentlyEditing;
@@ -301,11 +298,9 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     setCurrentlyEditing(null);
   };
 
-  // ----- add / edit -----
   const handleSubmit = async (e) => {
     e?.preventDefault?.();
 
-    // validations
     if (!quantity || price === "") {
       return alert("Please enter both a quantity and a price.");
     }
@@ -380,14 +375,12 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     }
   };
 
-  // Handle "Enter" key on quantity and price fields
   const handleEnterSubmit = (e) => {
     if (e.key === "Enter") {
       handleSubmit(e);
     }
   };
 
-  // ----- deletes -----
   const handleRowDelete = async (tx) => {
     const reason = window.prompt("Reason for deleting this entry?");
     if (!reason) return alert("Deletion cancelled. Reason is required.");
@@ -432,7 +425,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     }
   };
 
-  // ----- Bulk date edit -----
   const openBulkDateDialog = () => {
     if (selectedTransactions.length === 1) {
       const row = transactions.find((t) => t.id === selectedTransactions[0]);
@@ -502,14 +494,12 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     }
   };
 
-  // ----- reconciliation -----
   const handleReconChange = (denKey, val) =>
     setRecon((p) => ({ ...p, [denKey]: val }));
 
   const cashOnHand = useMemo(
     () =>
       Object.entries(recon).reduce((sum, [key, count]) => {
-        // key is now 'b_1000', 'c_20', etc.
         const denominationValue = Number(key.split("_")[1]);
         if (!isNaN(denominationValue)) {
           return sum + denominationValue * Number(count || 0);
@@ -544,7 +534,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     [servicesTotal, expensesTotal, pcRental]
   );
 
-  // Write back latest totals to the shift (debounced) — DB stays numeric
   useEffect(() => {
     let t;
     const write = async () => {
@@ -565,11 +554,13 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
 
   const saveRecon = async () => {
     try {
-      await updateDoc(doc(db, "shifts", shift.id), {
-        denominations: recon,
-        pcRentalTotal: Number(pcRental || 0),
-        systemTotal,
-      });
+      const payload = {
+        denominations: deleteField(),
+      };
+      payload.denominations = recon;
+      payload.pcRentalTotal = Number(pcRental || 0);
+      payload.systemTotal = systemTotal;
+      await updateDoc(doc(db, "shifts", shift.id), payload);
       alert("Reconciliation saved.");
     } catch (e) {
       console.error(e);
@@ -590,13 +581,11 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
       ? ts.toLocaleTimeString()
       : "—";
 
-  /* -------- Split content: Form vs Reconciliation -------- */
   const FormContent = (
     <>
       <Typography variant="subtitle1" fontWeight={600}>
         Log Entry
       </Typography>
-
       <FormControl fullWidth required>
         <InputLabel>Item</InputLabel>
         <Select
@@ -613,7 +602,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           ))}
         </Select>
       </FormControl>
-
       {item === "Expenses" && (
         <>
           <FormControl fullWidth required>
@@ -631,7 +619,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
               ))}
             </Select>
           </FormControl>
-
           {(expenseType === "Salary" || expenseType === "Salary Advance") && (
             <FormControl fullWidth required>
               <InputLabel>Staff</InputLabel>
@@ -657,7 +644,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           )}
         </>
       )}
-
       {(item === "New Debt" || item === "Paid Debt") && (
         <Box sx={{ mt: 0.5, p: 1, border: "1px dashed grey", borderRadius: 1 }}>
           <Typography variant="caption">Customer</Typography>
@@ -692,7 +678,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           )}
         </Box>
       )}
-
       <TextField
         type="number"
         label="Quantity"
@@ -725,80 +710,94 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     </>
   );
 
-  const ReconContent = (
-    <>
-      <Typography variant="subtitle1" fontWeight={600}>
-        Admin Cash Reconciliation
-      </Typography>
-      <TextField
-        label="PC Rental Total"
-        type="number"
-        value={pcRental}
-        onChange={(e) => setPcRental(e.target.value)}
-        onKeyDown={handleReconEnter}
-        fullWidth
-        size={fieldSize}
-      />
+  const ReconContent = () => {
+    // --- CORRECTED: Use Cash on Hand - System Total for over/short logic ---
+    const difference = cashOnHand - systemTotal;
+    const hasReconData = Object.keys(recon).length > 0;
 
-      <Typography variant="subtitle2" sx={{ mt: 1 }}>
-        Bills
-      </Typography>
-      <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-        {BILL_DENOMS.map((d) => (
-          <TextField
-            key={`bill-${d}`}
-            type="number"
-            size="small"
-            label={`₱${d} x`}
-            value={recon[`b_${d}`] || ""}
-            onChange={(e) => handleReconChange(`b_${d}`, e.target.value)}
-            sx={{ width: 110 }}
-          />
-        ))}
-      </Box>
-
-      <Typography variant="subtitle2">Coins</Typography>
-      <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-        {COIN_DENOMS.map((d) => (
-          <TextField
-            key={`coin-${d}`}
-            type="number"
-            size="small"
-            label={`₱${d} x`}
-            value={recon[`c_${d}`] || ""}
-            onChange={(e) => handleReconChange(`c_${d}`, e.target.value)}
-            sx={{ width: 110 }}
-          />
-        ))}
-      </Box>
-
-      <Divider />
-      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-        <Typography>System Total</Typography>
-        <Typography>{fmtPeso(systemTotal)}</Typography>
-      </Box>
-      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-        <Typography>Cash on Hand</Typography>
-        <Typography>{fmtPeso(cashOnHand)}</Typography>
-      </Box>
-      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-        <Typography variant="subtitle1">Difference</Typography>
-        <Typography
-          variant="subtitle1"
-          color={cashOnHand - systemTotal !== 0 ? "error" : "inherit"}
-        >
-          {fmtPeso(cashOnHand - systemTotal)}
+    return (
+      <>
+        <Typography variant="subtitle1" fontWeight={600}>
+          Admin Cash Reconciliation
         </Typography>
-      </Box>
-    </>
-  );
+        <TextField
+          label="PC Rental Total"
+          type="number"
+          value={pcRental}
+          onChange={(e) => setPcRental(e.target.value)}
+          onKeyDown={handleReconEnter}
+          fullWidth
+          size={fieldSize}
+        />
+        <Typography variant="subtitle2" sx={{ mt: 1 }}>
+          Bills
+        </Typography>
+        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+          {BILL_DENOMS.map((d) => (
+            <TextField
+              key={`bill-${d}`}
+              type="number"
+              size="small"
+              label={`₱${d} x`}
+              value={recon[`b_${d}`] || ""}
+              onChange={(e) => handleReconChange(`b_${d}`, e.target.value)}
+              sx={{ width: 110 }}
+            />
+          ))}
+        </Box>
+        <Typography variant="subtitle2">Coins</Typography>
+        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+          {COIN_DENOMS.map((d) => (
+            <TextField
+              key={`coin-${d}`}
+              type="number"
+              size="small"
+              label={`₱${d} x`}
+              value={recon[`c_${d}`] || ""}
+              onChange={(e) => handleReconChange(`c_${d}`, e.target.value)}
+              sx={{ width: 110 }}
+            />
+          ))}
+        </Box>
+        <Divider />
+        <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+          <Typography>System Total</Typography>
+          <Typography>{fmtPeso(systemTotal)}</Typography>
+        </Box>
+        <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+          <Typography>Cash on Hand</Typography>
+          <Typography>{hasReconData ? fmtPeso(cashOnHand) : "—"}</Typography>
+        </Box>
+        <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+          <Typography variant="subtitle1">Difference</Typography>
+          {hasReconData ? (
+            <Typography
+              variant="subtitle1"
+              fontWeight="bold"
+              sx={{
+                color:
+                  difference === 0
+                    ? "success.main"
+                    : difference > 0
+                    ? "warning.main"
+                    : "error.main",
+              }}
+            >
+              {difference > 0 ? `+${fmtPeso(difference)}` : fmtPeso(difference)}
+            </Typography>
+          ) : (
+            <Typography variant="subtitle1">—</Typography>
+          )}
+        </Box>
+      </>
+    );
+  };
 
-  // helper: start editing; auto-expand & scroll to controls on mobile
+
   const startEdit = (tx) => {
     setCurrentlyEditing(tx);
     if (isMobile) {
       if (!txControlsOpen) setTxControlsOpen(true);
-      // scroll after expand animation kicks in
       setTimeout(() => {
         txControlsRef.current?.scrollIntoView({
           behavior: "smooth",
@@ -808,7 +807,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     }
   };
 
-  // ----- render -----
   return (
     <Box
       sx={{
@@ -819,7 +817,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
         minHeight: "100%",
       }}
     >
-      {/* header */}
       <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
         <img src={logo} width={18} height={18} alt="" />
         <Button onClick={onBack} size="small" sx={{ ml: 0.5 }}>
@@ -835,7 +832,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           : ""}
       </Typography>
 
-      {/* --- DESKTOP / WEB (unchanged) --- */}
       <Box
         sx={{
           display: { xs: "none", sm: "flex" },
@@ -844,7 +840,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           minHeight: 0,
         }}
       >
-        {/* LEFT: Reconciliation */}
         <Box
           sx={{ width: 360, display: "flex", flexDirection: "column", gap: 2 }}
         >
@@ -864,7 +859,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
               </Button>
             )}
             <Divider sx={{ my: 1 }} />
-            {ReconContent}
+            <ReconContent />
             <Stack direction="row" spacing={1} sx={{ mt: "auto" }}></Stack>
             <Button onClick={saveRecon} variant="contained">
               Save Reconciliation
@@ -872,7 +867,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           </Card>
         </Box>
 
-        {/* RIGHT: Transactions table */}
         <Paper
           sx={{
             flex: 1,
@@ -1035,7 +1029,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
         </Paper>
       </Box>
 
-      {/* --- MOBILE LAYOUT --- */}
       <Box
         sx={{
           display: { xs: "flex", sm: "none" },
@@ -1045,7 +1038,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           flex: 1,
         }}
       >
-        {/* Transaction Controls (collapsible) */}
         <Card ref={txControlsRef} sx={{ p: 1.25 }}>
           <Box sx={{ display: "flex", alignItems: "center" }}>
             <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
@@ -1061,7 +1053,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           <Collapse in={txControlsOpen} unmountOnExit>
             <Stack spacing={1.25} sx={{ mt: 1 }}>
               {FormContent}
-              {/* ENTRY BUTTONS LIVE HERE ON MOBILE */}
               <Stack spacing={1} direction="column">
                 <Button
                   variant="contained"
@@ -1087,7 +1078,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           </Collapse>
         </Card>
 
-        {/* Actions (buttons) collapsible, stacked) — BULK TABLE ACTIONS ONLY */}
         <Card sx={{ p: 1.0 }}>
           <Box sx={{ display: "flex", alignItems: "center" }}>
             <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
@@ -1131,7 +1121,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           </Collapse>
         </Card>
 
-        {/* Table ~2/3 height */}
         <Paper
           sx={{
             flex: "1 1 auto",
@@ -1242,7 +1231,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           </Box>
         </Paper>
 
-        {/* Reconciliation (collapsible, separate) */}
         <Card sx={{ p: 1.25 }}>
           <Box sx={{ display: "flex", alignItems: "center" }}>
             <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
@@ -1254,7 +1242,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           </Box>
           <Collapse in={reconOpen} unmountOnExit>
             <Stack spacing={1.25} sx={{ mt: 1 }}>
-              {ReconContent}
+              <ReconContent />
               <Button onClick={saveRecon} variant="contained" size="small">
                 Save Reconciliation
               </Button>
@@ -1263,7 +1251,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
         </Card>
       </Box>
 
-      {/* Bulk Date Edit Dialog */}
       <Dialog open={bulkOpen} onClose={() => setBulkOpen(false)} fullWidth maxWidth="xs">
         <DialogTitle>Edit Date/Time</DialogTitle>
         <DialogContent dividers>
@@ -1287,7 +1274,6 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
         </DialogActions>
       </Dialog>
 
-      {/* dialogs */}
       <CustomerDialog
         open={openCustomerDialog}
         onClose={() => setOpenCustomerDialog(false)}

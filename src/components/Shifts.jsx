@@ -10,6 +10,7 @@ import {
   TableRow,
   TableCell,
   TableBody,
+  TableFooter,
   TextField,
   Button,
   Stack,
@@ -49,8 +50,8 @@ import {
   getDocs,
   writeBatch,
   updateDoc,
-  setDoc,               // for writing app_status/current_shift
-  serverTimestamp,      // timestamp for resume action
+  setDoc,
+  serverTimestamp,
 } from "firebase/firestore";
 
 // shared peso formatter (commas, no decimals; UI-only)
@@ -62,6 +63,25 @@ const SHIFT_PERIODS = ["Morning", "Afternoon", "Evening"];
 const pad2 = (n) => String(n).padStart(2, "0");
 const ymd = (d) =>
   `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+const calculateOnHand = (denominations) => {
+  if (!denominations || typeof denominations !== "object" || Object.keys(denominations).length === 0) {
+    return null;
+  }
+
+  let total = 0;
+  for (const key in denominations) {
+    const valueStr = key.split("_")[1];
+    if (valueStr) {
+      const value = parseFloat(valueStr);
+      const count = Number(denominations[key]);
+      if (!isNaN(value) && !isNaN(count)) {
+        total += value * count;
+      }
+    }
+  }
+  return total;
+};
 
 const thisMonthDefaults = () => {
   const now = new Date();
@@ -109,12 +129,10 @@ const normalize = (s) => String(s ?? "").trim().toLowerCase();
 /* -------------------- aggregation (spec-compliant) -------------------- */
 const aggregateShiftTransactions = (txList, serviceMeta, pcRental = 0) => {
   const nameToCategory = {};
-  const orderedNames = [];
   for (const s of serviceMeta || []) {
     const n = normalize(s.name);
     if (!n) continue;
     nameToCategory[n] = s.category || "";
-    orderedNames.push(s.name);
   }
 
   const serviceTotals = {};
@@ -165,18 +183,16 @@ export default function Shifts() {
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
 
   const [shifts, setShifts] = useState([]);
-  const [services, setServices] = useState([]); // [{name, category}]
+  const [services, setServices] = useState([]);
   const [userMap, setUserMap] = useState({});
   const [viewingShift, setViewingShift] = useState(null);
 
-  // DEFAULT: this month
   const { startStr: defaultStart, endStr: defaultEnd } = thisMonthDefaults();
   const [startDate, setStartDate] = useState(defaultStart);
   const [endDate, setEndDate] = useState(defaultEnd);
 
-  const [view, setView] = useState("summary"); // summary | detailed
+  const [view, setView] = useState("summary");
 
-  // dialogs
   const [addOpen, setAddOpen] = useState(false);
   const [newStaffEmail, setNewStaffEmail] = useState("");
   const [newShiftPeriod, setNewShiftPeriod] = useState(SHIFT_PERIODS[0]);
@@ -195,19 +211,15 @@ export default function Shifts() {
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [shiftToDelete, setShiftToDelete] = useState(null);
-  const [deleteMode, setDeleteMode] = useState("unlink"); // unlink | purge
+  const [deleteMode, setDeleteMode] = useState("unlink");
 
-  // live aggregates keyed by shift.id
   const [txAggByShift, setTxAggByShift] = useState({});
-  const txUnsubsRef = useRef({}); // { [shiftId]: unsubscribe }
+  const txUnsubsRef = useRef({});
 
-  // current (active) shift singleton
   const [currentShift, setCurrentShift] = useState(null);
   const isAnyShiftActive = !!(currentShift && currentShift.activeShiftId);
   const activeShiftId = currentShift?.activeShiftId || null;
 
-  /* --------- Current shift singleton doc (listen) --------- */
-  // IMPORTANT: rules expose /app_status/current_shift (single doc)
   useEffect(() => {
     const ref = doc(db, "app_status", "current_shift");
     const unsub = onSnapshot(
@@ -218,18 +230,16 @@ export default function Shifts() {
     return () => unsub();
   }, []);
 
-  // Only show Resume on the last two shifts in the current (DESC) list
   const lastTwoShiftIds = useMemo(() => shifts.slice(0, 2).map((s) => s.id), [shifts]);
 
-  // Resume handler: write { activeShiftId, staffEmail } to /app_status/current_shift
   const handleResumeShift = async (shift) => {
     try {
-      if (isAnyShiftActive) return; // guard: don't resume if something is already active
+      if (isAnyShiftActive) return;
       await setDoc(
         doc(db, "app_status", "current_shift"),
         {
           activeShiftId: shift.id,
-          staffEmail: shift.staffEmail, // rules allow admin OR staff matching this email
+          staffEmail: shift.staffEmail,
           resumedAt: serverTimestamp(),
         },
         { merge: true }
@@ -240,7 +250,6 @@ export default function Shifts() {
     }
   };
 
-  /* --------- Shifts (with date filters) --------- */
   useEffect(() => {
     let qRef = query(collection(db, "shifts"), orderBy("startTime", "desc"));
     if (startDate) qRef = query(qRef, where("startTime", ">=", Timestamp.fromDate(new Date(startDate))));
@@ -262,7 +271,6 @@ export default function Shifts() {
     return () => unsub();
   }, [startDate, endDate]);
 
-  /* --------- Users map --------- */
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "users"), (snap) => {
       const map = {};
@@ -275,7 +283,6 @@ export default function Shifts() {
     return () => unsub();
   }, []);
 
-  /* --------- Staff list --------- */
   useEffect(() => {
     const qRef = query(collection(db, "users"), where("role", "==", "staff"));
     const unsub = onSnapshot(qRef, (snap) => {
@@ -289,19 +296,14 @@ export default function Shifts() {
       if (!newStaffEmail && list.length) setNewStaffEmail(list[0].email);
     });
     return () => unsub();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [newStaffEmail]);
 
-  /* --------- Services (serviceName + category only) --------- */
   useEffect(() => {
     const qRef = query(collection(db, "services"), orderBy("sortOrder"));
     const unsub = onSnapshot(qRef, (snap) => {
       const meta = snap.docs.map((d) => {
         const v = d.data() || {};
-        return {
-          name: v.serviceName || "",
-          category: v.category || "",
-        };
+        return { name: v.serviceName || "", category: v.category || "" };
       });
       setServices(meta.filter((s) => s.name));
     });
@@ -309,18 +311,12 @@ export default function Shifts() {
   }, []);
 
   const serviceNames = useMemo(() => services.map((s) => s.name), [services]);
-  const serviceIndexByLower = useMemo(() => {
-    const m = new Map();
-    services.forEach((s) => m.set(normalize(s.name), s));
-    return m;
-  }, [services]);
 
-  /* --------- subscribe to transactions per shift (shiftId only) --------- */
   useEffect(() => {
     const desired = new Set(shifts.map((s) => s.id));
     for (const id of Object.keys(txUnsubsRef.current)) {
       if (!desired.has(id)) {
-        try { txUnsubsRef.current[id](); } catch {}
+        try { txUnsubsRef.current[id](); } catch { }
         delete txUnsubsRef.current[id];
       }
     }
@@ -344,16 +340,12 @@ export default function Shifts() {
 
     return () => {
       for (const id of Object.keys(txUnsubsRef.current)) {
-        try { txUnsubsRef.current[id](); } catch {}
+        try { txUnsubsRef.current[id](); } catch { }
       }
       txUnsubsRef.current = {};
     };
   }, [shifts, services]);
 
-  /* ---------- Columns ---------- */
-  const serviceColumns = useMemo(() => ["__PC_RENTAL__", ...serviceNames, "__SALES__", "__EXPENSES__", "__SYSTEM__"], [serviceNames]);
-
-  /* ---------- Totals for footer ---------- */
   const perServiceTotals = useMemo(() => {
     const totals = {};
     serviceNames.forEach((n) => (totals[n] = 0));
@@ -372,35 +364,48 @@ export default function Shifts() {
     let sales = 0;
     let expenses = 0;
     let system = 0;
+    let onHand = 0;
+    let shiftsWithDenominations = 0;
+
     for (const s of shifts) {
       const agg = txAggByShift[s.id];
       pcRental += Number(s?.pcRentalTotal || 0);
+      const currentOnHand = calculateOnHand(s.denominations);
+      if (currentOnHand !== null) {
+        onHand += currentOnHand;
+        shiftsWithDenominations++;
+      }
       if (agg) {
         sales += Number(agg.sales || 0);
         expenses += Number(agg.expenses || 0);
         system += Number(agg.systemTotal || 0);
       }
     }
-    return { pcRental, sales, expenses, system };
+    // --- CORRECTED FORMULA ---
+    const difference = onHand - system;
+    return { pcRental, sales, expenses, system, onHand, difference, shiftsWithDenominations };
   }, [shifts, txAggByShift]);
 
-  /* -------------------- CSV Export -------------------- */
   const handleExportToCSV = () => {
     let headers;
     let rows;
 
     if (view === "summary") {
-      headers = ["Date", "Staff", "Shift", "PC Rental", "Sales", "Expenses", "Total"];
+      headers = ["Date", "Staff", "Shift", "Sales", "Expenses", "Total", "On Hand", "Difference"];
       rows = shifts.map((s) => {
         const agg = txAggByShift[s.id] || {};
+        const onHand = calculateOnHand(s.denominations);
+        // --- CORRECTED FORMULA ---
+        const difference = onHand !== null ? onHand - (agg.systemTotal || 0) : null;
         return [
           s.startTime ? new Date(s.startTime.seconds * 1000).toLocaleDateString() : "N/A",
           userMap[s.staffEmail] || s.staffEmail,
           s.shiftPeriod || "",
-          Number(s.pcRentalTotal || 0).toFixed(2),
           Number(agg.sales || 0).toFixed(2),
           Number(agg.expenses || 0).toFixed(2),
           Number(agg.systemTotal || 0).toFixed(2),
+          onHand !== null ? onHand.toFixed(2) : "N/A",
+          difference !== null ? difference.toFixed(2) : "N/A",
         ].join(",");
       });
     } else {
@@ -439,9 +444,9 @@ export default function Shifts() {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
-  /* -------------------- Add/Edit/Delete handlers -------------------- */
   const handleAddShift = async () => {
     try {
       if (!newStaffEmail || !newStart) {
@@ -457,15 +462,12 @@ export default function Shifts() {
         systemTotal: 0,
       };
       const docRef = await addDoc(collection(db, "shifts"), payload);
-
       const newShiftForView = { id: docRef.id, ...payload };
-
       setAddOpen(false);
       setNewStaffEmail(staffOptions[0]?.email || "");
       setNewStart("");
       setNewEnd("");
       setNewShiftPeriod(SHIFT_PERIODS[0]);
-
       setViewingShift(newShiftForView);
     } catch (e) {
       console.error("Add shift failed:", e);
@@ -520,12 +522,7 @@ export default function Shifts() {
       if (deleteMode === "unlink") {
         for (const ck of chunksArr) {
           const batch = writeBatch(db);
-          ck.forEach((d) =>
-            batch.update(d.ref, {
-              shiftId: null,
-              unlinkedFromShift: shiftToDelete.id,
-            })
-          );
+          ck.forEach((d) => batch.update(d.ref, { shiftId: null, unlinkedFromShift: shiftToDelete.id }));
           await batch.commit();
         }
       } else if (deleteMode === "purge") {
@@ -545,24 +542,19 @@ export default function Shifts() {
     }
   };
 
-  /* -------------------- Detail View -------------------- */
   if (viewingShift) {
     return <ShiftDetailView shift={viewingShift} userMap={userMap} onBack={() => setViewingShift(null)} />;
   }
 
-  /* -------------------- List View -------------------- */
   return (
     <Box sx={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
-      {/* CONTROLS */}
       {!isMobile ? (
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2, flexWrap: "wrap" }}>
           <ToggleButtonGroup value={view} exclusive onChange={(e, v) => v && setView(v)}>
             <ToggleButton value="summary">Summary</ToggleButton>
             <ToggleButton value="detailed">Detailed</ToggleButton>
           </ToggleButtonGroup>
-
           <Box sx={{ flexGrow: 1 }} />
-
           <Stack direction="row" spacing={1}>
             <TextField
               label="Start Date"
@@ -602,12 +594,10 @@ export default function Shifts() {
               <ToggleButton value="summary">Summary</ToggleButton>
               <ToggleButton value="detailed">Detailed</ToggleButton>
             </ToggleButtonGroup>
-
             <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1.75 }}>
               <TextField label="Start" type="date" size="small" value={startDate} onChange={(e) => setStartDate(e.target.value)} InputLabelProps={{ shrink: true }} />
               <TextField label="End" type="date" size="small" value={endDate} onChange={(e) => setEndDate(e.target.value)} InputLabelProps={{ shrink: true }} />
             </Box>
-
             <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1.75 }}>
               <Button variant="contained" startIcon={<AddIcon />} onClick={() => setAddOpen(true)} size="small" sx={{ py: 1.1 }}>
                 Add
@@ -620,7 +610,6 @@ export default function Shifts() {
         </Card>
       )}
 
-      {/* TABLES */}
       {view === "summary" && (
         <TableContainer component={Paper} sx={{ flex: 1, minHeight: 0, overflow: "auto", maxHeight: { xs: "66vh", md: "70vh" } }}>
           <Table size={isMobile ? "small" : "medium"} stickyHeader>
@@ -632,6 +621,8 @@ export default function Shifts() {
                 <TableCell align="right">Sales</TableCell>
                 <TableCell align="right">Expenses</TableCell>
                 <TableCell align="right">Total</TableCell>
+                <TableCell align="right">On Hand</TableCell>
+                <TableCell align="right">Difference</TableCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
@@ -639,6 +630,10 @@ export default function Shifts() {
               {shifts.map((s) => {
                 const agg = txAggByShift[s.id] || {};
                 const isActiveRow = activeShiftId === s.id;
+                const onHand = calculateOnHand(s.denominations);
+                // --- CORRECTED FORMULA ---
+                const difference = onHand === null ? null : onHand - (agg.systemTotal || 0);
+
                 return (
                   <TableRow
                     key={s.id}
@@ -650,7 +645,6 @@ export default function Shifts() {
                     }}
                   >
                     <TableCell sx={{ whiteSpace: "nowrap" }}>
-                      {/* Active indicator: green dot */}
                       {isActiveRow && (
                         <Tooltip title="Active shift">
                           <Box
@@ -672,20 +666,38 @@ export default function Shifts() {
                         <Chip size="small" label={s.shiftPeriod || "—"} sx={{ mt: 0.5, fontSize: 10 }} variant="outlined" />
                       </Box>
                     </TableCell>
-
                     <TableCell sx={{ display: { xs: "none", sm: "table-cell" } }}>{s.shiftPeriod || "—"}</TableCell>
-                    
                     <TableCell sx={{ pr: 1 }}>
                       <Typography variant="body2" noWrap>
                         {userMap[s.staffEmail] || s.staffEmail}
                       </Typography>
                     </TableCell>
-                    
-                    {/* UI: comma-formatted pesos */}
                     <TableCell align="right">{fmtPeso(agg.sales || 0)}</TableCell>
                     <TableCell align="right">{fmtPeso(agg.expenses || 0)}</TableCell>
                     <TableCell align="right">{fmtPeso(agg.systemTotal || 0)}</TableCell>
-
+                    <TableCell align="right">
+                      {onHand === null ? "—" : fmtPeso(onHand)}
+                    </TableCell>
+                    <TableCell align="right">
+                      {difference === null ? (
+                        "—"
+                      ) : (
+                        <Typography
+                          variant="body2"
+                          fontWeight="bold"
+                          sx={{
+                            color:
+                              difference === 0
+                                ? "success.main"
+                                : difference > 0
+                                ? "warning.main"
+                                : "error.main",
+                          }}
+                        >
+                          {difference > 0 ? `+${fmtPeso(difference)}` : fmtPeso(difference)}
+                        </Typography>
+                      )}
+                    </TableCell>
                     <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
                       <Tooltip title="Edit shift">
                         <IconButton size="small" onClick={() => openEdit(s)}>
@@ -697,7 +709,6 @@ export default function Shifts() {
                           <DeleteIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
-                      {/* Resume: only on the two latest shifts AND only when nothing is active */}
                       {!isAnyShiftActive && lastTwoShiftIds.includes(s.id) && (
                         <Tooltip title="Resume this shift">
                           <IconButton
@@ -717,6 +728,38 @@ export default function Shifts() {
                 );
               })}
             </TableBody>
+            <TableFooter>
+              <TableRow sx={{ "& > *": { fontWeight: "bold" } }}>
+                <TableCell colSpan={isMobile ? 2 : 3}>Totals</TableCell>
+                <TableCell align="right">{fmtPeso(grand.sales)}</TableCell>
+                <TableCell align="right">{fmtPeso(grand.expenses)}</TableCell>
+                <TableCell align="right">{fmtPeso(grand.system)}</TableCell>
+                <TableCell align="right">
+                  {grand.shiftsWithDenominations > 0 ? fmtPeso(grand.onHand) : "—"}
+                </TableCell>
+                <TableCell align="right">
+                  {grand.shiftsWithDenominations > 0 ? (
+                    <Typography
+                      variant="body2"
+                      fontWeight="bold"
+                      sx={{
+                        color:
+                          grand.difference === 0
+                            ? "success.main"
+                            : grand.difference > 0
+                            ? "warning.main"
+                            : "error.main",
+                      }}
+                    >
+                      {grand.difference > 0 ? `+${fmtPeso(grand.difference)}` : fmtPeso(grand.difference)}
+                    </Typography>
+                  ) : (
+                    "—"
+                  )}
+                </TableCell>
+                <TableCell />
+              </TableRow>
+            </TableFooter>
           </Table>
         </TableContainer>
       )}
@@ -729,7 +772,7 @@ export default function Shifts() {
             minHeight: 0,
             overflow: "auto",
             maxHeight: { xs: "66vh", md: "70vh" },
-            "& table": { minWidth: { xs: Math.max(900, 520 + serviceColumns.length * 120), sm: "auto" } },
+            "& table": { minWidth: { xs: Math.max(900, 520 + serviceNames.length * 120), sm: "auto" } },
           }}
         >
           <Table size="small" stickyHeader>
@@ -791,19 +834,16 @@ export default function Shifts() {
                       <Typography noWrap>{userMap[s.staffEmail] || s.staffEmail}</Typography>
                     </TableCell>
 
-                    {/* PC Rental (UI formatted) */}
                     <TableCell align="right">
                       {fmtPeso(s.pcRentalTotal || 0)}
                     </TableCell>
 
-                    {/* Per-service columns (UI formatted) */}
                     {serviceNames.map((h) => (
                       <TableCell key={h} align="right">
                         {fmtPeso(agg?.serviceTotals?.[h] || 0)}
                       </TableCell>
                     ))}
 
-                    {/* Totals (UI formatted) */}
                     <TableCell align="right">{fmtPeso(agg?.sales || 0)}</TableCell>
                     <TableCell align="right">{fmtPeso(agg?.expenses || 0)}</TableCell>
                     <TableCell align="right">{fmtPeso(agg?.systemTotal || 0)}</TableCell>
@@ -838,25 +878,21 @@ export default function Shifts() {
                 );
               })}
 
-              {/* Totals row (UI formatted) */}
               <TableRow>
                 <TableCell colSpan={3}>
                   <strong>Totals</strong>
                 </TableCell>
 
-                {/* PC Rental grand */}
                 <TableCell align="right">
                   <strong>{fmtPeso(grand.pcRental)}</strong>
                 </TableCell>
 
-                {/* Per-service grand */}
                 {serviceNames.map((h) => (
                   <TableCell key={h} align="right">
                     <strong>{fmtPeso(perServiceTotals[h] || 0)}</strong>
                   </TableCell>
                 ))}
 
-                {/* Grand totals */}
                 <TableCell align="right">
                   <strong>{fmtPeso(grand.sales || 0)}</strong>
                 </TableCell>
@@ -874,7 +910,6 @@ export default function Shifts() {
         </TableContainer>
       )}
 
-      {/* Add Shift dialog */}
       <Dialog open={addOpen} onClose={() => setAddOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Add Historical Shift</DialogTitle>
         <DialogContent dividers>
@@ -934,7 +969,6 @@ export default function Shifts() {
         </DialogActions>
       </Dialog>
 
-      {/* Edit Shift dialog */}
       <Dialog open={editOpen} onClose={() => setEditOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Edit Shift</DialogTitle>
         <DialogContent dividers>
@@ -985,7 +1019,6 @@ export default function Shifts() {
               fullWidth
             />
 
-            {/* Inputs remain numeric (no UI formatting) */}
             <TextField
               label="PC Rental Total (optional)"
               type="number"
@@ -1010,7 +1043,6 @@ export default function Shifts() {
         </DialogActions>
       </Dialog>
 
-      {/* Delete shift dialog */}
       <Dialog open={deleteOpen} onClose={() => setDeleteOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Delete Shift</DialogTitle>
         <DialogContent dividers>

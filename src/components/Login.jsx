@@ -1,4 +1,3 @@
-// src/components/Login.jsx
 import React, { useState } from "react";
 import {
   Box,
@@ -33,8 +32,8 @@ function guessShiftPHT() {
     const h = parseInt(hourStr, 10);
 
     if (h >= 4 && h < 11) return "Morning";     // 04:00–10:59
-    if (h >= 11 && h < 17) return "Afternoon";  // 11:00–16:59
-    return "Evening";                            // 17:00–03:59
+    if (h >= 11 && h < 17) return "Afternoon"; // 11:00–16:59
+    return "Evening";                         // 17:00–03:59
   } catch {
     // Fallback if Intl/timeZone isn’t supported (rare)
     const h = new Date().getHours();
@@ -47,9 +46,18 @@ function guessShiftPHT() {
 /**
  * Map Firebase/Auth errors (and optional custom role-mismatch errors) to friendly text.
  * Custom errors thrown by App.jsx:
- *   - { code: 'role/invalid-staff' } admin tried staff login
- *   - { code: 'role/invalid-admin' } staff tried admin login
- *   - { code: 'shift/active-other' } another staff owns the active shift
+ * - { code: 'role/invalid-staff' } admin tried staff login
+ * - { code: 'role/invalid-admin' } staff tried admin login
+ * - { code: 'shift/active-other' } another staff owns the active shift
+ *
+ * NOTE TO DEVELOPER: To handle a re-login for a user with an active shift,
+ * the logic inside the `onLogin` function (passed as a prop) must be updated.
+ *
+ * When `onLogin` detects that the user logging in is the same one who owns the
+ * currently active shift, it should simply complete the login successfully
+ * without throwing an error and, critically, *without* updating the existing
+ * shift's start time, date, or period. The `shiftPeriod` value from this form
+ * should be ignored in that specific scenario.
  */
 function humanizeAuthError(err, { adminMode }) {
   const rawCode = (err?.code || "").toLowerCase();
