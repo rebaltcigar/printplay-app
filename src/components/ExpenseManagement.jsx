@@ -47,13 +47,13 @@ const EXPENSE_TYPES_ALL = [
   "Maintenance",
   "Utilities",
   "Rent",
-  "Internet",
   "Salary",
   "Salary Advance",
   "Misc",
 ];
 
 function toDateOnlyString(d) {
+  if (!d) return "";
   const dt = new Date(d);
   const yyyy = dt.getFullYear();
   const mm = String(dt.getMonth() + 1).padStart(2, "0");
@@ -61,9 +61,27 @@ function toDateOnlyString(d) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+// --- NEW: Helper function to display both date and time ---
+function toDateTimeString(d) {
+  if (!d) return "";
+  const dt = new Date(d);
+  return dt.toLocaleString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
 function toCurrency(n) {
   const val = Number(n || 0);
-  return `₱${val.toFixed(2)}`;
+  // Format with commas and two decimal places
+  return `₱${val.toLocaleString("en-US", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
+  })}`;
 }
 
 export default function ExpenseManagement({ user }) {
@@ -79,6 +97,7 @@ export default function ExpenseManagement({ user }) {
   const [currentlyEditing, setCurrentlyEditing] = useState(null);
 
   const [staffOptions, setStaffOptions] = useState([]); // {id, fullName, email}
+  const [creditServices, setCreditServices] = useState([]);
   const dateInputRef = useRef(null);
 
   // -------- Right table / filters --------
@@ -94,10 +113,39 @@ export default function ExpenseManagement({ user }) {
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
   const fieldSize = isMobile ? "small" : "medium";
   const [controlsOpen, setControlsOpen] = useState(false);
-  const [filtersOpen, setFiltersOpen] = useState(false); // New state for mobile filters
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const controlsRef = useRef(null);
 
-  // Load staff (for Salary / Salary Advance)
+  useEffect(() => {
+    const fetchCreditServices = async () => {
+      try {
+        const qServices = query(
+          collection(db, "services"),
+          where("category", "==", "Credit")
+        );
+        const snap = await getDocs(qServices);
+        const servicesData = snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            serviceName: data.serviceName,
+            price: data.price || 0,
+          };
+        });
+        setCreditServices(servicesData);
+      } catch (e) {
+        console.warn("Failed to load credit services for expenses dropdown.", e);
+      }
+    };
+    fetchCreditServices();
+  }, []);
+
+  const expenseTypes = useMemo(() => {
+    const serviceNames = creditServices.map((s) => s.serviceName);
+    const combined = [...new Set([...EXPENSE_TYPES_ALL, ...serviceNames])];
+    combined.sort((a, b) => a.localeCompare(b));
+    return combined;
+  }, [creditServices]);
+
   useEffect(() => {
     (async () => {
       try {
@@ -125,14 +173,13 @@ export default function ExpenseManagement({ user }) {
     })();
   }, []);
 
-  // REALTIME: load expenses by date range
   useEffect(() => {
     setLoading(true);
     const start = new Date(filterStart);
+    start.setHours(0, 0, 0, 0); // Ensure filter starts at the beginning of the day
     const end = new Date(filterEnd);
     end.setHours(23, 59, 59, 999);
 
-    // Range + orderBy on 'timestamp'
     let qTx = query(
       collection(db, "transactions"),
       where("item", "==", "Expenses"),
@@ -162,15 +209,14 @@ export default function ExpenseManagement({ user }) {
 
   const tableRows = useMemo(() => {
     return expenses.map((e) => {
-      const date =
-        e.timestamp?.seconds
-          ? toDateOnlyString(new Date(e.timestamp.seconds * 1000))
-          : e.timestamp
-          ? toDateOnlyString(e.timestamp)
-          : "";
+      const tsDate = e.timestamp?.seconds
+        ? new Date(e.timestamp.seconds * 1000)
+        : new Date(e.timestamp); // Handle different timestamp formats
       return {
         ...e,
-        _dateOnly: date,
+        // --- MODIFIED: Prepare both date-only (for editing) and full datetime (for display) ---
+        _dateOnly: toDateOnlyString(tsDate),
+        _dateTime: toDateTimeString(tsDate),
         qty: Number(e.quantity || 0),
         price: Number(e.price || 0),
         total: Number(e.total || (Number(e.quantity || 0) * Number(e.price || 0))),
@@ -178,14 +224,30 @@ export default function ExpenseManagement({ user }) {
     });
   }, [expenses]);
 
-  // CSV export
+  const handleTypeChange = (event) => {
+    const selectedType = event.target.value;
+    setFormType(selectedType);
+
+    const selectedService = creditServices.find(
+      (s) => s.serviceName === selectedType
+    );
+
+    if (selectedService && selectedService.price > 0) {
+      setFormPrice(String(selectedService.price));
+      setFormQuantity("1");
+    } else {
+      setFormPrice("");
+      setFormQuantity("");
+    }
+  };
+
   const handleExportCSV = () => {
     const headers = ["Date", "Item", "Qty", "Price", "Total", "Type", "Staff", "Notes"];
     const lines = [headers.join(",")];
 
     tableRows.forEach((r) => {
       const row = [
-        r._dateOnly,
+        r._dateTime, // Use the new full date/time string
         "Expenses",
         r.qty,
         r.price,
@@ -222,8 +284,11 @@ export default function ExpenseManagement({ user }) {
     const price = Number(formPrice || 0);
     const total = qty * price;
 
-    const ts = new Date(formDate);
-    ts.setHours(0, 0, 0, 0);
+    // --- MODIFIED: Combine selected date with current time ---
+    const transactionDate = new Date(formDate); // Gets the date from the form (time is midnight)
+    const now = new Date(); // Gets the current time
+    // Set the time of the transaction to the current time
+    transactionDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds());
 
     const selectedStaff = staffOptions.find((s) => s.id === formStaffId) || null;
 
@@ -233,16 +298,13 @@ export default function ExpenseManagement({ user }) {
       expenseStaffId: selectedStaff ? selectedStaff.id : null,
       expenseStaffName: selectedStaff ? selectedStaff.fullName : null,
       expenseStaffEmail: selectedStaff ? selectedStaff.email : null,
-
       quantity: qty,
       price,
       total,
       notes: formNotes || "",
-
-      shiftId: null, // admin-created expense is independent by default
+      shiftId: null,
       source: "admin_manual",
-
-      timestamp: ts, // chosen date (midnight)
+      timestamp: transactionDate, // Use the new combined date and time
       staffEmail: user?.email || "admin",
       isDeleted: false,
       isEdited: false,
@@ -264,10 +326,9 @@ export default function ExpenseManagement({ user }) {
     }
   };
 
-  // Begin edit (populate left panel)
   const startEdit = (row) => {
     setCurrentlyEditing(row);
-    setFormDate(row._dateOnly || toDateOnlyString(new Date()));
+    setFormDate(row._dateOnly); // Use the date-only string for the picker
     setFormType(row.expenseType || "");
     setFormStaffId(row.expenseStaffId || "");
     setFormStaffName(row.expenseStaffName || "");
@@ -277,7 +338,6 @@ export default function ExpenseManagement({ user }) {
     setFormNotes(row.notes || "");
     setTimeout(() => dateInputRef.current?.focus(), 60);
 
-    // Mobile: auto-expand controls and scroll to them
     if (isMobile) {
       if (!controlsOpen) setControlsOpen(true);
       setTimeout(() => {
@@ -297,7 +357,6 @@ export default function ExpenseManagement({ user }) {
     setFormNotes("");
   };
 
-  // Save edit (preserve any existing shift/staff association, just note admin edit)
   const handleSaveEdit = async (e) => {
     e.preventDefault();
     if (!currentlyEditing) return;
@@ -311,8 +370,10 @@ export default function ExpenseManagement({ user }) {
     const price = Number(formPrice || 0);
     const total = qty * price;
 
-    const ts = new Date(formDate);
-    ts.setHours(0, 0, 0, 0);
+    // --- MODIFIED: Combine selected date with current time on edit as well ---
+    const transactionDate = new Date(formDate); // Gets the potentially changed date
+    const now = new Date(); // Gets the current time of the edit
+    transactionDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds());
 
     const selectedStaff = staffOptions.find((s) => s.id === formStaffId) || null;
     const reason = window.prompt("Reason for this edit?");
@@ -329,9 +390,7 @@ export default function ExpenseManagement({ user }) {
         price,
         total,
         notes: formNotes || "",
-        timestamp: ts,
-
-        // audit/admin
+        timestamp: transactionDate, // Use the new combined date and time
         isEdited: true,
         adminEdited: true,
         editedBy: user?.email || "admin",
@@ -367,12 +426,8 @@ export default function ExpenseManagement({ user }) {
 
       <FormControl fullWidth required size={fieldSize}>
         <InputLabel>Expense Type</InputLabel>
-        <Select
-          label="Expense Type"
-          value={formType}
-          onChange={(e) => setFormType(e.target.value)}
-        >
-          {EXPENSE_TYPES_ALL.map((t) => (
+        <Select label="Expense Type" value={formType} onChange={handleTypeChange}>
+          {expenseTypes.map((t) => (
             <MenuItem key={t} value={t}>
               {t}
             </MenuItem>
@@ -461,8 +516,7 @@ export default function ExpenseManagement({ user }) {
         minHeight: 0,
       }}
     >
-      {/* Body (two-panel on web, mobile optimized below) */}
-      {/* --- WEB / DESKTOP (unchanged) --- */}
+      {/* --- WEB / DESKTOP --- */}
       <Box
         sx={{
           display: { xs: "none", sm: "flex" },
@@ -485,7 +539,6 @@ export default function ExpenseManagement({ user }) {
 
         {/* RIGHT: Filters + Table */}
         <Paper sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-          {/* Filter/header row stays visible; table scrolls under it */}
           <Box sx={{ p: 2, pt: 1, display: "flex", alignItems: "center", gap: 2 }}>
             <Typography variant="subtitle1" fontWeight={600}>
               Expenses
@@ -517,7 +570,8 @@ export default function ExpenseManagement({ user }) {
             <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>
-                  <TableCell>Date</TableCell>
+                  {/* --- MODIFIED: Table header text --- */}
+                  <TableCell>Date / Time</TableCell>
                   <TableCell>Item</TableCell>
                   <TableCell align="right">Qty</TableCell>
                   <TableCell align="right">Price</TableCell>
@@ -540,7 +594,8 @@ export default function ExpenseManagement({ user }) {
                 ) : (
                   tableRows.map((r) => (
                     <TableRow key={r.id} hover>
-                      <TableCell>{r._dateOnly}</TableCell>
+                      {/* --- MODIFIED: Use the new _dateTime property for display --- */}
+                      <TableCell>{r._dateTime}</TableCell>
                       <TableCell>
                         Expenses{" "}
                         {r.isEdited && (
@@ -588,25 +643,20 @@ export default function ExpenseManagement({ user }) {
         sx={{
           display: { xs: "flex", sm: "none" },
           flexDirection: "column",
-          gap: 1.25,                              // FIX #3 support spacing
+          gap: 1.25,
           p: 2,
           pt: 1.25,
           minHeight: 0,
           flex: 1,
-          overflowY: "auto",                      // FIX #1 allow page to scroll
+          overflowY: "auto",
           WebkitOverflowScrolling: "touch",
-          pb: "calc(env(safe-area-inset-bottom, 0) + 8px)", // FIX #1 safe area
+          pb: "calc(env(safe-area-inset-bottom, 0) + 8px)",
         }}
       >
-        {/* Controls on top (collapsible) */}
+        {/* Collapsible Controls */}
         <Card
           ref={controlsRef}
-          sx={{
-            p: 1.0,
-            overflow: "visible",                  // FIX #2 prevent clipping
-            position: "relative",                 // FIX #2 stacking context
-            mb: controlsOpen ? 1.25 : 1.0,        // FIX #3 extra space when open
-          }}
+          sx={{ p: 1.0, overflow: "visible", position: "relative" }}
         >
           <Box sx={{ display: "flex", alignItems: "center" }}>
             <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
@@ -616,25 +666,13 @@ export default function ExpenseManagement({ user }) {
               {controlsOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
             </IconButton>
           </Box>
-          <Collapse
-            in={controlsOpen}
-            unmountOnExit={false}                  // FIX #2 keep mounted for measurement
-            timeout={250}
-            sx={{ overflow: "visible" }}          // FIX #2 allow children overflow
-          >
+          <Collapse in={controlsOpen} timeout={250} sx={{ overflow: "visible" }}>
             <Box sx={{ pt: 2, pb: 1 }}>{FormContent}</Box>
           </Collapse>
         </Card>
 
-        {/* Filters (collapsible) */}
-        <Card
-          sx={{
-            p: 1.0,
-            overflow: "visible",                  // FIX #2
-            position: "relative",                 // FIX #2
-            mb: filtersOpen ? 1.25 : 1.0,         // FIX #3
-          }}
-        >
+        {/* Collapsible Filters */}
+        <Card sx={{ p: 1.0, overflow: "visible", position: "relative" }}>
           <Box sx={{ display: "flex", alignItems: "center" }}>
             <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
               Date Filters & Export
@@ -643,16 +681,11 @@ export default function ExpenseManagement({ user }) {
               {filtersOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
             </IconButton>
           </Box>
-          <Collapse
-            in={filtersOpen}
-            unmountOnExit={false}                  // FIX #2
-            timeout={250}
-            sx={{ overflow: "visible" }}          // FIX #2
-          >
+          <Collapse in={filtersOpen} timeout={250} sx={{ overflow: "visible" }}>
             <Box
               sx={{
                 display: "grid",
-                gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, // FIX #3 1-col on phones
+                gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
                 gap: 1,
                 mt: 1.25,
                 alignItems: "center",
@@ -686,18 +719,16 @@ export default function ExpenseManagement({ user }) {
           </Collapse>
         </Card>
 
-        {/* Table area, flexible height */}
+        {/* Table */}
         <Paper
           sx={{
             flex: "1 1 auto",
             minHeight: 0,
             display: "flex",
             flexDirection: "column",
-            position: "relative",
-            zIndex: 0,                            // FIX #4 ensure below cards if stacked
           }}
         >
-          <Box sx={{ p: 1.0, pt: 1, display: "flex", alignItems: "center", gap: 1 }}>
+          <Box sx={{ p: 1.0, pt: 1 }}>
             <Typography variant="subtitle1" fontWeight={600}>
               Expenses
             </Typography>
@@ -707,10 +738,8 @@ export default function ExpenseManagement({ user }) {
             <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>
-                  <TableCell>Date</TableCell>
+                  <TableCell>Date / Time</TableCell>
                   <TableCell>Type</TableCell>
-                  <TableCell align="right">Qty</TableCell>
-                  <TableCell align="right">₱</TableCell>
                   <TableCell align="right">Total</TableCell>
                   <TableCell>Staff</TableCell>
                   <TableCell align="right">⋯</TableCell>
@@ -719,16 +748,16 @@ export default function ExpenseManagement({ user }) {
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={7}>Loading…</TableCell>
+                    <TableCell colSpan={5}>Loading…</TableCell>
                   </TableRow>
                 ) : tableRows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7}>No expenses for the selected dates.</TableCell>
+                    <TableCell colSpan={5}>No expenses for the selected dates.</TableCell>
                   </TableRow>
                 ) : (
                   tableRows.map((r) => (
                     <TableRow key={r.id} hover>
-                      <TableCell>{r._dateOnly}</TableCell>
+                      <TableCell>{r._dateTime}</TableCell>
                       <TableCell>
                         <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
                           <Typography variant="body2" fontWeight={600}>
@@ -743,12 +772,10 @@ export default function ExpenseManagement({ user }) {
                           )}
                         </Box>
                       </TableCell>
-                      <TableCell align="right">{r.qty}</TableCell>
-                      <TableCell align="right">{Number(r.price || 0).toFixed(0)}</TableCell>
-                      <TableCell align="right">{Number(r.total || 0).toFixed(0)}</TableCell>
+                      <TableCell align="right">{toCurrency(r.total)}</TableCell>
                       <TableCell
                         sx={{
-                          maxWidth: 160,
+                          maxWidth: 120,
                           whiteSpace: "nowrap",
                           overflow: "hidden",
                           textOverflow: "ellipsis",

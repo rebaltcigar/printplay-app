@@ -101,17 +101,6 @@ const identifierText = (tx) => {
 
 const currency = (n) => `₱${Number(n || 0).toFixed(2)}`;
 
-const EXPENSE_TYPES_ALL = [
-  "Supplies",
-  "Maintenance",
-  "Utilities",
-  "Rent",
-  "Internet",
-  "Salary",
-  "Salary Advance",
-  "Misc",
-];
-
 /* ---------- component ---------- */
 export default function Transactions() {
   // Filters
@@ -128,6 +117,7 @@ export default function Transactions() {
   const [staffOptions, setStaffOptions] = useState([]); // [{email, name, id}]
   const [shiftOptions, setShiftOptions] = useState([]); // [{id, label}]
   const [serviceItems, setServiceItems] = useState([]);
+  const [expenseServiceItems, setExpenseServiceItems] = useState([]); // State for expense sub-services
 
   // Data
   const [tx, setTx] = useState([]);
@@ -212,10 +202,23 @@ export default function Transactions() {
     const unsub = onSnapshot(
       query(collection(db, "services"), orderBy("sortOrder")),
       (snap) => {
-        const list = snap.docs.map((d) => d.data().serviceName);
-        const specials = ["Expenses", "New Debt", "Paid Debt"];
-        const merged = Array.from(new Set([...list, ...specials]));
+        const allServices = snap.docs.map((d) => d.data());
+
+        // Populate the main "Item" dropdown with services that have no parent
+        const parentList = allServices
+          .filter((s) => !s.parentServiceId)
+          .map((s) => s.serviceName);
+
+        // Include special items that are not managed as services
+        const specials = ["New Debt", "Paid Debt"];
+        const merged = Array.from(new Set([...parentList, ...specials]));
         setServiceItems(merged);
+
+        // Populate the "Expense Type" dropdown with children of the "Expenses" service
+        const expenseList = allServices
+          .filter((s) => s.parentServiceId === "9JlYs3n6k3bsebkLq7A9")
+          .map((s) => s.serviceName);
+        setExpenseServiceItems(expenseList);
       }
     );
     return () => unsub();
@@ -1415,7 +1418,7 @@ export default function Transactions() {
                     value={editExpenseType}
                     onChange={(e) => setEditExpenseType(e.target.value)}
                   >
-                    {EXPENSE_TYPES_ALL.map((t) => (
+                    {expenseServiceItems.map((t) => (
                       <MenuItem key={t} value={t}>
                         {t}
                       </MenuItem>

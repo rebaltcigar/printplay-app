@@ -64,18 +64,6 @@ const fmtPeso = (n) =>
     maximumFractionDigits: 2,
   })}`;
 
-/* ---------- Expense policy ---------- */
-const EXPENSE_TYPES_ALL = [
-  "Supplies",
-  "Maintenance",
-  "Utilities",
-  "Rent",
-  "Internet",
-  "Salary",
-  "Salary Advance",
-  "Misc",
-];
-
 const BILL_DENOMS = [1000, 500, 200, 100, 50, 20];
 const COIN_DENOMS = [20, 10, 5, 1];
 
@@ -106,6 +94,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
   const itemInputRef = useRef(null);
 
   const [serviceItems, setServiceItems] = useState([]);
+  const [expenseServiceItems, setExpenseServiceItems] = useState([]);
   const [staffOptions, setStaffOptions] = useState([]);
   const [currentlyEditing, setCurrentlyEditing] = useState(null);
 
@@ -151,7 +140,26 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
   useEffect(() => {
     const qServices = query(collection(db, "services"), orderBy("sortOrder"));
     const unsubServices = onSnapshot(qServices, (snap) => {
-      setServiceItems(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      const allServices = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+      // Filter for parent services for the main "Item" dropdown
+      const parentServices = allServices.filter((s) => !s.parentServiceId);
+      setServiceItems(parentServices);
+
+      // Dynamically find the "Expenses" parent service ID
+      const expensesParent = allServices.find(
+        (s) => s.serviceName === "Expenses"
+      );
+      const expensesParentId = expensesParent ? expensesParent.id : null;
+
+      // Filter for expense sub-services using the dynamic parent ID
+      let expenseSubServices = [];
+      if (expensesParentId) {
+        expenseSubServices = allServices
+          .filter((s) => s.parentServiceId === expensesParentId)
+          .map((s) => s.serviceName);
+      }
+      setExpenseServiceItems(expenseSubServices);
     });
 
     (async () => {
@@ -612,7 +620,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
               onChange={(e) => setExpenseType(e.target.value)}
               size={fieldSize}
             >
-              {EXPENSE_TYPES_ALL.map((t) => (
+              {expenseServiceItems.map((t) => (
                 <MenuItem key={t} value={t}>
                   {t}
                 </MenuItem>

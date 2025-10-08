@@ -24,25 +24,6 @@ import {
 
 import logo from '/icon.ico';
 
-/* ---------- Expense policy ---------- */
-const EXPENSE_TYPES_ALL = [
-  'Supplies',
-  'Maintenance',
-  'Utilities',
-  'Rent',
-  'Internet',
-  'Salary',
-  'Salary Advance',
-  'Misc',
-];
-
-const EXPENSE_TYPES_STAFF = [
-  'Supplies',
-  'Maintenance',
-  'Salary Advance',
-  'Misc',
-];
-
 function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
   // --- STATE ---
   const [item, setItem] = useState('');
@@ -58,6 +39,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
 
   const [transactions, setTransactions] = useState([]);
   const [serviceItems, setServiceItems] = useState([]);
+  const [expenseServiceItems, setExpenseServiceItems] = useState([]);
   const [selectedTransactions, setSelectedTransactions] = useState([]);
   const [currentlyEditing, setCurrentlyEditing] = useState(null);
 
@@ -74,13 +56,12 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
   const [receiptData, setReceiptData] = useState(null);
 
   const [staffOptions, setStaffOptions] = useState([]); // [{id, fullName, email}]
-  const [shiftStart, setShiftStart] = useState(null);    // Date
+  const [shiftStart, setShiftStart] = useState(null);     // Date
   const [elapsed, setElapsed] = useState('00:00:00');
 
   const [staffDisplayName, setStaffDisplayName] = useState(user?.email || ''); // header name
 
   const isAdmin = userRole === 'superadmin';
-  const ALLOWED_EXPENSE_TYPES = isAdmin ? EXPENSE_TYPES_ALL : EXPENSE_TYPES_STAFF;
   const isDebtItem = item === 'New Debt' || item === 'Paid Debt';
 
   // --- NEW (mobile) ---
@@ -316,7 +297,12 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
   const handleTransactionSubmit = async (event) => {
     event.preventDefault();
 
-    // --- validations (use error dialog instead of alert) ---
+    // --- new validations ---
+    if (!quantity || !price || Number(quantity) <= 0 || Number(price) <= 0) {
+      return showError("Quantity and Price must be greater than 0.");
+    }
+
+    // --- existing validations ---
     if (item === 'Expenses') {
       if (!expenseType) return showError('Please select an expense type.');
       if (!isAdmin && expenseType === 'Misc' && !String(notes || '').trim()) {
@@ -324,9 +310,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
       }
       if ((expenseType === 'Salary' || expenseType === 'Salary Advance') && !expenseStaffId) {
         return showError('Please select a staff for Salary or Salary Advance.');
-      }
-      if (!isAdmin && !EXPENSE_TYPES_STAFF.includes(expenseType)) {
-        return showError('This expense type is not allowed for staff.');
       }
     }
     if (isDebtItem && !selectedCustomer && !currentlyEditing) {
@@ -373,6 +356,13 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     }
   };
 
+  const handleEnterSubmit = (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      handleTransactionSubmit(event);
+    }
+  };
+
   const handleSelectCustomer = (customer) => {
     setSelectedCustomer(customer);
     setOpenCustomerDialog(false);
@@ -396,10 +386,26 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
   useEffect(() => {
     const qServices = query(collection(db, "services"), orderBy("sortOrder"));
     const unsubscribe = onSnapshot(qServices, (snapshot) => {
-      setServiceItems(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      const allServices = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      // Filter for main "Item" dropdown (parent items, not admin-only)
+      const parentServices = allServices.filter(s => !s.parentServiceId && s.adminOnly === false);
+      setServiceItems(parentServices);
+
+      // Dynamically find the "Expenses" parent service ID
+      const expensesParent = allServices.find(s => s.serviceName === "Expenses");
+      const expensesParentId = expensesParent ? expensesParent.id : null;
+
+      // Filter for expense sub-services using the dynamic parent ID
+      let expenseSubServices = [];
+      if (expensesParentId) {
+        expenseSubServices = allServices.filter(s => s.parentServiceId === expensesParentId && s.adminOnly === false);
+      }
+      setExpenseServiceItems(expenseSubServices);
     });
     return () => unsubscribe();
   }, []);
+
 
   // --- CALCS ---
   const servicesTotal = useMemo(() => {
@@ -645,8 +651,8 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
                       value={expenseType}
                       onChange={(e) => setExpenseType(e.target.value)}
                     >
-                      {ALLOWED_EXPENSE_TYPES.map((t) => (
-                        <MenuItem key={t} value={t}>{t}</MenuItem>
+                      {expenseServiceItems.map((s) => (
+                        <MenuItem key={s.id} value={s.serviceName}>{s.serviceName}</MenuItem>
                       ))}
                     </Select>
                   </FormControl>
@@ -692,8 +698,8 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
               )}
 
               <Stack direction={{ xs: 'row', sm: 'row' }} spacing={1}>
-                <TextField type="number" label="Quantity" value={quantity} onChange={(e) => setQuantity(e.target.value)} required fullWidth />
-                <TextField type="number" label="Price" value={price} onChange={(e) => setPrice(e.target.value)} required fullWidth />
+                <TextField onKeyDown={handleEnterSubmit} type="number" label="Quantity" value={quantity} onChange={(e) => setQuantity(e.target.value)} required fullWidth />
+                <TextField onKeyDown={handleEnterSubmit} type="number" label="Price" value={price} onChange={(e) => setPrice(e.target.value)} required fullWidth />
               </Stack>
 
               <Typography variant="body2">Total: ₱{(Number(quantity || 0) * Number(price || 0)).toFixed(2)}</Typography>

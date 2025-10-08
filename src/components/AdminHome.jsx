@@ -131,8 +131,10 @@ export default function AdminHome() {
   const [shiftsScope, setShiftsScope] = useState([]);
   const [shiftsLoading, setShiftsLoading] = useState(true);
 
-  // shifts TODAY (for Active Shift section only)
-  const [shiftsToday, setShiftsToday] = useState([]);
+  // NEW: state for the single globally active shift
+  const [currentShiftStatus, setCurrentShiftStatus] = useState(null); // from app_status/current_shift
+  const [theActiveShift, setTheActiveShift] = useState(null);         // the actual shift document
+  const [activeShiftTx, setActiveShiftTx] = useState([]);             // transactions for that shift
 
   // services (active only, for Debit/Credit classification + dropdown)
   const [services, setServices] = useState([]); // [{serviceName, category, active, sortOrder}]
@@ -229,27 +231,6 @@ export default function AdminHome() {
     return () => unsub();
   }, [r.startUtc, r.endUtc]);
 
-  /* --------- today shifts (for Active section) --------- */
-  useEffect(() => {
-    // Build today's bounds in local browser (close enough for the "Active" panel)
-    const today = new Date();
-    const y = today.getFullYear(), m = today.getMonth(), d = today.getDate();
-    const startLocal = new Date(y, m, d, 0, 0, 0, 0);
-    const endLocal = new Date(y, m, d, 23, 59, 59, 999);
-    const qRef = query(
-      collection(db, "shifts"),
-      where("startTime", ">=", Timestamp.fromDate(startLocal)),
-      where("startTime", "<=", Timestamp.fromDate(endLocal)),
-      orderBy("startTime", "asc")
-    );
-    const unsub = onSnapshot(
-      qRef,
-      (snap) => setShiftsToday(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-      (err) => console.error("shifts (today) stream error", err)
-    );
-    return () => unsub();
-  }, []);
-
   /* --------- all-time debt tx (for outstanding KPI) --------- */
   useEffect(() => {
     setDebtLoading(true);
@@ -271,7 +252,70 @@ export default function AdminHome() {
     return () => unsub();
   }, []);
 
+  /* --------- listeners for the single active shift --------- */
+  useEffect(() => {
+    const ref = doc(db, "app_status", "current_shift");
+    const unsub = onSnapshot(
+      ref,
+      (snap) => setCurrentShiftStatus(snap.exists() ? snap.data() : null),
+      (err) => console.error("current_shift listener failed", err)
+    );
+    return () => unsub();
+  }, []);
+
+  const activeShiftId = currentShiftStatus?.activeShiftId;
+
+  // 1. Get the shift document itself
+  useEffect(() => {
+    if (activeShiftId) {
+      const shiftRef = doc(db, "shifts", activeShiftId);
+      const unsub = onSnapshot(
+        shiftRef,
+        (snap) => setTheActiveShift(snap.exists() ? { id: snap.id, ...snap.data() } : null),
+        (err) => {
+          console.error("active shift listener failed", err);
+          setTheActiveShift(null);
+        }
+      );
+      return () => unsub();
+    } else {
+      setTheActiveShift(null);
+    }
+  }, [activeShiftId]);
+
+  // 2. Get the transactions for that shift (independent of date range)
+  useEffect(() => {
+    if (!activeShiftId) {
+      setActiveShiftTx([]);
+      return;
+    }
+    const qRef = query(
+      collection(db, "transactions"),
+      where("shiftId", "==", activeShiftId),
+      orderBy("timestamp", "desc"),
+      limit(100)
+    );
+    const unsub = onSnapshot(
+      qRef,
+      (snap) => {
+        const txs = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .filter((t) => t.isDeleted !== true);
+        setActiveShiftTx(txs);
+      },
+      (err) => {
+        console.error("active shift transactions stream error", err);
+        setActiveShiftTx([]);
+      }
+    );
+    return () => unsub();
+  }, [activeShiftId]);
+
   /* --------- derived --------- */
+  // REPLACED: activeShifts is now just an array with the single active shift (if any)
+  const activeShifts = useMemo(() => (theActiveShift ? [theActiveShift] : []), [theActiveShift]);
+  const isLoadingActiveShift = !!activeShiftId && !theActiveShift;
+  
   const visibleTx = useMemo(
     () => transactions.filter((t) => t.isDeleted !== true),
     [transactions]
@@ -361,30 +405,6 @@ export default function AdminHome() {
       serviceMap,
     });
   }, [visibleTx, shiftsScope, r.startLocal, r.endLocal, preset, allTimeMode, serviceFilter, serviceMap]);
-
-  // Active shifts (today)
-  const activeShifts = useMemo(() => {
-    const now = new Date();
-    return shiftsToday.filter((s) => {
-      const st = s.startTime?.seconds ? new Date(s.startTime.seconds * 1000) : null;
-      const en = s.endTime?.seconds ? new Date(s.endTime.seconds * 1000) : null;
-      return st && st <= now && (!en || en >= now);
-    });
-  }, [shiftsToday]);
-
-  // Active shift transactions (derived from current stream)
-  const activeShiftIds = activeShifts.map((s) => s.id);
-  const activeShiftTx = useMemo(() => {
-    if (activeShiftIds.length === 0) return [];
-    return transactions
-      .filter((t) => t.isDeleted !== true && activeShiftIds.includes(t.shiftId || ""))
-      .sort((a, b) => {
-        const ta = a.timestamp?.seconds || 0;
-        const tb = b.timestamp?.seconds || 0;
-        return tb - ta;
-      })
-      .slice(0, 100);
-  }, [transactions, activeShiftIds]);
 
   /* -------- actions -------- */
   const forceEndShift = async (shift) => {
@@ -572,7 +592,7 @@ export default function AdminHome() {
         <Stack spacing={1.5} sx={{ flex: 1, minHeight: 0 }}>
           <MobileSection title="Active shift's transactions" defaultExpanded>
             <ActiveShiftBody
-              shiftsLoading={shiftsLoading}
+              shiftsLoading={isLoadingActiveShift}
               activeShifts={activeShifts}
               activeShiftTx={activeShiftTx}
               currency={currency}
@@ -620,7 +640,7 @@ export default function AdminHome() {
             <Card sx={{ p: 2, display: "flex", flexDirection: "column", gap: 1.25, minHeight: 240 }}>
               <SectionHeader title="Active shift's transactions" />
               <ActiveShiftBody
-                shiftsLoading={shiftsLoading}
+                shiftsLoading={isLoadingActiveShift}
                 activeShifts={activeShifts}
                 activeShiftTx={activeShiftTx}
                 currency={currency}
@@ -729,8 +749,8 @@ function ActiveShiftBody({
   return (
     <>
       {shiftsLoading && <LinearProgress sx={{ mt: 0.5 }} />}
-      {activeShifts.length === 0 ? (
-        <Paper variant="outlined" sx={{ p: { xs: 1, sm: 1.5 }, textAlign: "center" }}>
+      {!shiftsLoading && activeShifts.length === 0 ? (
+        <Paper variant="outlined" sx={{ p: { xs: 1, sm: 1.5 }, textAlign: "center", mt: 0.5 }}>
           No active shift.
         </Paper>
       ) : (

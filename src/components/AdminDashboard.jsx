@@ -29,12 +29,12 @@ import { signOut } from "firebase/auth";
 import Shifts from "./Shifts";
 import ExpenseManagement from "./ExpenseManagement";
 import DebtReport from "./DebtReport";
-import ServiceManagement from "./ServiceManagement";
+import ItemManagement from "./ItemManagement"; // <-- 1. MODIFIED IMPORT
 import UserManagement from "./UserManagement";
 import AdminHome from "./AdminHome"; // Charts & summaries
 import Transactions from "./Transactions";
 
-import { generateFakeHistory } from "../utils/seedHistoricalData"; // <-- NEW
+import { generateFakeHistory } from "../utils/seedHistoricalData";
 
 function TabPanel({ value, index, children }) {
   return (
@@ -53,7 +53,7 @@ function TabPanel({ value, index, children }) {
 export default function AdminDashboard({ user }) {
   const [tab, setTab] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [seeding, setSeeding] = useState(false); // <-- NEW
+  const [seeding, setSeeding] = useState(false);
 
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
@@ -68,7 +68,7 @@ export default function AdminDashboard({ user }) {
     { label: "Transactions", index: 2 },
     { label: "Expenses", index: 3 },
     { label: "Debts", index: 4 },
-    { label: "Services", index: 5 },
+    { label: "Items", index: 5 }, // <-- 2. MODIFIED LABEL
     { label: "Users", index: 6 },
   ];
 
@@ -98,7 +98,7 @@ export default function AdminDashboard({ user }) {
         startISO: "2025-03-01",
         doPurgeFirst: true,
       });
-      alert("Seeding complete! 🎉  (You can remove this button now.)");
+      alert("Seeding complete! 🎉 (You can remove this button now.)");
     } catch (err) {
       console.error(err);
       alert("Seeding failed. Check the console for details.");
@@ -111,7 +111,6 @@ export default function AdminDashboard({ user }) {
     <Box sx={{ display: "flex", flexDirection: "column", height: "100vh", width: "100%" }}>
       <AppBar position="static" elevation={1}>
         <Toolbar sx={{ alignItems: "center", gap: 1, minHeight: { xs: 56, sm: 64 } }}>
-          {/* Mobile: Hamburger */}
           {isMobile && (
             <IconButton
               color="inherit"
@@ -124,7 +123,6 @@ export default function AdminDashboard({ user }) {
             </IconButton>
           )}
 
-          {/* Logo */}
           <Box
             component="img"
             src="/icon.ico"
@@ -132,7 +130,6 @@ export default function AdminDashboard({ user }) {
             sx={{ width: 26, height: 26, borderRadius: "6px", mr: 1 }}
           />
 
-          {/* Title */}
           <Typography
             variant="subtitle2"
             sx={{
@@ -145,10 +142,8 @@ export default function AdminDashboard({ user }) {
             Admin — {user?.email}
           </Typography>
 
-          {/* DEV: Generate fake history */}
           {devMode && (
             <Tooltip title="DEV: Seed historical fake data">
-              {/* span wrapper lets Tooltip still show for disabled Button */}
               <span>
                 <Button
                   onClick={handleSeed}
@@ -172,7 +167,6 @@ export default function AdminDashboard({ user }) {
             </Tooltip>
           )}
 
-          {/* Desktop: Logout button */}
           {!isMobile && (
             <Tooltip title="Logout">
               <IconButton color="inherit" onClick={handleLogout} aria-label="logout">
@@ -182,7 +176,6 @@ export default function AdminDashboard({ user }) {
           )}
         </Toolbar>
 
-        {/* Desktop/Web: Tabs; hidden on mobile */}
         {!isMobile && (
           <Tabs
             value={tab}
@@ -198,7 +191,6 @@ export default function AdminDashboard({ user }) {
         )}
       </AppBar>
 
-      {/* Mobile Drawer */}
       <Drawer
         anchor="left"
         open={drawerOpen}
@@ -237,7 +229,6 @@ export default function AdminDashboard({ user }) {
         </List>
       </Drawer>
 
-      {/* Full-height tab content */}
       <Box sx={{ flex: 1, minHeight: 0 }}>
         <TabPanel value={tab} index={0}>
           <Box sx={{ height: "100%", display: "flex", flexDirection: "column", width: "100%" }}>
@@ -271,7 +262,7 @@ export default function AdminDashboard({ user }) {
 
         <TabPanel value={tab} index={5}>
           <Box sx={{ height: "100%", width: "100%" }}>
-            <ServiceManagement />
+            <ItemManagement /> {/* <-- 3. MODIFIED COMPONENT */}
           </Box>
         </TabPanel>
 

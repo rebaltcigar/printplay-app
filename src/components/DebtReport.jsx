@@ -42,6 +42,14 @@ function toDateOnlyString(d) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function formatPeso(n) {
+  const val = Number(n || 0);
+  return `₱${val.toLocaleString("en-US", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
+  })}`;
+}
+
 function monthStart(date) {
   const d = new Date(date);
   d.setDate(1);
@@ -57,7 +65,7 @@ function monthEnd(date) {
 
 /**
  * Props:
- *  - user: { email }
+ * - user: { email }
  */
 export default function DebtManagement({ user }) {
   // Default: current month
@@ -191,7 +199,7 @@ export default function DebtManagement({ user }) {
           <TableCell>{dt ? dt.toLocaleString() : "—"}</TableCell>
           <TableCell>{r.customerName || "—"}</TableCell>
           <TableCell>{r.item}</TableCell>
-          <TableCell align="right">₱{Number(r.total || 0).toFixed(2)}</TableCell>
+          <TableCell align="right">{formatPeso(r.total)}</TableCell>
           <TableCell
             sx={{
               maxWidth: 280,
@@ -310,13 +318,13 @@ export default function DebtManagement({ user }) {
                       }
                     >
                       <TableCell>{b.customerName || "—"}</TableCell>
-                      <TableCell align="right">₱{b.newDebt.toFixed(2)}</TableCell>
-                      <TableCell align="right">₱{b.paid.toFixed(2)}</TableCell>
+                      <TableCell align="right">{formatPeso(b.newDebt)}</TableCell>
+                      <TableCell align="right">{formatPeso(b.paid)}</TableCell>
                       <TableCell
                         align="right"
                         sx={{ color: b.balance > 0 ? "error.main" : "success.main" }}
                       >
-                        ₱{b.balance.toFixed(2)}
+                        {formatPeso(b.balance)}
                       </TableCell>
                     </TableRow>
                   ))

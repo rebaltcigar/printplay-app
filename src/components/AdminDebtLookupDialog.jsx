@@ -17,13 +17,21 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase";
 
+function formatPeso(n) {
+  const val = Number(n || 0);
+  return `₱${val.toLocaleString("en-US", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
+  })}`;
+}
+
 /**
  * Props:
- *  - open
- *  - onClose()
- *  - presetCustomer: { id, fullName, username } | null
- *  - selectToken: number
- *  - user: { email }
+ * - open
+ * - onClose()
+ * - presetCustomer: { id, fullName, username } | null
+ * - selectToken: number
+ * - user: { email }
  */
 export default function AdminDebtLookupDialog({ open, onClose, presetCustomer, selectToken, user }) {
   // search + results
@@ -302,16 +310,16 @@ export default function AdminDebtLookupDialog({ open, onClose, presetCustomer, s
                 <Stack direction="row" spacing={3}>
                   <Box>
                     <Typography variant="caption" sx={{ opacity: 0.75 }}>New Debt</Typography>
-                    <Typography variant="h6">₱{debtSummary.newDebt.toFixed(2)}</Typography>
+                    <Typography variant="h6">{formatPeso(debtSummary.newDebt)}</Typography>
                   </Box>
                   <Box>
                     <Typography variant="caption" sx={{ opacity: 0.75 }}>Paid</Typography>
-                    <Typography variant="h6">₱{debtSummary.paid.toFixed(2)}</Typography>
+                    <Typography variant="h6">{formatPeso(debtSummary.paid)}</Typography>
                   </Box>
                   <Box>
                     <Typography variant="caption" sx={{ opacity: 0.75 }}>Balance</Typography>
                     <Typography variant="h6" color={debtSummary.balance > 0 ? "error" : "success.main"}>
-                      ₱{debtSummary.balance.toFixed(2)}
+                      {formatPeso(debtSummary.balance)}
                     </Typography>
                   </Box>
                 </Stack>
@@ -367,7 +375,7 @@ export default function AdminDebtLookupDialog({ open, onClose, presetCustomer, s
                     {debtTx.map(tx => (
                       <ListItemButton key={tx.id} disableRipple>
                         <ListItemText
-                          primary={`${tx.item} • ₱${Number(tx.total || 0).toFixed(2)}`}
+                          primary={`${tx.item} • ${formatPeso(tx.total)}`}
                           secondary={(tx.timestamp?.seconds
                             ? new Date(tx.timestamp.seconds * 1000)
                             : new Date()

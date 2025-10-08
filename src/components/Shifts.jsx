@@ -49,8 +49,8 @@ import {
   getDocs,
   writeBatch,
   updateDoc,
-  setDoc,                 // for writing app_status/current_shift
-  serverTimestamp,        // timestamp for resume action
+  setDoc,               // for writing app_status/current_shift
+  serverTimestamp,      // timestamp for resume action
 } from "firebase/firestore";
 
 // shared peso formatter (commas, no decimals; UI-only)
@@ -203,8 +203,8 @@ export default function Shifts() {
 
   // current (active) shift singleton
   const [currentShift, setCurrentShift] = useState(null);
-  const isAnyShiftActive = !!(currentShift && currentShift.shiftId);
-  const activeShiftId = currentShift?.shiftId || null;
+  const isAnyShiftActive = !!(currentShift && currentShift.activeShiftId);
+  const activeShiftId = currentShift?.activeShiftId || null;
 
   /* --------- Current shift singleton doc (listen) --------- */
   // IMPORTANT: rules expose /app_status/current_shift (single doc)
@@ -221,14 +221,14 @@ export default function Shifts() {
   // Only show Resume on the last two shifts in the current (DESC) list
   const lastTwoShiftIds = useMemo(() => shifts.slice(0, 2).map((s) => s.id), [shifts]);
 
-  // Resume handler: write { shiftId, staffEmail } to /app_status/current_shift
+  // Resume handler: write { activeShiftId, staffEmail } to /app_status/current_shift
   const handleResumeShift = async (shift) => {
     try {
       if (isAnyShiftActive) return; // guard: don't resume if something is already active
       await setDoc(
         doc(db, "app_status", "current_shift"),
         {
-          shiftId: shift.id,
+          activeShiftId: shift.id,
           staffEmail: shift.staffEmail, // rules allow admin OR staff matching this email
           resumedAt: serverTimestamp(),
         },
