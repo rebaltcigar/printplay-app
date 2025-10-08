@@ -503,15 +503,19 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
   };
 
   // ----- reconciliation -----
-  const handleReconChange = (den, val) =>
-    setRecon((p) => ({ ...p, [den]: val }));
+  const handleReconChange = (denKey, val) =>
+    setRecon((p) => ({ ...p, [denKey]: val }));
 
   const cashOnHand = useMemo(
     () =>
-      Object.entries(recon).reduce(
-        (sum, [den, count]) => sum + Number(den) * Number(count || 0),
-        0
-      ),
+      Object.entries(recon).reduce((sum, [key, count]) => {
+        // key is now 'b_1000', 'c_20', etc.
+        const denominationValue = Number(key.split("_")[1]);
+        if (!isNaN(denominationValue)) {
+          return sum + denominationValue * Number(count || 0);
+        }
+        return sum;
+      }, 0),
     [recon]
   );
 
@@ -742,12 +746,12 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
       <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
         {BILL_DENOMS.map((d) => (
           <TextField
-            key={d}
+            key={`bill-${d}`}
             type="number"
             size="small"
             label={`₱${d} x`}
-            value={recon[d] || ""}
-            onChange={(e) => handleReconChange(d, e.target.value)}
+            value={recon[`b_${d}`] || ""}
+            onChange={(e) => handleReconChange(`b_${d}`, e.target.value)}
             sx={{ width: 110 }}
           />
         ))}
@@ -757,12 +761,12 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
       <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
         {COIN_DENOMS.map((d) => (
           <TextField
-            key={d}
+            key={`coin-${d}`}
             type="number"
             size="small"
             label={`₱${d} x`}
-            value={recon[d] || ""}
-            onChange={(e) => handleReconChange(d, e.target.value)}
+            value={recon[`c_${d}`] || ""}
+            onChange={(e) => handleReconChange(`c_${d}`, e.target.value)}
             sx={{ width: 110 }}
           />
         ))}
