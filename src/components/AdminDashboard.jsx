@@ -15,12 +15,15 @@ import {
   ListItemText,
   Divider,
   useMediaQuery,
+  Button,
+  CircularProgress,
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import MenuIcon from "@mui/icons-material/Menu";
 import LogoutIcon from "@mui/icons-material/Logout";
+import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
 
-import { auth } from "../firebase";
+import { auth, db } from "../firebase";
 import { signOut } from "firebase/auth";
 
 import Shifts from "./Shifts";
@@ -30,6 +33,8 @@ import ServiceManagement from "./ServiceManagement";
 import UserManagement from "./UserManagement";
 import AdminHome from "./AdminHome"; // Charts & summaries
 import Transactions from "./Transactions";
+
+import { generateFakeHistory } from "../utils/seedHistoricalData"; // <-- NEW
 
 function TabPanel({ value, index, children }) {
   return (
@@ -48,9 +53,14 @@ function TabPanel({ value, index, children }) {
 export default function AdminDashboard({ user }) {
   const [tab, setTab] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [seeding, setSeeding] = useState(false); // <-- NEW
 
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
+
+  const devMode =
+    import.meta.env.MODE === "development" ||
+    import.meta.env.VITE_ENABLE_SEED_BUTTON === "true";
 
   const tabs = [
     { label: "Home", index: 0 },
@@ -73,6 +83,28 @@ export default function AdminDashboard({ user }) {
   const handleSelectTab = (idx) => {
     setTab(idx);
     setDrawerOpen(false);
+  };
+
+  const handleSeed = async () => {
+    const really = window.confirm(
+      "⚠️ This will DELETE all docs in 'shifts' and 'transactions' and then generate historical data from Mar 1, 2025 to yesterday.\n\nAre you absolutely sure?"
+    );
+    if (!really) return;
+
+    try {
+      setSeeding(true);
+      await generateFakeHistory({
+        db,
+        startISO: "2025-03-01",
+        doPurgeFirst: true,
+      });
+      alert("Seeding complete! 🎉  (You can remove this button now.)");
+    } catch (err) {
+      console.error(err);
+      alert("Seeding failed. Check the console for details.");
+    } finally {
+      setSeeding(false);
+    }
   };
 
   return (
@@ -113,7 +145,34 @@ export default function AdminDashboard({ user }) {
             Admin — {user?.email}
           </Typography>
 
-          {/* Desktop: Logout button (unchanged) */}
+          {/* DEV: Generate fake history */}
+          {devMode && (
+            <Tooltip title="DEV: Seed historical fake data">
+              {/* span wrapper lets Tooltip still show for disabled Button */}
+              <span>
+                <Button
+                  onClick={handleSeed}
+                  disabled={seeding}
+                  variant="outlined"
+                  color="inherit"
+                  size="small"
+                  startIcon={!seeding ? <AutoFixHighIcon /> : null}
+                  sx={{ textTransform: "none", mr: 1 }}
+                >
+                  {seeding ? (
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                      <CircularProgress size={16} color="inherit" />
+                      Seeding…
+                    </Box>
+                  ) : (
+                    "Generate Fake History"
+                  )}
+                </Button>
+              </span>
+            </Tooltip>
+          )}
+
+          {/* Desktop: Logout button */}
           {!isMobile && (
             <Tooltip title="Logout">
               <IconButton color="inherit" onClick={handleLogout} aria-label="logout">
@@ -123,7 +182,7 @@ export default function AdminDashboard({ user }) {
           )}
         </Toolbar>
 
-        {/* Desktop/Web: Top-anchored tabs (unchanged); hidden on mobile */}
+        {/* Desktop/Web: Tabs; hidden on mobile */}
         {!isMobile && (
           <Tabs
             value={tab}
@@ -139,7 +198,7 @@ export default function AdminDashboard({ user }) {
         )}
       </AppBar>
 
-      {/* Mobile Drawer: navigation + logout */}
+      {/* Mobile Drawer */}
       <Drawer
         anchor="left"
         open={drawerOpen}

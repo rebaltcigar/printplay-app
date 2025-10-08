@@ -57,6 +57,13 @@ import {
 import CustomerDialog from "./CustomerDialog";
 import logo from "/icon.ico";
 
+// UI-only peso formatter (commas, 2 decimals). Does NOT touch what we store.
+const fmtPeso = (n) =>
+  `₱${Number(n || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
 /* ---------- Expense policy ---------- */
 const EXPENSE_TYPES_ALL = [
   "Supplies",
@@ -292,10 +299,10 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
 
     // validations
     if (!quantity || price === "") {
-        return alert("Please enter both a quantity and a price.");
+      return alert("Please enter both a quantity and a price.");
     }
     if (Number(quantity) <= 0) {
-        return alert("Quantity must be a positive number.");
+      return alert("Quantity must be a positive number.");
     }
     if (item === "Expenses") {
       if (!expenseType) return alert("Please select an expense type.");
@@ -306,7 +313,11 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
         return alert("Please select a staff for Salary or Salary Advance.");
       }
     }
-    if ((item === "New Debt" || item === "Paid Debt") && !selectedCustomer && !currentlyEditing) {
+    if (
+      (item === "New Debt" || item === "Paid Debt") &&
+      !selectedCustomer &&
+      !currentlyEditing
+    ) {
       return alert("Please select a customer for this transaction.");
     }
 
@@ -363,7 +374,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
 
   // Handle "Enter" key on quantity and price fields
   const handleEnterSubmit = (e) => {
-    if (e.key === 'Enter') {
+    if (e.key === "Enter") {
       handleSubmit(e);
     }
   };
@@ -388,9 +399,12 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
 
   const handleBulkDelete = async () => {
     if (!selectedTransactions.length) return;
-    const reason = window.prompt("Reason for deleting selected entries?");
+    const reason = window.prompt(
+      "Reason for deleting selected entries?"
+    );
     if (!reason) return alert("Deletion cancelled. Reason is required.");
-    if (!window.confirm(`Delete ${selectedTransactions.length} entries?`)) return;
+    if (!window.confirm(`Delete ${selectedTransactions.length} entries?`))
+      return;
 
     try {
       const batch = writeBatch(db);
@@ -414,11 +428,12 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
   const openBulkDateDialog = () => {
     if (selectedTransactions.length === 1) {
       const row = transactions.find((t) => t.id === selectedTransactions[0]);
-      const d = row?.timestamp?.seconds
-        ? new Date(row.timestamp.seconds * 1000)
-        : row?.timestamp instanceof Date
-        ? row.timestamp
-        : shiftStart;
+      const d =
+        row?.timestamp?.seconds
+          ? new Date(row.timestamp.seconds * 1000)
+          : row?.timestamp instanceof Date
+          ? row.timestamp
+          : shiftStart;
       setBulkDateTime(toDatetimeLocal(d));
     } else {
       setBulkDateTime(toDatetimeLocal(shiftStart));
@@ -429,8 +444,9 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
   const saveBulkDate = async () => {
     if (!selectedTransactions.length) return;
     const reason =
-      window.prompt("Reason for changing the date/time for the selected entries?") ||
-      "(bulk date edit)";
+      window.prompt(
+        "Reason for changing the date/time for the selected entries?"
+      ) || "(bulk date edit)";
     const when = fromDatetimeLocal(bulkDateTime);
     try {
       const batch = writeBatch(db);
@@ -455,8 +471,9 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
   const quickSetShiftStart = async () => {
     if (!selectedTransactions.length) return;
     const reason =
-      window.prompt("Reason for setting selected entries to shift start time?") ||
-      "(bulk date set to shift start)";
+      window.prompt(
+        "Reason for setting selected entries to shift start time?"
+      ) || "(bulk date set to shift start)";
     try {
       const when = shiftStart;
       const batch = writeBatch(db);
@@ -515,7 +532,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     [servicesTotal, expensesTotal, pcRental]
   );
 
-  // Write back latest totals to the shift (debounced)
+  // Write back latest totals to the shift (debounced) — DB stays numeric
   useEffect(() => {
     let t;
     const write = async () => {
@@ -549,13 +566,17 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
   };
 
   const handleReconEnter = (e) => {
-    if (e.key === 'Enter') {
+    if (e.key === "Enter") {
       saveRecon();
     }
   };
 
   const formatTime = (ts) =>
-    ts?.seconds ? new Date(ts.seconds * 1000).toLocaleTimeString() : (ts instanceof Date ? ts.toLocaleTimeString() : "—");
+    ts?.seconds
+      ? new Date(ts.seconds * 1000).toLocaleTimeString()
+      : ts instanceof Date
+      ? ts.toLocaleTimeString()
+      : "—";
 
   /* -------- Split content: Form vs Reconciliation -------- */
   const FormContent = (
@@ -629,11 +650,20 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
         <Box sx={{ mt: 0.5, p: 1, border: "1px dashed grey", borderRadius: 1 }}>
           <Typography variant="caption">Customer</Typography>
           {selectedCustomer ? (
-            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
               <Typography>
                 <strong>{selectedCustomer.fullName}</strong>
               </Typography>
-              <IconButton size="small" onClick={() => setSelectedCustomer(null)}>
+              <IconButton
+                size="small"
+                onClick={() => setSelectedCustomer(null)}
+              >
                 <ClearIcon fontSize="small" />
               </IconButton>
             </Box>
@@ -670,7 +700,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
         size={fieldSize}
       />
       <Typography variant="body2">
-        Total: ₱{(Number(quantity || 0) * Number(price || 0)).toFixed(2)}
+        Total: {fmtPeso(Number(quantity || 0) * Number(price || 0))}
       </Typography>
       <TextField
         label="Notes (Optional)"
@@ -733,11 +763,11 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
       <Divider />
       <Box sx={{ display: "flex", justifyContent: "space-between" }}>
         <Typography>System Total</Typography>
-        <Typography>₱{systemTotal.toFixed(2)}</Typography>
+        <Typography>{fmtPeso(systemTotal)}</Typography>
       </Box>
       <Box sx={{ display: "flex", justifyContent: "space-between" }}>
         <Typography>Cash on Hand</Typography>
-        <Typography>₱{cashOnHand.toFixed(2)}</Typography>
+        <Typography>{fmtPeso(cashOnHand)}</Typography>
       </Box>
       <Box sx={{ display: "flex", justifyContent: "space-between" }}>
         <Typography variant="subtitle1">Difference</Typography>
@@ -745,7 +775,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           variant="subtitle1"
           color={cashOnHand - systemTotal !== 0 ? "error" : "inherit"}
         >
-          ₱{(cashOnHand - systemTotal).toFixed(2)}
+          {fmtPeso(cashOnHand - systemTotal)}
         </Typography>
       </Box>
     </>
@@ -758,14 +788,25 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
       if (!txControlsOpen) setTxControlsOpen(true);
       // scroll after expand animation kicks in
       setTimeout(() => {
-        txControlsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        txControlsRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
       }, 50);
     }
   };
 
   // ----- render -----
   return (
-    <Box sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2, minHeight: "100%" }}>
+    <Box
+      sx={{
+        p: 2,
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+        minHeight: "100%",
+      }}
+    >
       {/* header */}
       <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
         <img src={logo} width={18} height={18} alt="" />
@@ -775,7 +816,8 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
       </Box>
 
       <Typography variant="h5">
-        Shift Detail — {userMap[shift.staffEmail] || shift.staffEmail} — {shift.shiftPeriod} —{" "}
+        Shift Detail — {userMap[shift.staffEmail] || shift.staffEmail} —{" "}
+        {shift.shiftPeriod} —{" "}
         {shift.startTime?.seconds
           ? new Date(shift.startTime.seconds * 1000).toLocaleDateString()
           : ""}
@@ -791,34 +833,45 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
         }}
       >
         {/* LEFT: Reconciliation */}
-        <Box sx={{ width: 360, display: "flex", flexDirection: "column", gap: 2 }}>
+        <Box
+          sx={{ width: 360, display: "flex", flexDirection: "column", gap: 2 }}
+        >
           <Card sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2 }}>
             {FormContent}
             <Button
-                onClick={handleSubmit}
-                variant="contained"
-                fullWidth
-                disabled={isDebtItem && !selectedCustomer && !currentlyEditing}
-              >
-                {currentlyEditing ? "Update Entry" : "Add Entry"}
+              onClick={handleSubmit}
+              variant="contained"
+              fullWidth
+              disabled={isDebtItem && !selectedCustomer && !currentlyEditing}
+            >
+              {currentlyEditing ? "Update Entry" : "Add Entry"}
+            </Button>
+            {currentlyEditing && (
+              <Button variant="outlined" onClick={clearForm} fullWidth>
+                Cancel
               </Button>
-              {currentlyEditing && (
-                <Button variant="outlined" onClick={clearForm} fullWidth>
-                  Cancel
-                </Button>
-              )}
+            )}
             <Divider sx={{ my: 1 }} />
             {ReconContent}
-            <Stack direction="row" spacing={1} sx={{ mt: "auto" }}>
-              
-            </Stack>
-            <Button onClick={saveRecon} variant="contained">Save Reconciliation</Button>
+            <Stack direction="row" spacing={1} sx={{ mt: "auto" }}></Stack>
+            <Button onClick={saveRecon} variant="contained">
+              Save Reconciliation
+            </Button>
           </Card>
         </Box>
 
         {/* RIGHT: Transactions table */}
-        <Paper sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-          <Box sx={{ p: 2, pt: 1, display: "flex", alignItems: "center", gap: 2 }}>
+        <Paper
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <Box
+            sx={{ p: 2, pt: 1, display: "flex", alignItems: "center", gap: 2 }}
+          >
             <Typography variant="subtitle1" fontWeight={600}>
               Transactions
             </Typography>
@@ -894,7 +947,14 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
                     </TableCell>
                     <TableCell>{formatTime(tx.timestamp)}</TableCell>
                     <TableCell>
-                      <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+                      <Box
+                        sx={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 1,
+                          flexWrap: "wrap",
+                        }}
+                      >
                         <Typography variant="body2" fontWeight={600}>
                           {tx.item}
                         </Typography>
@@ -911,7 +971,11 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
                         {tx.addedByAdmin && (
                           <Typography
                             variant="caption"
-                            sx={{ border: "1px solid", px: 0.5, borderColor: "divider" }}
+                            sx={{
+                              border: "1px solid",
+                              px: 0.5,
+                              borderColor: "divider",
+                            }}
                           >
                             admin
                           </Typography>
@@ -919,14 +983,17 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
                       </Box>
                     </TableCell>
                     <TableCell align="right">{tx.quantity}</TableCell>
-                    <TableCell align="right">₱{(tx.price || 0).toFixed(2)}</TableCell>
-                    <TableCell align="right">₱{(tx.total || 0).toFixed(2)}</TableCell>
+                    <TableCell align="right">{fmtPeso(tx.price || 0)}</TableCell>
+                    <TableCell align="right">{fmtPeso(tx.total || 0)}</TableCell>
                     <TableCell>{identifierText(tx)}</TableCell>
                     <TableCell align="right">
                       <IconButton size="small" onClick={() => startEdit(tx)}>
                         <EditIcon fontSize="inherit" />
                       </IconButton>
-                      <IconButton size="small" onClick={() => handleRowDelete(tx)}>
+                      <IconButton
+                        size="small"
+                        onClick={() => handleRowDelete(tx)}
+                      >
                         <DeleteIcon fontSize="inherit" color="error" />
                       </IconButton>
                     </TableCell>
@@ -940,15 +1007,17 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           <Box sx={{ p: 2, pt: 0 }}>
             <Box sx={{ display: "flex", justifyContent: "space-between" }}>
               <Typography>Services Total</Typography>
-              <Typography>₱{servicesTotal.toFixed(2)}</Typography>
+              <Typography>{fmtPeso(servicesTotal)}</Typography>
             </Box>
             <Box sx={{ display: "flex", justifyContent: "space-between" }}>
               <Typography>Expenses Total</Typography>
-              <Typography>₱{expensesTotal.toFixed(2)}</Typography>
+              <Typography>{fmtPeso(expensesTotal)}</Typography>
             </Box>
             <Box sx={{ display: "flex", justifyContent: "space-between" }}>
               <Typography variant="subtitle1">System Total</Typography>
-              <Typography variant="subtitle1">₱{systemTotal.toFixed(2)}</Typography>
+              <Typography variant="subtitle1">
+                {fmtPeso(systemTotal)}
+              </Typography>
             </Box>
           </Box>
         </Paper>
@@ -970,7 +1039,10 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
             <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
               Transaction Controls
             </Typography>
-            <IconButton size="small" onClick={() => setTxControlsOpen((v) => !v)}>
+            <IconButton
+              size="small"
+              onClick={() => setTxControlsOpen((v) => !v)}
+            >
               {txControlsOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
             </IconButton>
           </Box>
@@ -1057,7 +1129,9 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
             height: "66vh",
           }}
         >
-          <Box sx={{ p: 1.0, pt: 1, display: "flex", alignItems: "center", gap: 1 }}>
+          <Box
+            sx={{ p: 1.0, pt: 1, display: "flex", alignItems: "center", gap: 1 }}
+          >
             <Typography variant="subtitle1" fontWeight={600}>
               Transactions
             </Typography>
@@ -1095,7 +1169,14 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
                     </TableCell>
                     <TableCell>{formatTime(tx.timestamp)}</TableCell>
                     <TableCell>
-                      <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
+                      <Box
+                        sx={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 0.5,
+                          flexWrap: "wrap",
+                        }}
+                      >
                         <Typography variant="body2" fontWeight={600}>
                           {tx.item}
                         </Typography>
@@ -1112,14 +1193,17 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
                       </Box>
                     </TableCell>
                     <TableCell align="right">{tx.quantity}</TableCell>
-                    <TableCell align="right">{(tx.price || 0).toFixed(0)}</TableCell>
-                    <TableCell align="right">₱{(tx.total || 0).toFixed(0)}</TableCell>
+                    <TableCell align="right">{fmtPeso(tx.price || 0)}</TableCell>
+                    <TableCell align="right">{fmtPeso(tx.total || 0)}</TableCell>
                     <TableCell>{identifierText(tx)}</TableCell>
                     <TableCell align="right">
                       <IconButton size="small" onClick={() => startEdit(tx)}>
                         <EditIcon fontSize="inherit" />
                       </IconButton>
-                      <IconButton size="small" onClick={() => handleRowDelete(tx)}>
+                      <IconButton
+                        size="small"
+                        onClick={() => handleRowDelete(tx)}
+                      >
                         <DeleteIcon fontSize="inherit" color="error" />
                       </IconButton>
                     </TableCell>
@@ -1133,15 +1217,15 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           <Box sx={{ px: 1, pb: 1 }}>
             <Box sx={{ display: "flex", justifyContent: "space-between" }}>
               <Typography>Services</Typography>
-              <Typography>₱{servicesTotal.toFixed(0)}</Typography>
+              <Typography>{fmtPeso(servicesTotal)}</Typography>
             </Box>
             <Box sx={{ display: "flex", justifyContent: "space-between" }}>
               <Typography>Expenses</Typography>
-              <Typography>₱{expensesTotal.toFixed(0)}</Typography>
+              <Typography>{fmtPeso(expensesTotal)}</Typography>
             </Box>
             <Box sx={{ display: "flex", justifyContent: "space-between" }}>
               <Typography fontWeight={600}>System Total</Typography>
-              <Typography fontWeight={600}>₱{systemTotal.toFixed(0)}</Typography>
+              <Typography fontWeight={600}>{fmtPeso(systemTotal)}</Typography>
             </Box>
           </Box>
         </Paper>

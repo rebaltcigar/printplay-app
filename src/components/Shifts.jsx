@@ -33,6 +33,7 @@ import { useTheme } from "@mui/material/styles";
 import DeleteIcon from "@mui/icons-material/Delete";
 import AddIcon from "@mui/icons-material/Add";
 import EditIcon from "@mui/icons-material/Edit";
+import PlayArrowIcon from "@mui/icons-material/PlayArrow"; // Resume icon
 import ShiftDetailView from "./ShiftDetailView";
 import { db } from "../firebase";
 import {
@@ -48,10 +49,28 @@ import {
   getDocs,
   writeBatch,
   updateDoc,
+  setDoc,                 // for writing app_status/current_shift
+  serverTimestamp,        // timestamp for resume action
 } from "firebase/firestore";
+
+// shared peso formatter (commas, no decimals; UI-only)
+import { fmtPeso } from "../utils/analytics";
 
 /* -------------------- helpers -------------------- */
 const SHIFT_PERIODS = ["Morning", "Afternoon", "Evening"];
+
+const pad2 = (n) => String(n).padStart(2, "0");
+const ymd = (d) =>
+  `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+const thisMonthDefaults = () => {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const start = new Date(y, m, 1);
+  const end = new Date(y, m + 1, 0);
+  return { startStr: ymd(start), endStr: ymd(end) };
+};
 
 const chunk = (arr, size = 400) => {
   const out = [];
@@ -88,19 +107,6 @@ const toLocalInput = (tsOrDate) => {
 const normalize = (s) => String(s ?? "").trim().toLowerCase();
 
 /* -------------------- aggregation (spec-compliant) -------------------- */
-/**
- * txList: list of transactions for a shift (already filtered by shiftId and !isDeleted)
- * serviceMeta: [{ name: serviceName, category: "Debit"|"Credit" }]
- * pcRental: number from shift
- *
- * - match tx.item to service.name via lowercase+trim
- * - amount = tx.total OR (price*quantity)
- * - skip unmatched items entirely
- * - per-service sums are signed (if they net negative, show negative)
- * - sales = sum of Debit + pcRental
- * - expenses = sum of Credit
- * - systemTotal = sales - expenses
- */
 const aggregateShiftTransactions = (txList, serviceMeta, pcRental = 0) => {
   const nameToCategory = {};
   const orderedNames = [];
@@ -108,10 +114,10 @@ const aggregateShiftTransactions = (txList, serviceMeta, pcRental = 0) => {
     const n = normalize(s.name);
     if (!n) continue;
     nameToCategory[n] = s.category || "";
-    orderedNames.push(s.name); // keep display case
+    orderedNames.push(s.name);
   }
 
-  const serviceTotals = {}; // display by original/case name
+  const serviceTotals = {};
   let sales = 0;
   let expenses = 0;
 
@@ -122,10 +128,7 @@ const aggregateShiftTransactions = (txList, serviceMeta, pcRental = 0) => {
     if (!itemName) continue;
 
     const cat = nameToCategory[itemName];
-    if (!cat) {
-      // unmatched -> SKIP ENTIRELY (per spec)
-      continue;
-    }
+    if (!cat) continue;
 
     let amt = Number(tx.total);
     if (!Number.isFinite(amt)) {
@@ -135,11 +138,12 @@ const aggregateShiftTransactions = (txList, serviceMeta, pcRental = 0) => {
     }
     if (!Number.isFinite(amt)) amt = 0;
 
-    // accumulate per-service totals (signed)
-    const displayName = (serviceMeta.find((s) => normalize(s.name) === itemName)?.name) || tx.item || "Unknown";
+    const displayName =
+      serviceMeta.find((s) => normalize(s.name) === itemName)?.name ||
+      tx.item ||
+      "Unknown";
     serviceTotals[displayName] = (serviceTotals[displayName] || 0) + amt;
 
-    // classify for sales/expenses
     if (normalize(cat) === "debit") sales += amt;
     else if (normalize(cat) === "credit") expenses += amt;
   }
@@ -148,7 +152,7 @@ const aggregateShiftTransactions = (txList, serviceMeta, pcRental = 0) => {
   const systemTotal = salesWithPc - Number(expenses);
 
   return {
-    serviceTotals, // keyed by display serviceName
+    serviceTotals,
     sales: salesWithPc,
     expenses,
     systemTotal,
@@ -164,8 +168,12 @@ export default function Shifts() {
   const [services, setServices] = useState([]); // [{name, category}]
   const [userMap, setUserMap] = useState({});
   const [viewingShift, setViewingShift] = useState(null);
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
+
+  // DEFAULT: this month
+  const { startStr: defaultStart, endStr: defaultEnd } = thisMonthDefaults();
+  const [startDate, setStartDate] = useState(defaultStart);
+  const [endDate, setEndDate] = useState(defaultEnd);
+
   const [view, setView] = useState("summary"); // summary | detailed
 
   // dialogs
@@ -192,6 +200,45 @@ export default function Shifts() {
   // live aggregates keyed by shift.id
   const [txAggByShift, setTxAggByShift] = useState({});
   const txUnsubsRef = useRef({}); // { [shiftId]: unsubscribe }
+
+  // current (active) shift singleton
+  const [currentShift, setCurrentShift] = useState(null);
+  const isAnyShiftActive = !!(currentShift && currentShift.shiftId);
+  const activeShiftId = currentShift?.shiftId || null;
+
+  /* --------- Current shift singleton doc (listen) --------- */
+  // IMPORTANT: rules expose /app_status/current_shift (single doc)
+  useEffect(() => {
+    const ref = doc(db, "app_status", "current_shift");
+    const unsub = onSnapshot(
+      ref,
+      (snap) => setCurrentShift(snap.exists() ? { id: snap.id, ...snap.data() } : null),
+      (e) => console.warn("current_shift listener failed", e)
+    );
+    return () => unsub();
+  }, []);
+
+  // Only show Resume on the last two shifts in the current (DESC) list
+  const lastTwoShiftIds = useMemo(() => shifts.slice(0, 2).map((s) => s.id), [shifts]);
+
+  // Resume handler: write { shiftId, staffEmail } to /app_status/current_shift
+  const handleResumeShift = async (shift) => {
+    try {
+      if (isAnyShiftActive) return; // guard: don't resume if something is already active
+      await setDoc(
+        doc(db, "app_status", "current_shift"),
+        {
+          shiftId: shift.id,
+          staffEmail: shift.staffEmail, // rules allow admin OR staff matching this email
+          resumedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    } catch (e) {
+      console.error("Resume shift failed:", e);
+      alert(`Failed to resume shift: ${e.message || e.code || e}`);
+    }
+  };
 
   /* --------- Shifts (with date filters) --------- */
   useEffect(() => {
@@ -270,7 +317,6 @@ export default function Shifts() {
 
   /* --------- subscribe to transactions per shift (shiftId only) --------- */
   useEffect(() => {
-    // cleanup listeners for removed shifts
     const desired = new Set(shifts.map((s) => s.id));
     for (const id of Object.keys(txUnsubsRef.current)) {
       if (!desired.has(id)) {
@@ -304,7 +350,7 @@ export default function Shifts() {
     };
   }, [shifts, services]);
 
-  /* ---------- Columns: Date | Staff | Shift | PC Rental | (all services) | Sales | Expenses | System Total ---------- */
+  /* ---------- Columns ---------- */
   const serviceColumns = useMemo(() => ["__PC_RENTAL__", ...serviceNames, "__SALES__", "__EXPENSES__", "__SYSTEM__"], [serviceNames]);
 
   /* ---------- Totals for footer ---------- */
@@ -412,19 +458,15 @@ export default function Shifts() {
       };
       const docRef = await addDoc(collection(db, "shifts"), payload);
 
-      // Create the new shift object to pass to the detail view
       const newShiftForView = { id: docRef.id, ...payload };
 
-      // Reset form and close dialog
       setAddOpen(false);
       setNewStaffEmail(staffOptions[0]?.email || "");
       setNewStart("");
       setNewEnd("");
       setNewShiftPeriod(SHIFT_PERIODS[0]);
-      
-      // Automatically open the detail view for the new shift
-      setViewingShift(newShiftForView);
 
+      setViewingShift(newShiftForView);
     } catch (e) {
       console.error("Add shift failed:", e);
       alert(`Failed to add shift: ${e.message || e.code || e}`);
@@ -596,6 +638,7 @@ export default function Shifts() {
             <TableBody>
               {shifts.map((s) => {
                 const agg = txAggByShift[s.id] || {};
+                const isActiveRow = activeShiftId === s.id;
                 return (
                   <TableRow
                     key={s.id}
@@ -607,13 +650,28 @@ export default function Shifts() {
                     }}
                   >
                     <TableCell sx={{ whiteSpace: "nowrap" }}>
+                      {/* Active indicator: green dot */}
+                      {isActiveRow && (
+                        <Tooltip title="Active shift">
+                          <Box
+                            component="span"
+                            sx={{
+                              display: "inline-block",
+                              width: 10,
+                              height: 10,
+                              borderRadius: "50%",
+                              bgcolor: "success.main",
+                              mr: 1,
+                              verticalAlign: "middle",
+                            }}
+                          />
+                        </Tooltip>
+                      )}
                       {s.startTime ? new Date(s.startTime.seconds * 1000).toLocaleDateString() : "N/A"}
                       <Box sx={{ display: { xs: "block", sm: "none" } }}>
                         <Chip size="small" label={s.shiftPeriod || "—"} sx={{ mt: 0.5, fontSize: 10 }} variant="outlined" />
                       </Box>
                     </TableCell>
-
-
 
                     <TableCell sx={{ display: { xs: "none", sm: "table-cell" } }}>{s.shiftPeriod || "—"}</TableCell>
                     
@@ -623,9 +681,10 @@ export default function Shifts() {
                       </Typography>
                     </TableCell>
                     
-                    <TableCell align="right">₱{Number(agg.sales || 0).toFixed(2)}</TableCell>
-                    <TableCell align="right">₱{Number(agg.expenses || 0).toFixed(2)}</TableCell>
-                    <TableCell align="right">₱{Number(agg.systemTotal || 0).toFixed(2)}</TableCell>
+                    {/* UI: comma-formatted pesos */}
+                    <TableCell align="right">{fmtPeso(agg.sales || 0)}</TableCell>
+                    <TableCell align="right">{fmtPeso(agg.expenses || 0)}</TableCell>
+                    <TableCell align="right">{fmtPeso(agg.systemTotal || 0)}</TableCell>
 
                     <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
                       <Tooltip title="Edit shift">
@@ -638,6 +697,21 @@ export default function Shifts() {
                           <DeleteIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
+                      {/* Resume: only on the two latest shifts AND only when nothing is active */}
+                      {!isAnyShiftActive && lastTwoShiftIds.includes(s.id) && (
+                        <Tooltip title="Resume this shift">
+                          <IconButton
+                            size="small"
+                            color="success"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleResumeShift(s);
+                            }}
+                          >
+                            <PlayArrowIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
                     </TableCell>
                   </TableRow>
                 );
@@ -677,6 +751,7 @@ export default function Shifts() {
             <TableBody>
               {shifts.map((s) => {
                 const agg = txAggByShift[s.id];
+                const isActiveRow = activeShiftId === s.id;
 
                 return (
                   <TableRow
@@ -689,6 +764,22 @@ export default function Shifts() {
                     }}
                   >
                     <TableCell>
+                      {isActiveRow && (
+                        <Tooltip title="Active shift">
+                          <Box
+                            component="span"
+                            sx={{
+                              display: "inline-block",
+                              width: 10,
+                              height: 10,
+                              borderRadius: "50%",
+                              bgcolor: "success.main",
+                              mr: 1,
+                              verticalAlign: "middle",
+                            }}
+                          />
+                        </Tooltip>
+                      )}
                       {s.startTime ? new Date(s.startTime.seconds * 1000).toLocaleDateString() : "N/A"}
                     </TableCell>
 
@@ -700,24 +791,22 @@ export default function Shifts() {
                       <Typography noWrap>{userMap[s.staffEmail] || s.staffEmail}</Typography>
                     </TableCell>
 
-
-
-                    {/* PC Rental */}
+                    {/* PC Rental (UI formatted) */}
                     <TableCell align="right">
-                      ₱{Number(s.pcRentalTotal || 0).toFixed(2)}
+                      {fmtPeso(s.pcRentalTotal || 0)}
                     </TableCell>
 
-                    {/* Per-service columns */}
+                    {/* Per-service columns (UI formatted) */}
                     {serviceNames.map((h) => (
                       <TableCell key={h} align="right">
-                        ₱{Number(agg?.serviceTotals?.[h] || 0).toFixed(2)}
+                        {fmtPeso(agg?.serviceTotals?.[h] || 0)}
                       </TableCell>
                     ))}
 
-                    {/* Totals */}
-                    <TableCell align="right">₱{Number(agg?.sales || 0).toFixed(2)}</TableCell>
-                    <TableCell align="right">₱{Number(agg?.expenses || 0).toFixed(2)}</TableCell>
-                    <TableCell align="right">₱{Number(agg?.systemTotal || 0).toFixed(2)}</TableCell>
+                    {/* Totals (UI formatted) */}
+                    <TableCell align="right">{fmtPeso(agg?.sales || 0)}</TableCell>
+                    <TableCell align="right">{fmtPeso(agg?.expenses || 0)}</TableCell>
+                    <TableCell align="right">{fmtPeso(agg?.systemTotal || 0)}</TableCell>
 
                     <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
                       <Tooltip title="Edit shift">
@@ -730,12 +819,26 @@ export default function Shifts() {
                           <DeleteIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
+                      {!isAnyShiftActive && lastTwoShiftIds.includes(s.id) && (
+                        <Tooltip title="Resume this shift">
+                          <IconButton
+                            size="small"
+                            color="success"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleResumeShift(s);
+                            }}
+                          >
+                            <PlayArrowIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
                     </TableCell>
                   </TableRow>
                 );
               })}
 
-              {/* Totals row */}
+              {/* Totals row (UI formatted) */}
               <TableRow>
                 <TableCell colSpan={3}>
                   <strong>Totals</strong>
@@ -743,25 +846,25 @@ export default function Shifts() {
 
                 {/* PC Rental grand */}
                 <TableCell align="right">
-                  <strong>₱{grand.pcRental.toFixed(2)}</strong>
+                  <strong>{fmtPeso(grand.pcRental)}</strong>
                 </TableCell>
 
                 {/* Per-service grand */}
                 {serviceNames.map((h) => (
                   <TableCell key={h} align="right">
-                    <strong>₱{Number(perServiceTotals[h] || 0).toFixed(2)}</strong>
+                    <strong>{fmtPeso(perServiceTotals[h] || 0)}</strong>
                   </TableCell>
                 ))}
 
                 {/* Grand totals */}
                 <TableCell align="right">
-                  <strong>₱{Number(grand.sales || 0).toFixed(2)}</strong>
+                  <strong>{fmtPeso(grand.sales || 0)}</strong>
                 </TableCell>
                 <TableCell align="right">
-                  <strong>₱{Number(grand.expenses || 0).toFixed(2)}</strong>
+                  <strong>{fmtPeso(grand.expenses || 0)}</strong>
                 </TableCell>
                 <TableCell align="right">
-                  <strong>₱{Number(grand.system || 0).toFixed(2)}</strong>
+                  <strong>{fmtPeso(grand.system || 0)}</strong>
                 </TableCell>
 
                 <TableCell />
@@ -825,7 +928,7 @@ export default function Shifts() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setAddOpen(false)}>Cancel</Button>
-          <Button onClick={handleAddShift} variant="contained">
+          <Button variant="contained" onClick={handleAddShift}>
             Save Shift
           </Button>
         </DialogActions>
@@ -882,6 +985,7 @@ export default function Shifts() {
               fullWidth
             />
 
+            {/* Inputs remain numeric (no UI formatting) */}
             <TextField
               label="PC Rental Total (optional)"
               type="number"
