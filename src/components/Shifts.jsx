@@ -29,6 +29,11 @@ import {
   Chip,
   Card,
   useMediaQuery,
+  Checkbox, // <-- New Import
+  ListItemText, // <-- New Import
+  OutlinedInput, // <-- New Import
+  FormGroup, // <-- New Import
+  FormControlLabel, // <-- New Import
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import DeleteIcon from "@mui/icons-material/Delete";
@@ -191,6 +196,12 @@ export default function Shifts() {
   const [startDate, setStartDate] = useState(defaultStart);
   const [endDate, setEndDate] = useState(defaultEnd);
 
+  // --- UPDATED: Filter State ---
+  const [filterStaff, setFilterStaff] = useState([]); // Array of emails
+  const [filterShiftPeriod, setFilterShiftPeriod] = useState([]); // Array of shift periods
+  const [filterShowShort, setFilterShowShort] = useState(true); // Show short by default
+  const [filterShowOverage, setFilterShowOverage] = useState(true); // Show overage by default
+
   const [view, setView] = useState("summary");
 
   const [addOpen, setAddOpen] = useState(false);
@@ -230,7 +241,41 @@ export default function Shifts() {
     return () => unsub();
   }, []);
 
-  const lastTwoShiftIds = useMemo(() => shifts.slice(0, 2).map((s) => s.id), [shifts]);
+  // --- UPDATED: Memoized array for filtered shifts ---
+  const filteredShifts = useMemo(() => {
+    return shifts.filter((s) => {
+      // Staff Filter (if array has items, staff must be in the array)
+      if (filterStaff.length > 0 && !filterStaff.includes(s.staffEmail)) {
+        return false;
+      }
+
+      // Shift Period Filter (if array has items, shift period must be in the array)
+      if (filterShiftPeriod.length > 0 && !filterShiftPeriod.includes(s.shiftPeriod)) {
+        return false;
+      }
+
+      // Difference Filter (based on two checkboxes)
+      const agg = txAggByShift[s.id] || {};
+      const onHand = calculateOnHand(s.denominations);
+      if (onHand === null) {
+        // Hide shifts without denominations if either checkbox is unchecked
+        if (!filterShowShort || !filterShowOverage) return false;
+      } else {
+        const difference = onHand - (agg.systemTotal || 0);
+        const isShort = difference < 0;
+        const isOverage = difference > 0;
+
+        if (!filterShowShort && isShort) return false;
+        if (!filterShowOverage && isOverage) return false;
+        // If a shift has no difference (is 0), it should only be hidden if BOTH checkboxes are off
+        if (!filterShowShort && !filterShowOverage && (isShort || isOverage)) return false;
+      }
+
+      return true;
+    });
+  }, [shifts, filterStaff, filterShiftPeriod, filterShowShort, filterShowOverage, txAggByShift]);
+
+  const lastTwoShiftIds = useMemo(() => filteredShifts.slice(0, 2).map((s) => s.id), [filteredShifts]);
 
   const handleResumeShift = async (shift) => {
     try {
@@ -349,7 +394,7 @@ export default function Shifts() {
   const perServiceTotals = useMemo(() => {
     const totals = {};
     serviceNames.forEach((n) => (totals[n] = 0));
-    for (const s of shifts) {
+    for (const s of filteredShifts) {
       const agg = txAggByShift[s.id];
       if (!agg) continue;
       for (const [svc, amt] of Object.entries(agg.serviceTotals || {})) {
@@ -357,7 +402,7 @@ export default function Shifts() {
       }
     }
     return totals;
-  }, [shifts, serviceNames, txAggByShift]);
+  }, [filteredShifts, serviceNames, txAggByShift]);
 
   const grand = useMemo(() => {
     let pcRental = 0;
@@ -367,7 +412,7 @@ export default function Shifts() {
     let onHand = 0;
     let shiftsWithDenominations = 0;
 
-    for (const s of shifts) {
+    for (const s of filteredShifts) {
       const agg = txAggByShift[s.id];
       pcRental += Number(s?.pcRentalTotal || 0);
       const currentOnHand = calculateOnHand(s.denominations);
@@ -381,10 +426,9 @@ export default function Shifts() {
         system += Number(agg.systemTotal || 0);
       }
     }
-    // --- CORRECTED FORMULA ---
     const difference = onHand - system;
     return { pcRental, sales, expenses, system, onHand, difference, shiftsWithDenominations };
-  }, [shifts, txAggByShift]);
+  }, [filteredShifts, txAggByShift]);
 
   const handleExportToCSV = () => {
     let headers;
@@ -392,10 +436,9 @@ export default function Shifts() {
 
     if (view === "summary") {
       headers = ["Date", "Staff", "Shift", "Sales", "Expenses", "Total", "On Hand", "Difference"];
-      rows = shifts.map((s) => {
+      rows = filteredShifts.map((s) => {
         const agg = txAggByShift[s.id] || {};
         const onHand = calculateOnHand(s.denominations);
-        // --- CORRECTED FORMULA ---
         const difference = onHand !== null ? onHand - (agg.systemTotal || 0) : null;
         return [
           s.startTime ? new Date(s.startTime.seconds * 1000).toLocaleDateString() : "N/A",
@@ -419,7 +462,7 @@ export default function Shifts() {
         "Expenses",
         "Total",
       ];
-      rows = shifts.map((s) => {
+      rows = filteredShifts.map((s) => {
         const agg = txAggByShift[s.id] || { serviceTotals: {} };
         const perSvc = serviceNames.map((n) => Number(agg.serviceTotals?.[n] || 0).toFixed(2));
         return [
@@ -550,12 +593,72 @@ export default function Shifts() {
     <Box sx={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
       {!isMobile ? (
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2, flexWrap: "wrap" }}>
-          <ToggleButtonGroup value={view} exclusive onChange={(e, v) => v && setView(v)}>
+          <ToggleButtonGroup value={view} exclusive onChange={(e, v) => v && setView(v)} size="small">
             <ToggleButton value="summary">Summary</ToggleButton>
             <ToggleButton value="detailed">Detailed</ToggleButton>
           </ToggleButtonGroup>
           <Box sx={{ flexGrow: 1 }} />
-          <Stack direction="row" spacing={1}>
+          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
+            {/* --- UPDATED: Filter Controls --- */}
+            <FormControl size="small" sx={{ minWidth: 150 }}>
+              <InputLabel>Staff</InputLabel>
+              <Select
+                multiple
+                value={filterStaff}
+                onChange={(e) => {
+                  const { target: { value } } = e;
+                  setFilterStaff(typeof value === "string" ? value.split(",") : value);
+                }}
+                input={<OutlinedInput label="Staff" />}
+                renderValue={(selected) => {
+                  if (selected.length === 0) return <em>All Staff</em>;
+                  if (selected.length === staffOptions.length) return <em>All Staff</em>;
+                  if (selected.length > 2) return <em>{selected.length} selected</em>;
+                  return selected.map(email => userMap[email]?.split(' ')[0] || email).join(', ');
+                }}
+              >
+                {staffOptions.map((staff) => (
+                  <MenuItem key={staff.email} value={staff.email}>
+                    <Checkbox checked={filterStaff.includes(staff.email)} />
+                    <ListItemText primary={staff.fullName} />
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 120 }}>
+              <InputLabel>Shift</InputLabel>
+              <Select
+                multiple
+                value={filterShiftPeriod}
+                onChange={(e) => {
+                  const { target: { value } } = e;
+                  setFilterShiftPeriod(typeof value === "string" ? value.split(",") : value);
+                }}
+                input={<OutlinedInput label="Shift" />}
+                renderValue={(selected) => {
+                  if (selected.length === 0) return <em>All Shifts</em>;
+                  return selected.join(", ");
+                }}
+              >
+                {SHIFT_PERIODS.map((p) => (
+                  <MenuItem key={p} value={p}>
+                    <Checkbox checked={filterShiftPeriod.includes(p)} />
+                    <ListItemText primary={p} />
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormGroup row sx={{ pl: 1 }}>
+              <FormControlLabel
+                control={<Checkbox checked={filterShowShort} onChange={(e) => setFilterShowShort(e.target.checked)} size="small" />}
+                label={<Typography variant="body2">Short</Typography>}
+              />
+              <FormControlLabel
+                control={<Checkbox checked={filterShowOverage} onChange={(e) => setFilterShowOverage(e.target.checked)} size="small" />}
+                label={<Typography variant="body2">Overage</Typography>}
+              />
+            </FormGroup>
+            {/* --- End of Updated Filters --- */}
             <TextField
               label="Start Date"
               type="date"
@@ -572,7 +675,7 @@ export default function Shifts() {
               onChange={(e) => setEndDate(e.target.value)}
               InputLabelProps={{ shrink: true }}
             />
-            <Button variant="outlined" onClick={handleExportToCSV} disabled={shifts.length === 0}>
+            <Button variant="outlined" onClick={handleExportToCSV} disabled={filteredShifts.length === 0}>
               Export CSV
             </Button>
             <Button variant="contained" startIcon={<AddIcon />} onClick={() => setAddOpen(true)}>
@@ -594,6 +697,54 @@ export default function Shifts() {
               <ToggleButton value="summary">Summary</ToggleButton>
               <ToggleButton value="detailed">Detailed</ToggleButton>
             </ToggleButtonGroup>
+            {/* --- UPDATED: Mobile Filter Controls --- */}
+            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1.75 }}>
+              <FormControl size="small" fullWidth>
+                <InputLabel>Staff</InputLabel>
+                <Select
+                  multiple
+                  value={filterStaff}
+                  onChange={(e) => {
+                    const { target: { value } } = e;
+                    setFilterStaff(typeof value === "string" ? value.split(",") : value);
+                  }}
+                  input={<OutlinedInput label="Staff" />}
+                  renderValue={(selected) => selected.length === 0 ? "All" : `${selected.length} selected`}
+                >
+                  {staffOptions.map((staff) => (
+                    <MenuItem key={staff.email} value={staff.email}>
+                      <Checkbox checked={filterStaff.includes(staff.email)} />
+                      <ListItemText primary={staff.fullName} />
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormControl size="small" fullWidth>
+                <InputLabel>Shift</InputLabel>
+                <Select
+                  multiple
+                  value={filterShiftPeriod}
+                  onChange={(e) => {
+                    const { target: { value } } = e;
+                    setFilterShiftPeriod(typeof value === "string" ? value.split(",") : value);
+                  }}
+                  input={<OutlinedInput label="Shift" />}
+                  renderValue={(selected) => selected.length === 0 ? "All" : selected.join(", ")}
+                >
+                  {SHIFT_PERIODS.map((p) => (
+                    <MenuItem key={p} value={p}>
+                      <Checkbox checked={filterShiftPeriod.includes(p)} />
+                      <ListItemText primary={p} />
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Box>
+            <FormGroup row sx={{ justifyContent: "center" }}>
+              <FormControlLabel control={<Checkbox checked={filterShowShort} onChange={(e) => setFilterShowShort(e.target.checked)} />} label="Short" />
+              <FormControlLabel control={<Checkbox checked={filterShowOverage} onChange={(e) => setFilterShowOverage(e.target.checked)} />} label="Overage" />
+            </FormGroup>
+            {/* --- End of Mobile Filters --- */}
             <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1.75 }}>
               <TextField label="Start" type="date" size="small" value={startDate} onChange={(e) => setStartDate(e.target.value)} InputLabelProps={{ shrink: true }} />
               <TextField label="End" type="date" size="small" value={endDate} onChange={(e) => setEndDate(e.target.value)} InputLabelProps={{ shrink: true }} />
@@ -602,7 +753,7 @@ export default function Shifts() {
               <Button variant="contained" startIcon={<AddIcon />} onClick={() => setAddOpen(true)} size="small" sx={{ py: 1.1 }}>
                 Add
               </Button>
-              <Button variant="outlined" onClick={handleExportToCSV} disabled={shifts.length === 0} size="small" sx={{ py: 1.1 }}>
+              <Button variant="outlined" onClick={handleExportToCSV} disabled={filteredShifts.length === 0} size="small" sx={{ py: 1.1 }}>
                 Export
               </Button>
             </Box>
@@ -627,11 +778,10 @@ export default function Shifts() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {shifts.map((s) => {
+              {filteredShifts.map((s) => {
                 const agg = txAggByShift[s.id] || {};
                 const isActiveRow = activeShiftId === s.id;
                 const onHand = calculateOnHand(s.denominations);
-                // --- CORRECTED FORMULA ---
                 const difference = onHand === null ? null : onHand - (agg.systemTotal || 0);
 
                 return (
@@ -688,10 +838,10 @@ export default function Shifts() {
                           sx={{
                             color:
                               difference === 0
-                                ? "success.main"
+                                ? "text.secondary"
                                 : difference > 0
-                                ? "warning.main"
-                                : "error.main",
+                                  ? "warning.main"
+                                  : "error.main",
                           }}
                         >
                           {difference > 0 ? `+${fmtPeso(difference)}` : fmtPeso(difference)}
@@ -745,10 +895,10 @@ export default function Shifts() {
                       sx={{
                         color:
                           grand.difference === 0
-                            ? "success.main"
+                            ? "text.secondary"
                             : grand.difference > 0
-                            ? "warning.main"
-                            : "error.main",
+                              ? "warning.main"
+                              : "error.main",
                       }}
                     >
                       {grand.difference > 0 ? `+${fmtPeso(grand.difference)}` : fmtPeso(grand.difference)}
@@ -792,7 +942,7 @@ export default function Shifts() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {shifts.map((s) => {
+              {filteredShifts.map((s) => {
                 const agg = txAggByShift[s.id];
                 const isActiveRow = activeShiftId === s.id;
 
@@ -825,50 +975,23 @@ export default function Shifts() {
                       )}
                       {s.startTime ? new Date(s.startTime.seconds * 1000).toLocaleDateString() : "N/A"}
                     </TableCell>
-
-                    <TableCell sx={{ pl: { xs: 1, sm: 2 }, whiteSpace: "nowrap" }}>
-                      {s.shiftPeriod}
-                    </TableCell>
-
-                    <TableCell sx={{ maxWidth: 220 }}>
-                      <Typography noWrap>{userMap[s.staffEmail] || s.staffEmail}</Typography>
-                    </TableCell>
-
-                    <TableCell align="right">
-                      {fmtPeso(s.pcRentalTotal || 0)}
-                    </TableCell>
-
-                    {serviceNames.map((h) => (
-                      <TableCell key={h} align="right">
-                        {fmtPeso(agg?.serviceTotals?.[h] || 0)}
-                      </TableCell>
-                    ))}
-
+                    <TableCell sx={{ pl: { xs: 1, sm: 2 }, whiteSpace: "nowrap" }}>{s.shiftPeriod}</TableCell>
+                    <TableCell sx={{ maxWidth: 220 }}><Typography noWrap>{userMap[s.staffEmail] || s.staffEmail}</Typography></TableCell>
+                    <TableCell align="right">{fmtPeso(s.pcRentalTotal || 0)}</TableCell>
+                    {serviceNames.map((h) => (<TableCell key={h} align="right">{fmtPeso(agg?.serviceTotals?.[h] || 0)}</TableCell>))}
                     <TableCell align="right">{fmtPeso(agg?.sales || 0)}</TableCell>
                     <TableCell align="right">{fmtPeso(agg?.expenses || 0)}</TableCell>
                     <TableCell align="right">{fmtPeso(agg?.systemTotal || 0)}</TableCell>
-
                     <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
                       <Tooltip title="Edit shift">
-                        <IconButton size="small" onClick={() => openEdit(s)}>
-                          <EditIcon fontSize="small" />
-                        </IconButton>
+                        <IconButton size="small" onClick={() => openEdit(s)}><EditIcon fontSize="small" /></IconButton>
                       </Tooltip>
                       <Tooltip title="Delete shift">
-                        <IconButton size="small" color="error" onClick={() => openDelete(s)}>
-                          <DeleteIcon fontSize="small" />
-                        </IconButton>
+                        <IconButton size="small" color="error" onClick={() => openDelete(s)}><DeleteIcon fontSize="small" /></IconButton>
                       </Tooltip>
                       {!isAnyShiftActive && lastTwoShiftIds.includes(s.id) && (
                         <Tooltip title="Resume this shift">
-                          <IconButton
-                            size="small"
-                            color="success"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleResumeShift(s);
-                            }}
-                          >
+                          <IconButton size="small" color="success" onClick={(e) => { e.stopPropagation(); handleResumeShift(s); }}>
                             <PlayArrowIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
@@ -877,32 +1000,13 @@ export default function Shifts() {
                   </TableRow>
                 );
               })}
-
               <TableRow>
-                <TableCell colSpan={3}>
-                  <strong>Totals</strong>
-                </TableCell>
-
-                <TableCell align="right">
-                  <strong>{fmtPeso(grand.pcRental)}</strong>
-                </TableCell>
-
-                {serviceNames.map((h) => (
-                  <TableCell key={h} align="right">
-                    <strong>{fmtPeso(perServiceTotals[h] || 0)}</strong>
-                  </TableCell>
-                ))}
-
-                <TableCell align="right">
-                  <strong>{fmtPeso(grand.sales || 0)}</strong>
-                </TableCell>
-                <TableCell align="right">
-                  <strong>{fmtPeso(grand.expenses || 0)}</strong>
-                </TableCell>
-                <TableCell align="right">
-                  <strong>{fmtPeso(grand.system || 0)}</strong>
-                </TableCell>
-
+                <TableCell colSpan={3}><strong>Totals</strong></TableCell>
+                <TableCell align="right"><strong>{fmtPeso(grand.pcRental)}</strong></TableCell>
+                {serviceNames.map((h) => (<TableCell key={h} align="right"><strong>{fmtPeso(perServiceTotals[h] || 0)}</strong></TableCell>))}
+                <TableCell align="right"><strong>{fmtPeso(grand.sales || 0)}</strong></TableCell>
+                <TableCell align="right"><strong>{fmtPeso(grand.expenses || 0)}</strong></TableCell>
+                <TableCell align="right"><strong>{fmtPeso(grand.system || 0)}</strong></TableCell>
                 <TableCell />
               </TableRow>
             </TableBody>
@@ -918,54 +1022,27 @@ export default function Shifts() {
               <InputLabel>Staff</InputLabel>
               <Select label="Staff" value={newStaffEmail} onChange={(e) => setNewStaffEmail(e.target.value)}>
                 {staffOptions.length === 0 ? (
-                  <MenuItem value="" disabled>
-                    No staff available
-                  </MenuItem>
+                  <MenuItem value="" disabled>No staff available</MenuItem>
                 ) : (
                   staffOptions.map((s) => (
-                    <MenuItem key={s.email} value={s.email}>
-                      {s.fullName} — {s.email}
-                    </MenuItem>
+                    <MenuItem key={s.email} value={s.email}>{s.fullName} — {s.email}</MenuItem>
                   ))
                 )}
               </Select>
             </FormControl>
-
             <FormControl fullWidth>
               <InputLabel>Shift</InputLabel>
               <Select label="Shift" value={newShiftPeriod} onChange={(e) => setNewShiftPeriod(e.target.value)}>
-                {SHIFT_PERIODS.map((p) => (
-                  <MenuItem key={p} value={p}>
-                    {p}
-                  </MenuItem>
-                ))}
+                {SHIFT_PERIODS.map((p) => (<MenuItem key={p} value={p}>{p}</MenuItem>))}
               </Select>
             </FormControl>
-
-            <TextField
-              label="Start"
-              type="datetime-local"
-              value={newStart}
-              onChange={(e) => setNewStart(e.target.value)}
-              InputLabelProps={{ shrink: true }}
-              required
-              fullWidth
-            />
-            <TextField
-              label="End (optional)"
-              type="datetime-local"
-              value={newEnd}
-              onChange={(e) => setNewEnd(e.target.value)}
-              InputLabelProps={{ shrink: true }}
-              fullWidth
-            />
+            <TextField label="Start" type="datetime-local" value={newStart} onChange={(e) => setNewStart(e.target.value)} InputLabelProps={{ shrink: true }} required fullWidth />
+            <TextField label="End (optional)" type="datetime-local" value={newEnd} onChange={(e) => setNewEnd(e.target.value)} InputLabelProps={{ shrink: true }} fullWidth />
           </Stack>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setAddOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleAddShift}>
-            Save Shift
-          </Button>
+          <Button variant="contained" onClick={handleAddShift}>Save Shift</Button>
         </DialogActions>
       </Dialog>
 
@@ -977,69 +1054,29 @@ export default function Shifts() {
               <InputLabel>Staff</InputLabel>
               <Select label="Staff" value={editStaffEmail} onChange={(e) => setEditStaffEmail(e.target.value)}>
                 {staffOptions.length === 0 ? (
-                  <MenuItem value="" disabled>
-                    No staff available
-                  </MenuItem>
+                  <MenuItem value="" disabled>No staff available</MenuItem>
                 ) : (
                   staffOptions.map((s) => (
-                    <MenuItem key={s.email} value={s.email}>
-                      {s.fullName} — {s.email}
-                    </MenuItem>
+                    <MenuItem key={s.email} value={s.email}>{s.fullName} — {s.email}</MenuItem>
                   ))
                 )}
               </Select>
             </FormControl>
-
             <FormControl fullWidth>
               <InputLabel>Shift</InputLabel>
               <Select label="Shift" value={editShiftPeriod} onChange={(e) => setEditShiftPeriod(e.target.value)}>
-                {SHIFT_PERIODS.map((p) => (
-                  <MenuItem key={p} value={p}>
-                    {p}
-                  </MenuItem>
-                ))}
+                {SHIFT_PERIODS.map((p) => (<MenuItem key={p} value={p}>{p}</MenuItem>))}
               </Select>
             </FormControl>
-
-            <TextField
-              label="Start"
-              type="datetime-local"
-              value={editStart}
-              onChange={(e) => setEditStart(e.target.value)}
-              InputLabelProps={{ shrink: true }}
-              required
-              fullWidth
-            />
-            <TextField
-              label="End (optional)"
-              type="datetime-local"
-              value={editEnd}
-              onChange={(e) => setEditEnd(e.target.value)}
-              InputLabelProps={{ shrink: true }}
-              fullWidth
-            />
-
-            <TextField
-              label="PC Rental Total (optional)"
-              type="number"
-              value={editPcRental}
-              onChange={(e) => setEditPcRental(e.target.value)}
-              fullWidth
-            />
-            <TextField
-              label="Total (optional)"
-              type="number"
-              value={editSystemTotal}
-              onChange={(e) => setEditSystemTotal(e.target.value)}
-              fullWidth
-            />
+            <TextField label="Start" type="datetime-local" value={editStart} onChange={(e) => setEditStart(e.target.value)} InputLabelProps={{ shrink: true }} required fullWidth />
+            <TextField label="End (optional)" type="datetime-local" value={editEnd} onChange={(e) => setEditEnd(e.target.value)} InputLabelProps={{ shrink: true }} fullWidth />
+            <TextField label="PC Rental Total (optional)" type="number" value={editPcRental} onChange={(e) => setEditPcRental(e.target.value)} fullWidth />
+            <TextField label="Total (optional)" type="number" value={editSystemTotal} onChange={(e) => setEditSystemTotal(e.target.value)} fullWidth />
           </Stack>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setEditOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleSaveEdit}>
-            Save Changes
-          </Button>
+          <Button variant="contained" onClick={handleSaveEdit}>Save Changes</Button>
         </DialogActions>
       </Dialog>
 
@@ -1051,20 +1088,14 @@ export default function Shifts() {
             <Button variant={deleteMode === "unlink" ? "contained" : "outlined"} onClick={() => setDeleteMode("unlink")}>
               Keep transactions, but remove their association with this shift
             </Button>
-            <Button
-              color="error"
-              variant={deleteMode === "purge" ? "contained" : "outlined"}
-              onClick={() => setDeleteMode("purge")}
-            >
+            <Button color="error" variant={deleteMode === "purge" ? "contained" : "outlined"} onClick={() => setDeleteMode("purge")}>
               Delete all transactions for this shift
             </Button>
           </Stack>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDeleteOpen(false)}>Cancel</Button>
-          <Button color="error" variant="contained" onClick={handleDeleteShift}>
-            Confirm Delete
-          </Button>
+          <Button color="error" variant="contained" onClick={handleDeleteShift}>Confirm Delete</Button>
         </DialogActions>
       </Dialog>
     </Box>
