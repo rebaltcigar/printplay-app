@@ -25,7 +25,7 @@ const NIGHT   = { hStart: 19, mStart: 0, hEnd:  3, mEnd: 0, label: "Night",   st
 const RATE_PC = 15;   // ₱/hour
 const PCS = 8;        // computers
 const SHIFT_HOURS = 8;
-const START_ISO = "2025-07-01"; // inclusive
+const START_ISO = "2025-08-01"; // inclusive
 
 // ----- helpers -----
 const rnd    = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;

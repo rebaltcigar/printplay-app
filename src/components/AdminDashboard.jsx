@@ -33,6 +33,7 @@ import ItemManagement from "./ItemManagement"; // <-- 1. MODIFIED IMPORT
 import UserManagement from "./UserManagement";
 import AdminHome from "./AdminHome"; // Charts & summaries
 import Transactions from "./Transactions";
+import Payroll from "./Payroll";
 
 import { generateFakeHistory } from "../utils/seedHistoricalData";
 
@@ -68,8 +69,9 @@ export default function AdminDashboard({ user }) {
     { label: "Transactions", index: 2 },
     { label: "Expenses", index: 3 },
     { label: "Debts", index: 4 },
-    { label: "Items", index: 5 }, // <-- 2. MODIFIED LABEL
+    { label: "Items", index: 5 },
     { label: "Users", index: 6 },
+    { label: "Payroll", index: 7 },
   ];
 
   const handleLogout = async () => {
@@ -269,6 +271,11 @@ export default function AdminDashboard({ user }) {
         <TabPanel value={tab} index={6}>
           <Box sx={{ height: "100%", width: "100%" }}>
             <UserManagement />
+          </Box>
+        </TabPanel>
+                <TabPanel value={tab} index={7}>
+          <Box sx={{ height: "100%", width: "100%" }}>
+            <Payroll />
           </Box>
         </TabPanel>
       </Box>
