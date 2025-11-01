@@ -1,4 +1,3 @@
-// src/uitls/payroll_util.js
 import { Timestamp } from "firebase/firestore";
 
 // exact minutes between two Firestore Timestamps or JS Dates
@@ -14,36 +13,41 @@ export function resolveHourlyRate(payroll, atDate) {
   if (!payroll) return 0;
   let r = Number(payroll.defaultRate || 0);
   const at = atDate instanceof Date ? atDate : new Date(atDate);
-  const history = (payroll.effectiveRates || []).slice().sort(
-    (a, b) => (a.effectiveFrom?.seconds || 0) - (b.effectiveFrom?.seconds || 0)
-  );
+  const history = (payroll.effectiveRates || [])
+    .slice()
+    .sort(
+      (a, b) =>
+        (a.effectiveFrom?.seconds || 0) - (b.effectiveFrom?.seconds || 0)
+    );
   for (const h of history) {
-    const when = h.effectiveFrom?.seconds ? new Date(h.effectiveFrom.seconds * 1000) : null;
+    const when = h.effectiveFrom?.seconds
+      ? new Date(h.effectiveFrom.seconds * 1000)
+      : null;
     if (when && when <= at) r = Number(h.rate || r);
   }
   return r;
 }
 
-// Compute pay period for "today" given a schedule {type, anchorDate}, Manila TZ not required for day-granular
+// Compute pay period for "today"
 export function computePeriodForDate(schedule, forDate) {
   const today = new Date(forDate);
-  today.setHours(0,0,0,0);
+  today.setHours(0, 0, 0, 0);
 
-  const anchor = schedule.anchorDate?.seconds ? new Date(schedule.anchorDate.seconds*1000) : new Date();
-  anchor.setHours(0,0,0,0);
+  const anchor = schedule.anchorDate?.seconds
+    ? new Date(schedule.anchorDate.seconds * 1000)
+    : new Date();
+  anchor.setHours(0, 0, 0, 0);
   const type = schedule.type || "biweekly";
 
   const start = new Date(today);
   const end = new Date(today);
 
   if (type === "weekly") {
-    // start = Monday of current week relative to anchor
-    const day = today.getDay(); // 0 Sun..6 Sat
-    const diff = (day + 6) % 7; // Mon=0
+    const day = today.getDay();
+    const diff = (day + 6) % 7;
     start.setDate(today.getDate() - diff);
     end.setDate(start.getDate() + 6);
   } else if (type === "biweekly") {
-    // every 14 days from anchor
     const days = Math.floor((today - anchor) / 86400000);
     const periodIndex = Math.floor(days / 14);
     start.setTime(anchor.getTime() + periodIndex * 14 * 86400000);
@@ -54,15 +58,14 @@ export function computePeriodForDate(schedule, forDate) {
       end.setDate(15);
     } else {
       start.setDate(16);
-      end.setMonth(today.getMonth()+1, 0); // last day of month
+      end.setMonth(today.getMonth() + 1, 0);
     }
   } else if (type === "monthly") {
     start.setDate(1);
-    end.setMonth(today.getMonth()+1, 0);
+    end.setMonth(today.getMonth() + 1, 0);
   } else {
-    // custom == monthly as fallback
     start.setDate(1);
-    end.setMonth(today.getMonth()+1, 0);
+    end.setMonth(today.getMonth() + 1, 0);
   }
 
   return { start, end };

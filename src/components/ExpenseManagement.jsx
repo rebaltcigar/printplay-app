@@ -1,3 +1,4 @@
+// src/components/ExpenseManagement.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
@@ -23,6 +24,12 @@ import {
   Collapse,
   useMediaQuery,
   useTheme,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Backdrop,
+  CircularProgress,
 } from "@mui/material";
 import EditIcon from "@mui/icons-material/Edit";
 import HistoryIcon from "@mui/icons-material/History";
@@ -86,7 +93,7 @@ function toCurrency(n) {
 }
 
 export default function ExpenseManagement({ user }) {
-  // -------- Left form (add/edit) --------
+  /** ===================== FORM STATE (LEFT) ===================== */
   const [formDate, setFormDate] = useState(toDateOnlyString(new Date()));
   const [formType, setFormType] = useState("");
   const [formStaffId, setFormStaffId] = useState("");
@@ -101,15 +108,23 @@ export default function ExpenseManagement({ user }) {
   const [creditServices, setCreditServices] = useState([]);
   const dateInputRef = useRef(null);
 
-  // -------- Right table / filters --------
+  /** ===================== TABLE / FILTER STATE (RIGHT) ===================== */
   const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // base date filters (already had)
   const [filterStart, setFilterStart] = useState(
     toDateOnlyString(new Date(new Date().setDate(new Date().getDate() - 7)))
   );
   const [filterEnd, setFilterEnd] = useState(toDateOnlyString(new Date()));
 
-  // ----- mobile-only helpers -----
+  // NEW filters
+  const [filterType, setFilterType] = useState("");
+  const [filterStaff, setFilterStaff] = useState("");
+  const [filterText, setFilterText] = useState("");
+  const [filterDeleted, setFilterDeleted] = useState("active"); // active | deleted | all
+
+  /** ===================== MOBILE HELPERS ===================== */
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
   const fieldSize = isMobile ? "small" : "medium";
@@ -117,6 +132,45 @@ export default function ExpenseManagement({ user }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const controlsRef = useRef(null);
 
+  /** ===================== APP DIALOGS / LOADER ===================== */
+  const [busy, setBusy] = useState(false);
+  const [busyMsg, setBusyMsg] = useState("");
+
+  const startBusy = (msg = "Working...") => {
+    setBusy(true);
+    setBusyMsg(msg);
+  };
+  const stopBusy = () => {
+    setBusy(false);
+    setBusyMsg("");
+  };
+
+  // info dialog (replaces alert)
+  const [infoDialog, setInfoDialog] = useState({
+    open: false,
+    title: "",
+    message: "",
+  });
+  const showInfo = (title, message) => setInfoDialog({ open: true, title, message });
+  const closeInfo = () => setInfoDialog((p) => ({ ...p, open: false }));
+
+  // reason dialogs
+  const [editReasonDialog, setEditReasonDialog] = useState({
+    open: false,
+    reason: "",
+    row: null,
+  });
+  const [deleteReasonDialog, setDeleteReasonDialog] = useState({
+    open: false,
+    reason: "",
+    row: null,
+  });
+  const [permDeleteDialog, setPermDeleteDialog] = useState({
+    open: false,
+    row: null,
+  });
+
+  /** ===================== LOAD CREDIT SERVICES ===================== */
   useEffect(() => {
     const fetchCreditServices = async () => {
       try {
@@ -147,6 +201,7 @@ export default function ExpenseManagement({ user }) {
     return combined;
   }, [creditServices]);
 
+  /** ===================== LOAD STAFF OPTIONS ===================== */
   useEffect(() => {
     (async () => {
       try {
@@ -174,6 +229,7 @@ export default function ExpenseManagement({ user }) {
     })();
   }, []);
 
+  /** ===================== LOAD EXPENSES (LISTENER) ===================== */
   useEffect(() => {
     setLoading(true);
     const start = new Date(filterStart);
@@ -181,6 +237,7 @@ export default function ExpenseManagement({ user }) {
     const end = new Date(filterEnd);
     end.setHours(23, 59, 59, 999);
 
+    // keep ALL, don't filter deleted here — we want filterDeleted to control it
     let qTx = query(
       collection(db, "transactions"),
       where("item", "==", "Expenses"),
@@ -192,9 +249,7 @@ export default function ExpenseManagement({ user }) {
     const unsub = onSnapshot(
       qTx,
       (snap) => {
-        const rows = snap.docs
-          .map((d) => ({ id: d.id, ...d.data() }))
-          .filter((r) => !r.isDeleted);
+        const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
         setExpenses(rows);
         setLoading(false);
       },
@@ -208,6 +263,7 @@ export default function ExpenseManagement({ user }) {
     return () => unsub();
   }, [filterStart, filterEnd]);
 
+  /** ===================== DERIVED ROWS + FILTERS ===================== */
   const tableRows = useMemo(() => {
     return expenses.map((e) => {
       const tsDate = e.timestamp?.seconds
@@ -224,6 +280,38 @@ export default function ExpenseManagement({ user }) {
     });
   }, [expenses]);
 
+  const filteredRows = useMemo(() => {
+    let rows = tableRows;
+
+    if (filterDeleted === "active") {
+      rows = rows.filter((r) => !r.isDeleted);
+    } else if (filterDeleted === "deleted") {
+      rows = rows.filter((r) => r.isDeleted);
+    }
+
+    if (filterType) {
+      rows = rows.filter((r) => (r.expenseType || "") === filterType);
+    }
+
+    if (filterStaff) {
+      rows = rows.filter((r) => (r.expenseStaffId || "") === filterStaff);
+    }
+
+    if (filterText.trim()) {
+      const q = filterText.trim().toLowerCase();
+      rows = rows.filter((r) => {
+        return (
+          (r.notes || "").toLowerCase().includes(q) ||
+          (r.expenseStaffName || "").toLowerCase().includes(q) ||
+          (r.expenseType || "").toLowerCase().includes(q)
+        );
+      });
+    }
+
+    return rows;
+  }, [tableRows, filterDeleted, filterType, filterStaff, filterText]);
+
+  /** ===================== FORM HELPERS ===================== */
   const handleTypeChange = (event) => {
     const selectedType = event.target.value;
     setFormType(selectedType);
@@ -245,7 +333,7 @@ export default function ExpenseManagement({ user }) {
     const headers = ["Date", "Item", "Qty", "Price", "Total", "Type", "Staff", "Notes"];
     const lines = [headers.join(",")];
 
-    tableRows.forEach((r) => {
+    filteredRows.forEach((r) => {
       const row = [
         r._dateTime,
         "Expenses",
@@ -271,12 +359,17 @@ export default function ExpenseManagement({ user }) {
     URL.revokeObjectURL(url);
   };
 
+  /** ===================== CRUD: ADD ===================== */
   const handleAddExpense = async (e) => {
     e.preventDefault();
 
-    if (!formType) return alert("Please select an expense type.");
+    if (!formType) {
+      showInfo("Missing type", "Please select an expense type.");
+      return;
+    }
     if ((formType === "Salary" || formType === "Salary Advance") && !formStaffId) {
-      return alert("Please select a staff for Salary or Salary Advance.");
+      showInfo("Missing staff", "Please select a staff for Salary or Salary Advance.");
+      return;
     }
 
     const qty = Number(formQuantity || 0);
@@ -308,6 +401,7 @@ export default function ExpenseManagement({ user }) {
     };
 
     try {
+      startBusy("Adding expense...");
       await addDoc(collection(db, "transactions"), expenseDoc);
       setFormType("");
       setFormStaffId("");
@@ -316,12 +410,16 @@ export default function ExpenseManagement({ user }) {
       setFormQuantity("");
       setFormPrice("");
       setFormNotes("");
+      showInfo("Saved", "Expense has been added.");
     } catch (err) {
       console.error("Failed to add expense", err);
-      alert("Failed to add expense.");
+      showInfo("Error", "Failed to add expense.");
+    } finally {
+      stopBusy();
     }
   };
 
+  /** ===================== CRUD: EDIT (OPEN FORM) ===================== */
   const startEdit = (row) => {
     setCurrentlyEditing(row);
     setFormDate(row._dateOnly);
@@ -353,14 +451,49 @@ export default function ExpenseManagement({ user }) {
     setFormNotes("");
   };
 
+  /** ===================== CRUD: EDIT (SAVE) ===================== */
   const handleSaveEdit = async (e) => {
     e.preventDefault();
     if (!currentlyEditing) return;
 
-    if (!formType) return alert("Please select an expense type.");
-    if ((formType === "Salary" || formType === "Salary Advance") && !formStaffId) {
-      return alert("Please select a staff for Salary or Salary Advance.");
+    if (!formType) {
+      showInfo("Missing type", "Please select an expense type.");
+      return;
     }
+    if ((formType === "Salary" || formType === "Salary Advance") && !formStaffId) {
+      showInfo("Missing staff", "Please select a staff for Salary or Salary Advance.");
+      return;
+    }
+
+    // open dialog to get reason
+    setEditReasonDialog({
+      open: true,
+      reason: "",
+      row: {
+        ...currentlyEditing,
+        _formData: {
+          formDate,
+          formType,
+          formStaffId,
+          formQuantity,
+          formPrice,
+          formNotes,
+        },
+      },
+    });
+  };
+
+  const actuallySaveEdit = async () => {
+    const dlg = editReasonDialog;
+    const row = dlg.row;
+    const reason = dlg.reason?.trim();
+    if (!row || !reason) {
+      showInfo("Reason required", "Please enter a reason for this edit.");
+      return;
+    }
+
+    const { formDate, formType, formStaffId, formQuantity, formPrice, formNotes } =
+      row._formData;
 
     const qty = Number(formQuantity || 0);
     const price = Number(formPrice || 0);
@@ -371,11 +504,10 @@ export default function ExpenseManagement({ user }) {
     transactionDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds());
 
     const selectedStaff = staffOptions.find((s) => s.id === formStaffId) || null;
-    const reason = window.prompt("Reason for this edit?");
-    if (!reason) return alert("Update cancelled. Reason is required.");
 
     try {
-      await updateDoc(doc(db, "transactions", currentlyEditing.id), {
+      startBusy("Saving changes...");
+      await updateDoc(doc(db, "transactions", row.id), {
         item: "Expenses",
         expenseType: formType,
         expenseStaffId: selectedStaff ? selectedStaff.id : null,
@@ -393,46 +525,78 @@ export default function ExpenseManagement({ user }) {
         lastUpdatedAt: serverTimestamp(),
       });
 
+      setEditReasonDialog({ open: false, reason: "", row: null });
       cancelEdit();
+      showInfo("Updated", "Expense has been updated.");
     } catch (err) {
       console.error("Failed to update expense", err);
-      alert("Failed to update expense.");
+      showInfo("Error", "Failed to update expense.");
+    } finally {
+      stopBusy();
     }
   };
 
-  const handleSoftDelete = async (row) => {
-    const reason = window.prompt("Reason for deleting this expense?");
-    if (!reason) {
+  /** ===================== CRUD: SOFT DELETE ===================== */
+  const handleSoftDelete = (row) => {
+    setDeleteReasonDialog({
+      open: true,
+      reason: "",
+      row,
+    });
+  };
+
+  const actuallySoftDelete = async () => {
+    const dlg = deleteReasonDialog;
+    const row = dlg.row;
+    const reason = dlg.reason?.trim();
+    if (!row || !reason) {
+      showInfo("Reason required", "Please enter a reason for deleting this expense.");
       return;
     }
+
     try {
+      startBusy("Deleting (soft)...");
       await updateDoc(doc(db, "transactions", row.id), {
         isDeleted: true,
         deletedReason: reason,
         deletedBy: user?.email || "admin",
         deletedAt: serverTimestamp(),
       });
+      setDeleteReasonDialog({ open: false, reason: "", row: null });
+      showInfo("Deleted", "Expense has been marked as deleted.");
     } catch (err) {
       console.error("Failed to soft delete expense:", err);
-      alert("Failed to delete expense. Please try again.");
+      showInfo("Error", "Failed to delete expense. Please try again.");
+    } finally {
+      stopBusy();
     }
   };
 
-  const handlePermanentDelete = async (row) => {
-    const confirmation = window.confirm(
-      "DANGER: This will permanently delete the expense and it CANNOT be recovered.\n\nAre you absolutely sure you want to proceed?"
-    );
-    if (!confirmation) {
+  /** ===================== CRUD: PERMANENT DELETE ===================== */
+  const handlePermanentDelete = (row) => {
+    setPermDeleteDialog({ open: true, row });
+  };
+
+  const actuallyPermanentDelete = async () => {
+    const row = permDeleteDialog.row;
+    if (!row) {
+      setPermDeleteDialog({ open: false, row: null });
       return;
     }
     try {
+      startBusy("Permanently deleting...");
       await deleteDoc(doc(db, "transactions", row.id));
+      setPermDeleteDialog({ open: false, row: null });
+      showInfo("Deleted", "Expense has been permanently deleted.");
     } catch (err) {
       console.error("Failed to permanently delete expense:", err);
-      alert("Failed to permanently delete expense. Please try again.");
+      showInfo("Error", "Failed to permanently delete expense. Please try again.");
+    } finally {
+      stopBusy();
     }
   };
 
+  /** ===================== FORM CONTENT (REUSED) ===================== */
   const FormContent = (
     <Stack
       component="form"
@@ -533,6 +697,7 @@ export default function ExpenseManagement({ user }) {
     </Stack>
   );
 
+  /** ===================== RENDER ===================== */
   return (
     <Box
       sx={{
@@ -543,7 +708,7 @@ export default function ExpenseManagement({ user }) {
         minHeight: 0,
       }}
     >
-      {/* --- WEB / DESKTOP --- */}
+      {/* --- DESKTOP / WEB --- */}
       <Box
         sx={{
           display: { xs: "none", sm: "flex" },
@@ -555,7 +720,10 @@ export default function ExpenseManagement({ user }) {
           alignItems: "stretch",
         }}
       >
-        <Card sx={{ width: 360, p: 2, display: "flex", flexDirection: "column", gap: 2 }}>
+        {/* LEFT CARD */}
+        <Card
+          sx={{ width: 360, p: 2, display: "flex", flexDirection: "column", gap: 2 }}
+        >
           <Typography variant="subtitle1" fontWeight={600}>
             {currentlyEditing ? "Edit Expense" : "Add Expense (Admin)"}
           </Typography>
@@ -563,34 +731,110 @@ export default function ExpenseManagement({ user }) {
           {FormContent}
         </Card>
 
-        <Paper sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-          <Box sx={{ p: 2, pt: 1, display: "flex", alignItems: "center", gap: 2 }}>
+        {/* RIGHT PANEL */}
+        <Paper
+          sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+        >
+          {/* Filters bar */}
+          <Box
+            sx={{
+              p: 2,
+              pt: 1,
+              display: "flex",
+              alignItems: "center",
+              gap: 1.5,
+              flexWrap: "wrap",
+            }}
+          >
             <Typography variant="subtitle1" fontWeight={600}>
               Expenses
             </Typography>
-            <Box sx={{ display: "flex", gap: 1, ml: "auto", flexWrap: "wrap" }}>
-              <TextField
-                type="date"
-                label="Start"
-                size="small"
-                value={filterStart}
-                onChange={(e) => setFilterStart(e.target.value)}
-                InputLabelProps={{ shrink: true }}
-              />
-              <TextField
-                type="date"
-                label="End"
-                size="small"
-                value={filterEnd}
-                onChange={(e) => setFilterEnd(e.target.value)}
-                InputLabelProps={{ shrink: true }}
-              />
-              <Button onClick={handleExportCSV} variant="outlined" size="small">
-                Export CSV
-              </Button>
-            </Box>
+
+            <TextField
+              type="date"
+              label="Start"
+              size="small"
+              value={filterStart}
+              onChange={(e) => setFilterStart(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+            />
+            <TextField
+              type="date"
+              label="End"
+              size="small"
+              value={filterEnd}
+              onChange={(e) => setFilterEnd(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+            />
+
+            <FormControl size="small" sx={{ minWidth: 140 }}>
+              <InputLabel>Type</InputLabel>
+              <Select
+                label="Type"
+                value={filterType}
+                onChange={(e) => setFilterType(e.target.value)}
+              >
+                <MenuItem value="">
+                  <em>All</em>
+                </MenuItem>
+                {expenseTypes.map((t) => (
+                  <MenuItem key={t} value={t}>
+                    {t}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            <FormControl size="small" sx={{ minWidth: 140 }}>
+              <InputLabel>Staff</InputLabel>
+              <Select
+                label="Staff"
+                value={filterStaff}
+                onChange={(e) => setFilterStaff(e.target.value)}
+              >
+                <MenuItem value="">
+                  <em>All</em>
+                </MenuItem>
+                {staffOptions.map((s) => (
+                  <MenuItem key={s.id} value={s.id}>
+                    {s.fullName}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            <FormControl size="small" sx={{ minWidth: 140 }}>
+              <InputLabel>Status</InputLabel>
+              <Select
+                label="Status"
+                value={filterDeleted}
+                onChange={(e) => setFilterDeleted(e.target.value)}
+              >
+                <MenuItem value="active">Active</MenuItem>
+                <MenuItem value="deleted">Deleted</MenuItem>
+                <MenuItem value="all">All</MenuItem>
+              </Select>
+            </FormControl>
+
+            <TextField
+              size="small"
+              label="Search"
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
+              sx={{ minWidth: 180 }}
+            />
+
+            <Button
+              onClick={handleExportCSV}
+              variant="outlined"
+              size="small"
+              sx={{ marginLeft: "auto" }}
+            >
+              Export CSV
+            </Button>
           </Box>
 
+          {/* Table */}
           <TableContainer sx={{ flex: 1, minHeight: 0 }}>
             <Table size="small" stickyHeader>
               <TableHead>
@@ -611,13 +855,15 @@ export default function ExpenseManagement({ user }) {
                   <TableRow>
                     <TableCell colSpan={9}>Loading…</TableCell>
                   </TableRow>
-                ) : tableRows.length === 0 ? (
+                ) : filteredRows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9}>No expenses for the selected dates.</TableCell>
+                    <TableCell colSpan={9}>
+                      No expenses for the selected filters.
+                    </TableCell>
                   </TableRow>
                 ) : (
-                  tableRows.map((r) => (
-                    <TableRow key={r.id} hover>
+                  filteredRows.map((r) => (
+                    <TableRow key={r.id} hover selected={!!r.isDeleted}>
                       <TableCell>{r._dateTime}</TableCell>
                       <TableCell>
                         Expenses{" "}
@@ -627,6 +873,19 @@ export default function ExpenseManagement({ user }) {
                             style={{ marginLeft: 4, opacity: 0.7 }}
                             titleAccess="Edited"
                           />
+                        )}
+                        {r.isDeleted && (
+                          <Typography
+                            component="span"
+                            sx={{
+                              ml: 1,
+                              fontSize: 11,
+                              color: "error.main",
+                              fontWeight: 500,
+                            }}
+                          >
+                            (deleted)
+                          </Typography>
                         )}
                       </TableCell>
                       <TableCell align="right">{r.qty}</TableCell>
@@ -651,7 +910,7 @@ export default function ExpenseManagement({ user }) {
                             <EditIcon fontSize="inherit" />
                           </IconButton>
                         </Tooltip>
-                        {/* --- MODIFIED: Added color="warning" --- */}
+
                         <Tooltip title="Delete (Soft)">
                           <IconButton
                             size="small"
@@ -661,7 +920,7 @@ export default function ExpenseManagement({ user }) {
                             <DeleteIcon fontSize="inherit" />
                           </IconButton>
                         </Tooltip>
-                        {/* --- MODIFIED: Added color="error" --- */}
+
                         <Tooltip title="Delete Permanently">
                           <IconButton
                             size="small"
@@ -696,6 +955,7 @@ export default function ExpenseManagement({ user }) {
           pb: "calc(env(safe-area-inset-bottom, 0) + 8px)",
         }}
       >
+        {/* Add / Edit form card */}
         <Card
           ref={controlsRef}
           sx={{ p: 1.0, overflow: "visible", position: "relative" }}
@@ -713,10 +973,11 @@ export default function ExpenseManagement({ user }) {
           </Collapse>
         </Card>
 
+        {/* Filters card (mobile) */}
         <Card sx={{ p: 1.0, overflow: "visible", position: "relative" }}>
           <Box sx={{ display: "flex", alignItems: "center" }}>
             <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
-              Date Filters & Export
+              Filters & Export
             </Typography>
             <IconButton size="small" onClick={() => setFiltersOpen((v) => !v)}>
               {filtersOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
@@ -748,6 +1009,59 @@ export default function ExpenseManagement({ user }) {
                 onChange={(e) => setFilterEnd(e.target.value)}
                 InputLabelProps={{ shrink: true }}
               />
+              <FormControl size="small" fullWidth>
+                <InputLabel>Type</InputLabel>
+                <Select
+                  label="Type"
+                  value={filterType}
+                  onChange={(e) => setFilterType(e.target.value)}
+                >
+                  <MenuItem value="">
+                    <em>All</em>
+                  </MenuItem>
+                  {expenseTypes.map((t) => (
+                    <MenuItem key={t} value={t}>
+                      {t}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormControl size="small" fullWidth>
+                <InputLabel>Staff</InputLabel>
+                <Select
+                  label="Staff"
+                  value={filterStaff}
+                  onChange={(e) => setFilterStaff(e.target.value)}
+                >
+                  <MenuItem value="">
+                    <em>All</em>
+                  </MenuItem>
+                  {staffOptions.map((s) => (
+                    <MenuItem key={s.id} value={s.id}>
+                      {s.fullName}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormControl size="small" fullWidth>
+                <InputLabel>Status</InputLabel>
+                <Select
+                  label="Status"
+                  value={filterDeleted}
+                  onChange={(e) => setFilterDeleted(e.target.value)}
+                >
+                  <MenuItem value="active">Active</MenuItem>
+                  <MenuItem value="deleted">Deleted</MenuItem>
+                  <MenuItem value="all">All</MenuItem>
+                </Select>
+              </FormControl>
+              <TextField
+                size="small"
+                label="Search"
+                value={filterText}
+                onChange={(e) => setFilterText(e.target.value)}
+                fullWidth
+              />
               <Button
                 onClick={handleExportCSV}
                 variant="outlined"
@@ -760,6 +1074,7 @@ export default function ExpenseManagement({ user }) {
           </Collapse>
         </Card>
 
+        {/* Mobile table */}
         <Paper
           sx={{
             flex: "1 1 auto",
@@ -790,13 +1105,15 @@ export default function ExpenseManagement({ user }) {
                   <TableRow>
                     <TableCell colSpan={5}>Loading…</TableCell>
                   </TableRow>
-                ) : tableRows.length === 0 ? (
+                ) : filteredRows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5}>No expenses for the selected dates.</TableCell>
+                    <TableCell colSpan={5}>
+                      No expenses for the selected filters.
+                    </TableCell>
                   </TableRow>
                 ) : (
-                  tableRows.map((r) => (
-                    <TableRow key={r.id} hover>
+                  filteredRows.map((r) => (
+                    <TableRow key={r.id} hover selected={!!r.isDeleted}>
                       <TableCell>{r._dateTime}</TableCell>
                       <TableCell>
                         <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
@@ -809,6 +1126,18 @@ export default function ExpenseManagement({ user }) {
                               style={{ opacity: 0.7 }}
                               titleAccess="Edited"
                             />
+                          )}
+                          {r.isDeleted && (
+                            <Typography
+                              component="span"
+                              sx={{
+                                fontSize: 10,
+                                color: "error.main",
+                                fontWeight: 500,
+                              }}
+                            >
+                              del
+                            </Typography>
                           )}
                         </Box>
                       </TableCell>
@@ -828,7 +1157,6 @@ export default function ExpenseManagement({ user }) {
                         <IconButton size="small" onClick={() => startEdit(r)}>
                           <EditIcon fontSize="inherit" />
                         </IconButton>
-                        {/* --- MODIFIED: Added color="warning" for mobile --- */}
                         <IconButton
                           size="small"
                           onClick={() => handleSoftDelete(r)}
@@ -845,6 +1173,131 @@ export default function ExpenseManagement({ user }) {
           </TableContainer>
         </Paper>
       </Box>
+
+      {/* ================== DIALOGS ================== */}
+
+      {/* info dialog */}
+      <Dialog open={infoDialog.open} onClose={closeInfo} maxWidth="xs" fullWidth>
+        <DialogTitle>{infoDialog.title || "Notice"}</DialogTitle>
+        <DialogContent>
+          <Typography>{infoDialog.message}</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeInfo}>OK</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* edit reason dialog */}
+      <Dialog
+        open={editReasonDialog.open}
+        onClose={() => setEditReasonDialog({ open: false, reason: "", row: null })}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Reason for this edit</DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            Please describe why this expense was updated.
+          </Typography>
+          <TextField
+            autoFocus
+            multiline
+            minRows={2}
+            fullWidth
+            value={editReasonDialog.reason}
+            onChange={(e) =>
+              setEditReasonDialog((p) => ({ ...p, reason: e.target.value }))
+            }
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => setEditReasonDialog({ open: false, reason: "", row: null })}
+          >
+            Cancel
+          </Button>
+          <Button variant="contained" onClick={actuallySaveEdit}>
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* soft delete reason dialog */}
+      <Dialog
+        open={deleteReasonDialog.open}
+        onClose={() => setDeleteReasonDialog({ open: false, reason: "", row: null })}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Delete this expense?</DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            This will mark the expense as deleted, but you can still see it if you switch
+            to &quot;Deleted&quot; filter. Add a reason:
+          </Typography>
+          <TextField
+            autoFocus
+            multiline
+            minRows={2}
+            fullWidth
+            value={deleteReasonDialog.reason}
+            onChange={(e) =>
+              setDeleteReasonDialog((p) => ({ ...p, reason: e.target.value }))
+            }
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() =>
+              setDeleteReasonDialog({ open: false, reason: "", row: null })
+            }
+          >
+            Cancel
+          </Button>
+          <Button variant="contained" color="warning" onClick={actuallySoftDelete}>
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* permanent delete confirm */}
+      <Dialog
+        open={permDeleteDialog.open}
+        onClose={() => setPermDeleteDialog({ open: false, row: null })}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Delete permanently?</DialogTitle>
+        <DialogContent>
+          <Typography>
+            This will permanently remove the expense and cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPermDeleteDialog({ open: false, row: null })}>
+            Cancel
+          </Button>
+          <Button variant="contained" color="error" onClick={actuallyPermanentDelete}>
+            Delete forever
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ================== GLOBAL LOADER ================== */}
+      <Backdrop
+        open={busy}
+        sx={{
+          zIndex: (theme) => theme.zIndex.modal + 20,
+          display: "flex",
+          flexDirection: "column",
+          gap: 1.5,
+        }}
+      >
+        <CircularProgress />
+        <Typography sx={{ color: "#fff" }}>
+          {busyMsg || "Working... please wait"}
+        </Typography>
+      </Backdrop>
     </Box>
   );
 }

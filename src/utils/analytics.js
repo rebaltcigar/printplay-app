@@ -16,65 +16,59 @@ export const fmtPeso = (n) =>
     maximumFractionDigits: 0,
   })}`;
 
-/** Range builder (always in Asia/Manila), returns JS Date in UTC for Firestore
- *  @param preset: "past7" | "thisMonth" | "monthYear" | "thisYear" | "allTime"
- *  @param monthYear: Date|null (for monthYear preset)
- *  @param allTimeStart: Date|null (earliest shift start for all-time)
- */
+/** Small helper so we can reuse the capital logic elsewhere */
+export const isCapitalExpense = (t) => {
+  const et = String(t?.expenseType || "").toLowerCase();
+  // make it a little forgiving
+  return et.includes("capital");
+};
+
+/** Range builder (always in Asia/Manila) */
 export function getRange(preset, monthYear /* Date|null */, allTimeStart /* Date|null */) {
   const now = dayjs().tz(ZONE);
 
   let start = now.startOf("month");
   let end = now.endOf("month");
-  let granularity = "day";   // day | month | year
-  let axis = "number";       // number|date|month|year
 
   switch (preset) {
     case "past7":
       start = now.startOf("day").subtract(6, "day");
       end = now.endOf("day");
-      axis = "date";
       break;
     case "thisMonth":
       start = now.startOf("month");
       end = now.endOf("month");
-      axis = "number";
       break;
     case "monthYear": {
       const d = dayjs(monthYear || now).tz(ZONE);
       start = d.startOf("month");
       end = d.endOf("month");
-      axis = "number";
       break;
     }
     case "thisYear":
       start = now.startOf("year");
       end = now.endOf("year");
-      granularity = "month";
-      axis = "month";
       break;
     case "allTime": {
       const s = allTimeStart ? dayjs(allTimeStart).tz(ZONE) : dayjs("1970-01-01").tz(ZONE);
       start = s.startOf("day");
       end = now.endOf("day");
-      granularity = "month";
-      axis = "month";
       break;
     }
     default:
       start = now.startOf("month");
       end = now.endOf("month");
-      axis = "number";
   }
 
   const monthsSpan = end.diff(start, "month");
   return {
     startUtc: start.utc().toDate(),
     endUtc: end.utc().toDate(),
-    startLocal: start, // dayjs in ZONE
-    endLocal: end,     // dayjs in ZONE
-    axis,
-    granularity,
+    startLocal: start,
+    endLocal: end,
+    // this is used by your view
+    granularity: "day",
+    axis: "number",
     shouldDefaultYearly: monthsSpan > 36,
   };
 }
@@ -102,7 +96,6 @@ export function classifyTx(t, serviceMap) {
     if (cat === "credit") return "expense";
   }
   if (String(t.item) === "Expenses") return "expense";
-  // Not a known service & not explicit "Expenses" -> Sales(Unknown)
   if (item) return "unknownSale";
   return null;
 }
@@ -110,7 +103,8 @@ export function classifyTx(t, serviceMap) {
 /** Amount of a transaction */
 export function txAmount(t) {
   if (Number.isFinite(Number(t.total))) return Number(t.total);
-  const price = Number(t.price), qty = Number(t.quantity);
+  const price = Number(t.price),
+    qty = Number(t.quantity);
   if (Number.isFinite(price) && Number.isFinite(qty)) return price * qty;
   return 0;
 }
@@ -130,7 +124,6 @@ function add(obj, key, v) {
   obj[key] = (obj[key] || 0) + (v || 0);
 }
 
-/** Generate keys for bucket filling */
 export function generateDailyKeys(startLocal, endLocal) {
   const out = [];
   let d = startLocal.startOf("day");
@@ -160,16 +153,10 @@ export function generateYearlyKeys(startLocal, endLocal) {
 }
 
 /**
- * Bin transactions + shifts to series suitable for the trend chart.
- * - granularity: 'day' | 'month' | 'year'
- * - axis: controls how x labels should be shown ('number' for 1..31, 'date' for MM/DD, 'month', 'year')
- * - serviceFilter: "All services" | serviceName | "Unknown"
- *
- * PC Rental: included in Sales as part of shifts (adds to the appropriate bucket),
- * and respects service filter:
- *  - included when service == "All services"
- *  - included when service == "PC Rental" (exact match, case-insensitive)
- *  - otherwise excluded
+ * Build series for the TrendChart.
+ * NOW ALSO EMITS:
+ *   - capital: expenses that are capital
+ *   - expenses: still full expenses (includes capital)
  */
 export function buildTrendSeries({
   transactions,
@@ -181,16 +168,14 @@ export function buildTrendSeries({
   serviceFilter,
   serviceMap,
 }) {
-  const buckets = new Map(); // key -> { sales, expenses }
+  const buckets = new Map();
 
-  // helper for bucket key from date
-  const keyFor = (d /* dayjs in ZONE */) => {
+  const keyFor = (d /* dayjs */) => {
     if (granularity === "day") return d.format("YYYY-MM-DD");
     if (granularity === "month") return d.format("YYYY-MM");
-    return d.format("YYYY"); // year
+    return d.format("YYYY");
   };
 
-  // 1) Seed with zeros so the line is continuous
   const keys =
     granularity === "day"
       ? generateDailyKeys(startLocal, endLocal)
@@ -198,9 +183,10 @@ export function buildTrendSeries({
       ? generateMonthlyKeys(startLocal, endLocal)
       : generateYearlyKeys(startLocal, endLocal);
 
-  keys.forEach((k) => buckets.set(k, { sales: 0, expenses: 0 }));
+  // seed
+  keys.forEach((k) => buckets.set(k, { sales: 0, expenses: 0, capital: 0 }));
 
-  // 2) Fold transactions into buckets
+  // 2) transactions
   (transactions || []).forEach((t) => {
     if (t.isDeleted) return;
     const ts = t.timestamp?.seconds
@@ -210,22 +196,27 @@ export function buildTrendSeries({
     if (ts.isBefore(startLocal) || ts.isAfter(endLocal)) return;
 
     const key = keyFor(ts);
+    const bucket = buckets.get(key);
+    if (!bucket) return;
+
     const cls = classifyTx(t, serviceMap);
     if (!cls) return;
 
     const amt = txAmount(t);
     if (cls === "expense") {
-      // Expenses ignore the service filter
-      add(buckets.get(key), "expenses", amt);
+      add(bucket, "expenses", amt);
+      if (isCapitalExpense(t)) {
+        add(bucket, "capital", amt);
+      }
     } else {
-      // Sales / UnknownSales respect the service filter
+      // sales + unknown sales respect service filter
       if (saleMatchesService(t, serviceFilter, serviceMap)) {
-        add(buckets.get(key), "sales", amt);
+        add(bucket, "sales", amt);
       }
     }
   });
 
-  // 3) Add PC Rental from shifts (Sales) per bucket if it should count
+  // 3) PC Rental (sales)
   const includePCRental =
     !serviceFilter ||
     serviceFilter === "All services" ||
@@ -240,12 +231,13 @@ export function buildTrendSeries({
       if (st.isBefore(startLocal) || st.isAfter(endLocal)) return;
 
       const key = keyFor(st);
-      const amt = Number(sh.pcRentalTotal || 0);
-      add(buckets.get(key), "sales", amt);
+      const bucket = buckets.get(key);
+      if (!bucket) return;
+      add(bucket, "sales", Number(sh.pcRentalTotal || 0));
     });
   }
 
-  // 4) Emit series with desired X labels
+  // 4) emit
   const out = [];
   for (const k of keys) {
     const d =
@@ -257,21 +249,22 @@ export function buildTrendSeries({
 
     let x = k;
     if (granularity === "day") {
-      if (axis === "number") x = Number(d.format("D")); // 1..31
-      else x = d.format("MM/DD"); // dates for Past 7 Days
+      if (axis === "number") x = Number(d.format("D"));
+      else x = d.format("MM/DD");
     } else if (granularity === "month") {
-      x = d.format("MMM"); // Jan..Dec
+      x = d.format("MMM");
     } else {
       x = d.format("YYYY");
     }
 
-    const { sales, expenses } = buckets.get(k) || { sales: 0, expenses: 0 };
+    const bucket = buckets.get(k) || { sales: 0, expenses: 0, capital: 0 };
     out.push({
       x,
       key: k,
-      sales,
-      expenses,
-      net: sales - expenses,
+      sales: bucket.sales,
+      expenses: bucket.expenses, // **includes capital**
+      capital: bucket.capital, // <= NEW
+      net: bucket.sales - bucket.expenses,
     });
   }
 
