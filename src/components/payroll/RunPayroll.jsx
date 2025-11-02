@@ -776,6 +776,7 @@ export default function RunPayroll({
         if (l.staffEmail) lineIdByEmail.set(l.staffEmail, ld.id);
       });
 
+      // Map<lineId, crossDeduction[]>
       const extraDeductionsByLineId = new Map();
       const materializedLines = [];
 
@@ -807,7 +808,7 @@ export default function RunPayroll({
 
         const shiftDetails = [];
         let totalMinutes = 0;
-        let totalAdvances = 0;
+        let totalAdvances = 0; // Only advances for THIS staff on THEIR shifts
         let totalShortages = 0;
 
         for (const sid of l.source?.shiftIds || []) {
@@ -856,31 +857,39 @@ export default function RunPayroll({
             const intendedEmail = tx.expenseStaffEmail || tx.staffEmail || null;
             const intendedUid = tx.expenseStaffId || tx.staffUid || null;
 
+            // This is the staff being processed in this OUTER loop
             const isForThisLine =
-              (!!intendedUid && intendedUid === l.staffUid) ||
-              (!!intendedEmail && intendedEmail === l.staffEmail) ||
-              (!intendedEmail && !intendedUid);
+              (!!l.staffUid && intendedUid === l.staffUid) ||
+              (!!l.staffEmail && intendedEmail === l.staffEmail) ||
+              // This case handles advances for the shift owner when no staffId/email was logged
+              (!intendedEmail &&
+                !intendedUid &&
+                s.staffEmail === l.staffEmail);
 
             if (isForThisLine) {
               advancesForThisShiftForThisStaff += amt;
-              totalAdvances += amt;
             } else {
               // this advance was intended for ANOTHER staff
               const targetLineId =
                 (intendedUid && lineIdByUid.get(intendedUid)) ||
                 (intendedEmail && lineIdByEmail.get(intendedEmail)) ||
                 null;
-              const list =
-                extraDeductionsByLineId.get(targetLineId || lineId) || [];
+
+              // If we can't find a line for the target, attribute it back to the current line (as "other")
+              const key = targetLineId || lineId;
+              const list = extraDeductionsByLineId.get(key) || [];
               list.push({
                 id: sid,
                 label: `Salary Advance on ${shiftLabel}`,
                 amount: amt,
                 expenseDate: expenseDateTS,
               });
-              extraDeductionsByLineId.set(targetLineId || lineId, list);
+              extraDeductionsByLineId.set(key, list);
             }
           }
+
+          // This is the sum of advances FOR THIS STAFF on THIS SHIFT
+          totalAdvances += advancesForThisShiftForThisStaff;
 
           shiftDetails.push({
             id: sid,
@@ -910,14 +919,8 @@ export default function RunPayroll({
           0
         );
 
-        const extraAdvAdjustments = Array.isArray(l.adjustments)
-          ? l.adjustments.filter((a) => a?.type === "extra-advance")
-          : [];
-        const extraAdvTotal = extraAdvAdjustments.reduce(
-          (s, a) => s + Number(a.amount || 0),
-          0
-        );
-
+        // **FIX:** We no longer read 'extra-advance' from adjustments.
+        // We re-calculate it every time from the cross-shift logic.
         materializedLines.push({
           lineId,
           staffUid: l.staffUid,
@@ -927,22 +930,20 @@ export default function RunPayroll({
           shifts: shiftDetails,
           totalMinutes,
           grossPay,
-          totalAdvances,
+          totalAdvances, // This is *only* shift-owner advances
           totalShortages,
-          manualAdjustments,
+          manualAdjustments, // This is *only* custom deductions
           manualTotal,
-          extraAdvAdjustments,
-          extraAdvTotal,
+          crossDeductions: [], // Will be populated in Loop 3
         });
       }
 
       updateBusy("Merging cross-staff salary advances...");
+      // **FIX:** This loop now *only* populates `crossDeductions`.
+      // It DOES NOT modify `totalAdvances`.
       for (const [targetLineId, extraList] of extraDeductionsByLineId.entries()) {
         const target = materializedLines.find((m) => m.lineId === targetLineId);
         if (target) {
-          extraList.forEach((e) => {
-            target.totalAdvances += Number(e.amount || 0);
-          });
           target.crossDeductions = extraList;
         }
       }
@@ -987,13 +988,8 @@ export default function RunPayroll({
             amount: Number(a.amount || 0),
           })
         );
-        m.extraAdvAdjustments.forEach((a) =>
-          deductionItems.push({
-            id: a.id,
-            label: a.label,
-            amount: Number(a.amount || 0),
-          })
-        );
+        
+        // **FIX:** Only add re-calculated cross-deductions.
         (m.crossDeductions || []).forEach((a) =>
           deductionItems.push({
             id: a.id,
@@ -1001,16 +997,19 @@ export default function RunPayroll({
             amount: Number(a.amount || 0),
           })
         );
+        
+        // **FIX:** Calculate cross-staff total from the correct (re-calculated) source.
+        const crossStaffTotal = (m.crossDeductions || []).reduce(
+          (s, a) => s + Number(a.amount || 0),
+          0
+        );
 
+        // **FIX:** totalDeductions is now shift-advances + shortages + manual + cross-staff
         const totalDeductions =
           m.totalAdvances +
           m.totalShortages +
           m.manualTotal +
-          m.extraAdvTotal +
-          (m.crossDeductions || []).reduce(
-            (s, a) => s + Number(a.amount || 0),
-            0
-          );
+          crossStaffTotal;
 
         const netPay = Number((m.grossPay - totalDeductions).toFixed(2));
 
@@ -1076,6 +1075,7 @@ export default function RunPayroll({
             });
           });
 
+          // **FIX:** Calculate non-shift deductions based on manual + cross-staff
           const nonShiftDeds = deductionItems.filter(
             (d) => !m.shifts.find((s) => s.id === d.id)
           );
@@ -1092,7 +1092,7 @@ export default function RunPayroll({
                 expenseStaffName: m.staffName,
                 expenseStaffEmail: m.staffEmail,
                 quantity: 1,
-                price: extraTotal * -1,
+                price: extraTotal * -1, // These are deductions, so post as negative
                 total: extraTotal * -1,
                 notes: `Payroll manual / cross-staff deductions [${toYMD_PHT_fromTS(
                   periodStartTS
@@ -1135,20 +1135,17 @@ export default function RunPayroll({
           });
         }
 
+        // **FIX:** Update runTotals calculation
         runTotals = {
           staffCount: runTotals.staffCount + 1,
           minutes: runTotals.minutes + m.totalMinutes,
           gross: runTotals.gross + m.grossPay,
-          advances: runTotals.advances + m.totalAdvances,
+          advances: runTotals.advances + m.totalAdvances, // (shift-owner)
           shortages: runTotals.shortages + m.totalShortages,
           otherDeductions:
             runTotals.otherDeductions +
             m.manualTotal +
-            m.extraAdvTotal +
-            (m.crossDeductions || []).reduce(
-              (s, a) => s + Number(a.amount || 0),
-              0
-            ),
+            crossStaffTotal, // (manual + cross-staff)
           net: runTotals.net + netPay,
         };
       }
