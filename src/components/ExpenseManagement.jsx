@@ -360,6 +360,9 @@ export default function ExpenseManagement({ user }) {
   };
 
   /** ===================== CRUD: ADD ===================== */
+  //
+  // --- THIS IS THE CORRECTED FUNCTION ---
+  //
   const handleAddExpense = async (e) => {
     e.preventDefault();
 
@@ -382,6 +385,7 @@ export default function ExpenseManagement({ user }) {
 
     const selectedStaff = staffOptions.find((s) => s.id === formStaffId) || null;
 
+    // 1. Create the base document
     const expenseDoc = {
       item: "Expenses",
       expenseType: formType,
@@ -392,7 +396,7 @@ export default function ExpenseManagement({ user }) {
       price,
       total,
       notes: formNotes || "",
-      shiftId: null,
+      shiftId: null, // Default for admin-added expenses
       source: "admin_manual",
       timestamp: transactionDate,
       staffEmail: user?.email || "admin",
@@ -400,9 +404,19 @@ export default function ExpenseManagement({ user }) {
       isEdited: false,
     };
 
+    // --- START: MODIFICATION ---
+    // 2. Conditionally add fields required by security rules
+    if (formType === "Salary") {
+      expenseDoc.payrollRunId = "admin_manual_add"; // Add default string
+      expenseDoc.voided = false; // Add default boolean
+    }
+    // --- END: MODIFICATION ---
+
     try {
       startBusy("Adding expense...");
+      // 3. Add the complete document
       await addDoc(collection(db, "transactions"), expenseDoc);
+
       setFormType("");
       setFormStaffId("");
       setFormStaffName("");
@@ -413,11 +427,17 @@ export default function ExpenseManagement({ user }) {
       showInfo("Saved", "Expense has been added.");
     } catch (err) {
       console.error("Failed to add expense", err);
-      showInfo("Error", "Failed to add expense.");
+      // Log the exact data that failed
+      console.log("Failing add data:", expenseDoc);
+      showInfo("Error", `Failed to add expense. ${err.message}`);
     } finally {
       stopBusy();
     }
   };
+  //
+  // --- END OF CORRECTED FUNCTION ---
+  //
+
 
   /** ===================== CRUD: EDIT (OPEN FORM) ===================== */
   const startEdit = (row) => {
@@ -483,9 +503,6 @@ export default function ExpenseManagement({ user }) {
     });
   };
 
-  //
-  // --- THIS IS THE CORRECTED FUNCTION ---
-  //
   const actuallySaveEdit = async () => {
     const dlg = editReasonDialog;
     const row = dlg.row;
@@ -507,8 +524,6 @@ export default function ExpenseManagement({ user }) {
     transactionDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds());
 
     const selectedStaff = staffOptions.find((s) => s.id === formStaffId) || null;
-
-    // --- START: MODIFICATION ---
 
     // 1. Create the base update object
     const updateData = {
@@ -543,7 +558,6 @@ export default function ExpenseManagement({ user }) {
       // or set to null if it didn't exist.
       updateData.shiftId = row.shiftId || null;
     }
-    // --- END: MODIFICATION ---
 
     try {
       startBusy("Saving changes...");
@@ -563,9 +577,6 @@ export default function ExpenseManagement({ user }) {
       stopBusy();
     }
   };
-  //
-  // --- END OF CORRECTED FUNCTION ---
-  //
 
 
   /** ===================== CRUD: SOFT DELETE ===================== */
