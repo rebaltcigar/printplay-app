@@ -483,6 +483,9 @@ export default function ExpenseManagement({ user }) {
     });
   };
 
+  //
+  // --- THIS IS THE CORRECTED FUNCTION ---
+  //
   const actuallySaveEdit = async () => {
     const dlg = editReasonDialog;
     const row = dlg.row;
@@ -505,36 +508,65 @@ export default function ExpenseManagement({ user }) {
 
     const selectedStaff = staffOptions.find((s) => s.id === formStaffId) || null;
 
+    // --- START: MODIFICATION ---
+
+    // 1. Create the base update object
+    const updateData = {
+      item: "Expenses",
+      expenseType: formType,
+      expenseStaffId: selectedStaff ? selectedStaff.id : null,
+      expenseStaffName: selectedStaff ? selectedStaff.fullName : null,
+      expenseStaffEmail: selectedStaff ? selectedStaff.email : null,
+      quantity: qty,
+      price,
+      total,
+      notes: formNotes || "",
+      timestamp: transactionDate,
+      isEdited: true,
+      adminEdited: true,
+      editedBy: user?.email || "admin",
+      editReason: reason,
+      lastUpdatedAt: serverTimestamp(),
+    };
+
+    // 2. Conditionally add fields required by security rules
+    if (formType === "Salary") {
+      // Must satisfy isSalaryTxn() constraints
+      // If the original doc had these, preserve them.
+      // Otherwise, set valid defaults to pass rules.
+      updateData.payrollRunId = row.payrollRunId || "admin_manual_edit";
+      updateData.voided = row.voided === true || row.voided === false ? row.voided : false;
+    }
+
+    if (formType === "Salary Advance") {
+      // This admin form doesn't have shiftId, so preserve original
+      // or set to null if it didn't exist.
+      updateData.shiftId = row.shiftId || null;
+    }
+    // --- END: MODIFICATION ---
+
     try {
       startBusy("Saving changes...");
-      await updateDoc(doc(db, "transactions", row.id), {
-        item: "Expenses",
-        expenseType: formType,
-        expenseStaffId: selectedStaff ? selectedStaff.id : null,
-        expenseStaffName: selectedStaff ? selectedStaff.fullName : null,
-        expenseStaffEmail: selectedStaff ? selectedStaff.email : null,
-        quantity: qty,
-        price,
-        total,
-        notes: formNotes || "",
-        timestamp: transactionDate,
-        isEdited: true,
-        adminEdited: true,
-        editedBy: user?.email || "admin",
-        editReason: reason,
-        lastUpdatedAt: serverTimestamp(),
-      });
+
+      // 3. Use the new updateData object
+      await updateDoc(doc(db, "transactions", row.id), updateData);
 
       setEditReasonDialog({ open: false, reason: "", row: null });
       cancelEdit();
       showInfo("Updated", "Expense has been updated.");
     } catch (err) {
       console.error("Failed to update expense", err);
-      showInfo("Error", "Failed to update expense.");
+      // Log the exact data that failed
+      console.log("Failing update data:", updateData);
+      showInfo("Error", `Failed to update expense. ${err.message}`);
     } finally {
       stopBusy();
     }
   };
+  //
+  // --- END OF CORRECTED FUNCTION ---
+  //
+
 
   /** ===================== CRUD: SOFT DELETE ===================== */
   const handleSoftDelete = (row) => {
