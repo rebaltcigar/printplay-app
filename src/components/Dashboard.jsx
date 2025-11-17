@@ -1,9 +1,11 @@
+// src/components/Dashboard.jsx
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Box, Typography, AppBar, Toolbar, Card, TextField, Select, MenuItem,
   FormControl, InputLabel, Paper, Checkbox, IconButton, Stack, Tooltip, Dialog,
   DialogTitle, DialogContent, DialogActions, Divider, Button, Table, TableHead,
-  TableBody, TableRow, TableCell, TableContainer, Collapse, Menu as MuiMenu, useMediaQuery
+  TableBody, TableRow, TableCell, TableContainer, Collapse, Menu as MuiMenu, useMediaQuery,
+  CircularProgress
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import MenuIcon from '@mui/icons-material/Menu';
@@ -12,15 +14,20 @@ import EditIcon from '@mui/icons-material/Edit';
 import HistoryIcon from '@mui/icons-material/History';
 import ClearIcon from '@mui/icons-material/Clear';
 import CommentIcon from '@mui/icons-material/Comment';
+import PointOfSaleIcon from '@mui/icons-material/PointOfSale'; // Icon for Cash Drawer
 
 import CustomerDialog from './CustomerDialog';
 import StaffDebtLookupDialog from '../components/StaffDebtLookupDialog';
 
 import { auth, db } from '../firebase';
+import { signInWithEmailAndPassword } from 'firebase/auth';
 import {
   collection, addDoc, query, onSnapshot, orderBy, doc, writeBatch,
   updateDoc, where, setDoc, serverTimestamp, getDocs, getDoc
 } from 'firebase/firestore';
+
+// --- IMPORT THE NEW HELPER ---
+import { openDrawer } from '../utils/drawerService';
 
 import logo from '/icon.ico';
 
@@ -46,56 +53,49 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
   const [openEndShiftDialog, setOpenEndShiftDialog] = useState(false);
   const [openCustomerDialog, setOpenCustomerDialog] = useState(false);
 
-  // Staff Debt Lookup (read-only)
+  // Staff Debt Lookup
   const [openDebtDialog, setOpenDebtDialog] = useState(false);
   const [presetCustomer, setPresetCustomer] = useState(null);
   const [selectToken, setSelectToken] = useState(0);
+
+  // --- CASH DRAWER STATE ---
+  const [openDrawerDialog, setOpenDrawerDialog] = useState(false);
+  const [drawerPassword, setDrawerPassword] = useState("");
+  const [drawerLoading, setDrawerLoading] = useState(false);
+  // -------------------------
 
   const [pcRental, setPcRental] = useState('');
   const [showReceipt, setShowReceipt] = useState(false);
   const [receiptData, setReceiptData] = useState(null);
 
-  const [staffOptions, setStaffOptions] = useState([]); // [{id, fullName, email}]
-  const [shiftStart, setShiftStart] = useState(null);     // Date
+  const [staffOptions, setStaffOptions] = useState([]); 
+  const [shiftStart, setShiftStart] = useState(null);     
   const [elapsed, setElapsed] = useState('00:00:00');
 
-  const [staffDisplayName, setStaffDisplayName] = useState(user?.email || ''); // header name
+  const [staffDisplayName, setStaffDisplayName] = useState(user?.email || ''); 
 
   const isAdmin = userRole === 'superadmin';
   const isDebtItem = item === 'New Debt' || item === 'Paid Debt';
 
-  // --- NEW (mobile) ---
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  const [controlsOpen, setControlsOpen] = useState(true); // collapsible controls on mobile
+  const [controlsOpen, setControlsOpen] = useState(true); 
   const controlsRef = useRef(null);
-  const [menuAnchor, setMenuAnchor] = useState(null); // hamburger menu
-
-  // NEW: staff name dropdown anchor (for hidden logout)
+  const [menuAnchor, setMenuAnchor] = useState(null); 
   const [staffMenuAnchor, setStaffMenuAnchor] = useState(null);
 
-  // --- LOGOUT (no DB writes, no shift changes) ---
-  const handleLogoutOnly = () => {
-    try {
-      auth.signOut(); // pure sign-out; does not touch Firestore
-    } catch (e) {
-      console.error('Logout failed:', e);
-    }
-  };
-
-  // ---------- Polished MUI popups (replace window.*) ----------
-  // Generic error dialog
+  // Popups
   const [errorDialog, setErrorDialog] = useState({ open: false, message: '' });
   const showError = (message) => setErrorDialog({ open: true, message });
 
-  // Delete Selected dialog (reason + confirm)
   const [deleteDialog, setDeleteDialog] = useState({ open: false, reason: '' });
-
-  // Edit reason dialog (when updating an entry)
   const [editReasonDialog, setEditReasonDialog] = useState({ open: false, reason: '' });
-  const [pendingEditData, setPendingEditData] = useState(null); // holds transactionData while we ask for reason
+  const [pendingEditData, setPendingEditData] = useState(null);
 
-  // Auto-open controls & scroll up when editing on mobile
+  const handleLogoutOnly = () => {
+    try { auth.signOut(); } catch (e) { console.error('Logout failed:', e); }
+  };
+
   const openControlsAndScroll = () => {
     setControlsOpen(true);
     setTimeout(() => {
@@ -104,7 +104,40 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     }, 220);
   };
 
-  /* ---------- Load shift start (for the header timer) ---------- */
+  /* ---------- CASH DRAWER HANDLERS ---------- */
+  const handleOpenDrawerClick = () => {
+    setDrawerPassword("");
+    setOpenDrawerDialog(true);
+  };
+
+  const handleConfirmOpenDrawer = async (e) => {
+    e.preventDefault();
+    if (!drawerPassword) return;
+
+    setDrawerLoading(true);
+    try {
+      // 1. Verify Password via Re-Auth
+      await signInWithEmailAndPassword(auth, user.email, drawerPassword);
+      
+      // 2. If successful, close dialog
+      setOpenDrawerDialog(false);
+      
+      // 3. Call the helper service to trigger hardware & log
+      await openDrawer(user, 'manual');
+
+    } catch (err) {
+      console.error("Drawer Unlock Failed:", err);
+      if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+         alert("Incorrect password.");
+      } else {
+         showError(err.message || "Failed to open drawer.");
+      }
+    } finally {
+      setDrawerLoading(false);
+    }
+  };
+  /* ------------------------------------------ */
+
   useEffect(() => {
     let unsub = () => {};
     const run = async () => {
@@ -121,7 +154,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     return () => unsub();
   }, [activeShiftId]);
 
-  // Tick the elapsed time
   useEffect(() => {
     if (!shiftStart) return;
     const id = setInterval(() => {
@@ -135,7 +167,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     return () => clearInterval(id);
   }, [shiftStart]);
 
-  /* ---------- Load Staff list ---------- */
   useEffect(() => {
     const loadStaff = async () => {
       try {
@@ -158,7 +189,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     loadStaff();
   }, []);
 
-  // Resolve header staff name
   useEffect(() => {
     let isMounted = true;
     (async () => {
@@ -189,14 +219,10 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         setExpenseStaffEmail(me.email);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expenseType, staffOptions]);
+  }, [expenseType, staffOptions]); 
 
-  // --- hydrate form when clicking Edit on a row ---
   useEffect(() => {
     if (!currentlyEditing) return;
-
-    // Core fields
     setItem(currentlyEditing.item || '');
     setExpenseType(currentlyEditing.expenseType || '');
     setExpenseStaffId(currentlyEditing.expenseStaffId || '');
@@ -205,8 +231,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     setQuantity(String(currentlyEditing.quantity ?? ''));
     setPrice(String(currentlyEditing.price ?? ''));
     setNotes(currentlyEditing.notes || '');
-
-    // Debt customer (if applicable)
     if (currentlyEditing.customerId) {
       setSelectedCustomer({
         id: currentlyEditing.customerId,
@@ -215,12 +239,10 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     } else {
       setSelectedCustomer(null);
     }
-
     if (isMobile) openControlsAndScroll();
     else setTimeout(() => itemInputRef.current?.focus?.(), 0);
   }, [currentlyEditing, isMobile]);
 
-  // --- CORE HANDLERS ---
   const handleItemChange = (event) => {
     const newItemName = event.target.value;
     setItem(newItemName);
@@ -249,7 +271,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
   const handleEndShiftClick = () => setOpenEndShiftDialog(true);
   const handleCloseDialog = () => setOpenEndShiftDialog(false);
 
-  // --- Delete selected -> open dialog instead of confirm/prompt ---
   const handleDeleteSelected = () => {
     if (selectedTransactions.length === 0) return;
     setDeleteDialog({ open: true, reason: '' });
@@ -297,12 +318,10 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
   const handleTransactionSubmit = async (event) => {
     event.preventDefault();
 
-    // --- new validations ---
     if (!quantity || !price || Number(quantity) <= 0 || Number(price) <= 0) {
       return showError("Quantity and Price must be greater than 0.");
     }
 
-    // --- existing validations ---
     if (item === 'Expenses') {
       if (!expenseType) return showError('Please select an expense type.');
       if (!isAdmin && expenseType === 'Misc' && !String(notes || '').trim()) {
@@ -331,13 +350,11 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     };
 
     if (currentlyEditing) {
-      // Open reason dialog; perform update after confirmation
       setPendingEditData(transactionData);
       setEditReasonDialog({ open: true, reason: '' });
       return;
     }
 
-    // New entry
     const newTransactionData = {
       ...transactionData,
       shiftId: activeShiftId,
@@ -346,8 +363,21 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
       isDeleted: false,
       isEdited: false
     };
+
     try {
+      // 1. Save to Database
       await addDoc(collection(db, "transactions"), newTransactionData);
+      
+      // 2. Auto-Open Drawer
+      // We skip opening for "New Debt" as no cash moves. 
+      // We DO open for "Paid Debt", "Expenses", and normal sales.
+      if (item !== 'New Debt') {
+        // We do not await this, so the UI clears immediately 
+        // even if the hardware is slow to respond.
+        openDrawer(user, 'transaction')
+          .catch(err => console.warn("Auto-drawer trigger skipped:", err.message));
+      }
+
       clearForm();
       if (isMobile) setControlsOpen(false);
     } catch (error) {
@@ -368,7 +398,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     setOpenCustomerDialog(false);
   };
 
-  // --- QUERIES ---
   useEffect(() => {
     if (!activeShiftId) return;
     const qTx = query(
@@ -387,16 +416,10 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     const qServices = query(collection(db, "services"), orderBy("sortOrder"));
     const unsubscribe = onSnapshot(qServices, (snapshot) => {
       const allServices = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-      // Filter for main "Item" dropdown (parent items, not admin-only)
       const parentServices = allServices.filter(s => !s.parentServiceId && s.adminOnly === false);
       setServiceItems(parentServices);
-
-      // Dynamically find the "Expenses" parent service ID
       const expensesParent = allServices.find(s => s.serviceName === "Expenses");
       const expensesParentId = expensesParent ? expensesParent.id : null;
-
-      // Filter for expense sub-services using the dynamic parent ID
       let expenseSubServices = [];
       if (expensesParentId) {
         expenseSubServices = allServices.filter(s => s.parentServiceId === expensesParentId && s.adminOnly === false);
@@ -406,8 +429,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     return () => unsubscribe();
   }, []);
 
-
-  // --- CALCS ---
   const servicesTotal = useMemo(() => {
     return transactions.reduce((sum, tx) => {
       if (tx.item !== 'Expenses' && tx.item !== 'New Debt') return sum + (tx.total || 0);
@@ -424,12 +445,8 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
 
   const pcRentalNum = useMemo(() => Number(pcRental || 0), [pcRental]);
   const salesTotalWithPc = useMemo(() => servicesTotal + pcRentalNum, [servicesTotal, pcRentalNum]);
+  const finalTotal = useMemo(() => servicesTotal - expensesTotal + pcRentalNum, [servicesTotal, expensesTotal, pcRentalNum]);
 
-  const finalTotal = useMemo(() => {
-    return servicesTotal - expensesTotal + pcRentalNum;
-  }, [servicesTotal, expensesTotal, pcRentalNum]);
-
-  // Detailed breakdowns for dialogs
   const salesBreakdown = useMemo(() => {
     const m = new Map();
     transactions.forEach(tx => {
@@ -490,7 +507,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
 
   const tableDisabled = Boolean(currentlyEditing);
 
-  // --- VIEW ---
   return (
     <Box
       sx={{
@@ -506,26 +522,11 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         <Toolbar sx={{ gap: 1 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <img src={logo} alt="logo" width={20} height={20} />
-            {/* Staff name -> dropdown trigger */}
             <Box
               onClick={(e) => setStaffMenuAnchor(e.currentTarget)}
               role="button"
               tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  setStaffMenuAnchor(e.currentTarget);
-                }
-              }}
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                cursor: 'pointer',
-                userSelect: 'none',
-              }}
-              aria-haspopup="menu"
-              aria-controls={staffMenuAnchor ? 'staff-menu' : undefined}
-              aria-expanded={Boolean(staffMenuAnchor)}
+              sx={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }}
             >
               <Typography variant="subtitle2" sx={{ opacity: 0.9 }}>
                 {staffDisplayName} ({shiftPeriod} Shift) | {elapsed}
@@ -535,6 +536,16 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
 
           {/* Desktop actions */}
           <Box sx={{ ml: 'auto', display: { xs: 'none', sm: 'flex' }, gap: 1 }}>
+            <Button 
+              size="small" 
+              variant="contained" 
+              color="secondary" 
+              onClick={handleOpenDrawerClick}
+              startIcon={<PointOfSaleIcon />}
+            >
+              Open Drawer
+            </Button>
+
             <Button size="small" variant="outlined" onClick={() => { setPresetCustomer(null); setOpenDebtDialog(true); }}>
               Debt Lookup
             </Button>
@@ -556,23 +567,18 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             open={Boolean(menuAnchor)}
             onClose={() => setMenuAnchor(null)}
           >
+            <MenuItem onClick={() => { setMenuAnchor(null); handleOpenDrawerClick(); }}>Open Drawer</MenuItem>
             <MenuItem onClick={() => { setMenuAnchor(null); setPresetCustomer(null); setOpenDebtDialog(true); }}>Debt Lookup</MenuItem>
             <MenuItem onClick={() => { setMenuAnchor(null); handleEndShiftClick(); }}>End Shift</MenuItem>
           </MuiMenu>
 
-          {/* Staff dropdown (hidden logout) */}
           <MuiMenu
             id="staff-menu"
             anchorEl={staffMenuAnchor}
             open={Boolean(staffMenuAnchor)}
             onClose={() => setStaffMenuAnchor(null)}
           >
-            <MenuItem
-              onClick={() => {
-                setStaffMenuAnchor(null);
-                handleLogoutOnly();
-              }}
-            >
+            <MenuItem onClick={() => { setStaffMenuAnchor(null); handleLogoutOnly(); }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <LogoutIcon fontSize="small" />
                 Logout
@@ -602,8 +608,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             width: { xs: '100%', sm: 360 },
           }}
         >
-          {/* Mobile header for controls */}
-          <Stack
+           <Stack
             direction="row"
             alignItems="center"
             justifyContent="space-between"
@@ -615,7 +620,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             </Button>
           </Stack>
 
-          {/* Form card */}
           <Collapse in={controlsOpen} timeout="auto" collapsedSize={0} unmountOnExit={false} sx={{ display: { xs: 'block', sm: 'block' } }}>
             <Card
               sx={{
@@ -641,7 +645,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
                 </Select>
               </FormControl>
 
-              {/* Expense details */}
               {item === 'Expenses' && (
                 <>
                   <FormControl fullWidth required>
@@ -678,7 +681,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
                 </>
               )}
 
-              {/* Debt customer picker */}
               {(item === 'New Debt' || item === 'Paid Debt') && (
                 <Box sx={{ mt: 1, p: 1, border: '1px dashed grey', borderRadius: 1 }}>
                   <Typography variant="caption">Customer</Typography>
@@ -711,7 +713,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
                 onChange={(e) => setNotes(e.target.value)}
               />
 
-              {/* Add / Cancel */}
               <Stack direction="row" spacing={1}>
                 <Button
                   onClick={handleTransactionSubmit}
@@ -733,7 +734,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
 
         {/* RIGHT: table */}
         <Paper sx={{ flex: 1, minHeight: 0, display: 'flex', width: '100%' }}>
-          <Box sx={{ p: 2, pt: 1, width: '100%', display: 'flex', flexDirection: 'column', gap: 1, minHeight: 0 }}>
+           <Box sx={{ p: 2, pt: 1, width: '100%', display: 'flex', flexDirection: 'column', gap: 1, minHeight: 0 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               <Typography variant="subtitle1" fontWeight={600}>Logs</Typography>
               <Box sx={{ flexGrow: 1 }} />
@@ -842,9 +843,8 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
                 </TableBody>
               </Table>
             </TableContainer>
-
-            {/* mobile delete button */}
-            <Box sx={{ display: { xs: 'flex', sm: 'none' }, mt: 1 }}>
+            
+             <Box sx={{ display: { xs: 'flex', sm: 'none' }, mt: 1 }}>
               <Button
                 size="small"
                 variant="outlined"
@@ -860,7 +860,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         </Paper>
       </Box>
 
-      {/* End Shift dialog */}
       <Dialog open={openEndShiftDialog} onClose={handleCloseDialog} fullWidth maxWidth="sm">
         <DialogTitle>End of Shift</DialogTitle>
         <DialogContent>
@@ -924,7 +923,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         </DialogActions>
       </Dialog>
 
-      {/* Receipt */}
       <Dialog open={showReceipt} onClose={() => {}} fullWidth maxWidth="xs">
         <DialogTitle>Shift Summary Receipt</DialogTitle>
         <DialogContent dividers>
@@ -994,7 +992,43 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         </DialogActions>
       </Dialog>
 
-      {/* Customer picker */}
+      {/* --- CASH DRAWER DIALOG --- */}
+      <Dialog open={openDrawerDialog} onClose={() => setOpenDrawerDialog(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Unlock Cash Drawer</DialogTitle>
+        <form onSubmit={handleConfirmOpenDrawer}>
+          <DialogContent>
+            <Typography variant="body2" gutterBottom>
+              Please enter your password to unlock the drawer.
+            </Typography>
+            <TextField
+              autoFocus
+              label="Password"
+              type="password"
+              fullWidth
+              required
+              value={drawerPassword}
+              onChange={(e) => setDrawerPassword(e.target.value)}
+              disabled={drawerLoading}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setOpenDrawerDialog(false)} disabled={drawerLoading}>
+              Cancel
+            </Button>
+            <Button 
+              type="submit" 
+              variant="contained" 
+              color="secondary"
+              disabled={!drawerPassword || drawerLoading}
+              startIcon={drawerLoading && <CircularProgress size={16} color="inherit" />}
+            >
+              {drawerLoading ? 'Verifying...' : 'Unlock'}
+            </Button>
+          </DialogActions>
+        </form>
+      </Dialog>
+      {/* -------------------------- */}
+
       <CustomerDialog
         open={openCustomerDialog}
         onClose={() => setOpenCustomerDialog(false)}
@@ -1002,7 +1036,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         user={user}
       />
 
-      {/* Read-only debt lookup */}
       <StaffDebtLookupDialog
         open={openDebtDialog}
         onClose={() => setOpenDebtDialog(false)}
@@ -1010,9 +1043,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         selectToken={selectToken}
       />
 
-      {/* --------- Reusable Dialogs (polished replacements) --------- */}
-
-      {/* Error dialog */}
       <Dialog open={errorDialog.open} onClose={() => setErrorDialog({ open: false, message: '' })} maxWidth="xs" fullWidth>
         <DialogTitle>Error</DialogTitle>
         <DialogContent>
@@ -1023,7 +1053,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         </DialogActions>
       </Dialog>
 
-      {/* Delete Selected dialog */}
       <Dialog open={deleteDialog.open} onClose={() => setDeleteDialog({ open: false, reason: '' })} maxWidth="xs" fullWidth>
         <DialogTitle>Delete Selected</DialogTitle>
         <DialogContent sx={{ display: 'grid', gap: 2 }}>
@@ -1045,7 +1074,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         </DialogActions>
       </Dialog>
 
-      {/* Edit reason dialog */}
       <Dialog open={editReasonDialog.open} onClose={() => setEditReasonDialog({ open: false, reason: '' })} maxWidth="xs" fullWidth>
         <DialogTitle>Reason for Edit</DialogTitle>
         <DialogContent sx={{ display: 'grid', gap: 2 }}>
