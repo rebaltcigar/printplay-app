@@ -1,10 +1,12 @@
-// src/views/Payroll.jsx
+// src/components/Payroll.jsx
 import React, { useState, useRef } from "react";
 import { Box, Card, Tab, Tabs } from "@mui/material";
 import RunPayroll from "../components/payroll/RunPayroll";
 import AllRuns from "../components/payroll/AllRuns";
 import PayRates from "../components/payroll/PayRates";
-import PaystubDialog from "../components/Paystub"; // same as your old import
+// 1. IMPORT THE NEW COMPONENT
+import AttendanceLog from "../components/payroll/AttendanceLog"; 
+import PaystubDialog from "../components/Paystub";
 
 export default function Payroll({ user }) {
   const [tab, setTab] = useState(0);
@@ -31,6 +33,8 @@ export default function Payroll({ user }) {
           <Tab label="Run Payroll" />
           <Tab label="All Runs" />
           <Tab label="Pay Rates" />
+          {/* 2. ADD TAB LABEL */}
+          <Tab label="Attendance Logs" />
         </Tabs>
       </Card>
 
@@ -52,6 +56,9 @@ export default function Payroll({ user }) {
           />
         )}
         {tab === 2 && <PayRates />}
+        
+        {/* 3. RENDER THE COMPONENT */}
+        {tab === 3 && <AttendanceLog />}
       </Box>
 
       <PaystubDialog

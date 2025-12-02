@@ -14,7 +14,8 @@ import EditIcon from '@mui/icons-material/Edit';
 import HistoryIcon from '@mui/icons-material/History';
 import ClearIcon from '@mui/icons-material/Clear';
 import CommentIcon from '@mui/icons-material/Comment';
-import PointOfSaleIcon from '@mui/icons-material/PointOfSale'; // Icon for Cash Drawer
+import PointOfSaleIcon from '@mui/icons-material/PointOfSale';
+import FingerprintIcon from '@mui/icons-material/Fingerprint'; // Biometric Icon
 
 import CustomerDialog from './CustomerDialog';
 import StaffDebtLookupDialog from '../components/StaffDebtLookupDialog';
@@ -26,8 +27,9 @@ import {
   updateDoc, where, setDoc, serverTimestamp, getDocs, getDoc
 } from 'firebase/firestore';
 
-// --- IMPORT THE NEW HELPER ---
+// --- HELPERS ---
 import { openDrawer } from '../utils/drawerService';
+import { verifyFingerprint } from '../utils/biometrics'; 
 
 import logo from '/icon.ico';
 
@@ -105,24 +107,66 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
   };
 
   /* ---------- CASH DRAWER HANDLERS ---------- */
+
+  // --- BIOMETRIC DRAWER HANDLER ---
+  const handleBiometricOpenDrawer = async () => {
+    setDrawerLoading(true);
+    try {
+      // 1. Fetch latest user data to get the biometricId
+      const userDocRef = doc(db, 'users', user.uid);
+      const userSnap = await getDoc(userDocRef);
+      
+      if (!userSnap.exists()) {
+        throw new Error("User record not found.");
+      }
+
+      const userData = userSnap.data();
+      const storedBiometricId = userData.biometricId;
+
+      if (!storedBiometricId) {
+        alert("No fingerprint registered. Please go to User Management to set it up.");
+        setDrawerLoading(false);
+        return;
+      }
+
+      // 2. Trigger Windows Hello verification
+      const isVerified = await verifyFingerprint(storedBiometricId);
+
+      if (isVerified) {
+        // 3. Success! Open Drawer
+        setOpenDrawerDialog(false);
+        await openDrawer(user, 'biometric'); 
+      } else {
+        console.warn("Biometric verification failed or cancelled");
+      }
+    } catch (err) {
+      console.error("Biometric Error:", err);
+      showError("Fingerprint verification failed.");
+    } finally {
+      setDrawerLoading(false);
+    }
+  };
+
+  // --- CLICK HANDLER (Auto-Trigger) ---
   const handleOpenDrawerClick = () => {
     setDrawerPassword("");
     setOpenDrawerDialog(true);
+    
+    // Automatically start scanning when dialog opens
+    handleBiometricOpenDrawer();
   };
 
+  // Password Fallback Handler
   const handleConfirmOpenDrawer = async (e) => {
     e.preventDefault();
     if (!drawerPassword) return;
 
     setDrawerLoading(true);
     try {
-      // 1. Verify Password via Re-Auth
+      // Verify Password via Re-Auth
       await signInWithEmailAndPassword(auth, user.email, drawerPassword);
       
-      // 2. If successful, close dialog
       setOpenDrawerDialog(false);
-      
-      // 3. Call the helper service to trigger hardware & log
       await openDrawer(user, 'manual');
 
     } catch (err) {
@@ -369,11 +413,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
       await addDoc(collection(db, "transactions"), newTransactionData);
       
       // 2. Auto-Open Drawer
-      // We skip opening for "New Debt" as no cash moves. 
-      // We DO open for "Paid Debt", "Expenses", and normal sales.
       if (item !== 'New Debt') {
-        // We do not await this, so the UI clears immediately 
-        // even if the hardware is slow to respond.
         openDrawer(user, 'transaction')
           .catch(err => console.warn("Auto-drawer trigger skipped:", err.message));
       }
@@ -992,13 +1032,13 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         </DialogActions>
       </Dialog>
 
-      {/* --- CASH DRAWER DIALOG --- */}
+      {/* --- CASH DRAWER DIALOG (UPDATED) --- */}
       <Dialog open={openDrawerDialog} onClose={() => setOpenDrawerDialog(false)} maxWidth="xs" fullWidth>
         <DialogTitle>Unlock Cash Drawer</DialogTitle>
         <form onSubmit={handleConfirmOpenDrawer}>
           <DialogContent>
             <Typography variant="body2" gutterBottom>
-              Please enter your password to unlock the drawer.
+              Please enter your password OR scan your finger.
             </Typography>
             <TextField
               autoFocus
@@ -1011,19 +1051,35 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
               disabled={drawerLoading}
             />
           </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setOpenDrawerDialog(false)} disabled={drawerLoading}>
-              Cancel
-            </Button>
+          <DialogActions sx={{ flexDirection: 'column', gap: 1, p: 2 }}>
+            {/* FINGERPRINT BUTTON */}
             <Button 
-              type="submit" 
+              fullWidth 
               variant="contained" 
-              color="secondary"
-              disabled={!drawerPassword || drawerLoading}
-              startIcon={drawerLoading && <CircularProgress size={16} color="inherit" />}
+              size="large"
+              color="primary"
+              onClick={handleBiometricOpenDrawer}
+              disabled={drawerLoading}
+              startIcon={<FingerprintIcon />}
+              sx={{ mb: 1 }}
             >
-              {drawerLoading ? 'Verifying...' : 'Unlock'}
+              {drawerLoading ? "Scanning..." : "Scan Fingerprint"}
             </Button>
+
+            <Box sx={{ display: 'flex', gap: 1, width: '100%', justifyContent: 'flex-end' }}>
+              <Button onClick={() => setOpenDrawerDialog(false)} disabled={drawerLoading}>
+                Cancel
+              </Button>
+              <Button 
+                type="submit" 
+                variant="outlined" 
+                color="secondary"
+                disabled={!drawerPassword || drawerLoading}
+                startIcon={drawerLoading && <CircularProgress size={16} color="inherit" />}
+              >
+                Use Password
+              </Button>
+            </Box>
           </DialogActions>
         </form>
       </Dialog>

@@ -11,21 +11,35 @@ import {
   TableRow,
   TableCell,
   TableContainer,
+  Button,
+  Tooltip,
+  IconButton
 } from "@mui/material";
-import { collection, getDocs, orderBy, query } from "firebase/firestore";
+import { 
+  collection, 
+  getDocs, 
+  orderBy, 
+  query, 
+  doc, 
+  updateDoc 
+} from "firebase/firestore";
+import FingerprintIcon from '@mui/icons-material/Fingerprint';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import ReplayIcon from '@mui/icons-material/Replay';
+
 import { db } from "../firebase";
+import { registerFingerprint } from "../utils/biometrics";
 
 /**
- * List-only user management.
- * - Shows users (fullName, email, role)
- * - No create/edit/delete actions
- * - If you need to add a user: create it in Firebase Auth, then add a matching
- *   Firestore doc at users/{uid} with fields { fullName, email, role }.
+ * User Management with Biometric Registration.
+ * - Lists users (fullName, email, role)
+ * - Allows linking a fingerprint credential to a staff member.
  */
 export default function UserManagement() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // --- Load Users ---
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -45,12 +59,45 @@ export default function UserManagement() {
     };
   }, []);
 
+  // --- Biometric Registration Handler ---
+  const handleRegisterBio = async (userRow) => {
+    // 1. Confirm intention (so we don't accidentally trigger the popup)
+    const confirmMsg = userRow.biometricId 
+      ? `This will overwrite the existing fingerprint for ${userRow.fullName}. Continue?`
+      : `Get ${userRow.fullName} ready to scan their finger.\n\nClick OK to start.`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      // 2. Call the helper (triggers Windows Hello)
+      const result = await registerFingerprint(userRow.email, userRow.fullName);
+
+      if (result.success) {
+        // 3. Save the ID to Firestore
+        await updateDoc(doc(db, "users", userRow.id), {
+          biometricId: result.credentialId,
+          biometricRegisteredAt: new Date().toISOString()
+        });
+
+        // 4. Update local state immediately to show the green checkmark
+        setUsers(prev => prev.map(u => 
+          u.id === userRow.id ? { ...u, biometricId: result.credentialId } : u
+        ));
+
+        alert(`Success! Fingerprint linked to ${userRow.fullName}.`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert(`Registration Failed: ${err.message || "Operation cancelled."}`);
+    }
+  };
+
   return (
     <Box sx={{ width: "100%" }}>
-      {/* ----- WEB / DESKTOP (unchanged) ----- */}
+      {/* ----- WEB / DESKTOP ----- */}
       <Card sx={{ p: 2, display: { xs: "none", sm: "block" } }}>
         <Typography variant="h6" gutterBottom>
-          Users
+          Users & Security
         </Typography>
         <Divider sx={{ mb: 2 }} />
         <TableContainer component={Paper} sx={{ maxHeight: 520 }}>
@@ -60,18 +107,19 @@ export default function UserManagement() {
                 <TableCell>Full Name</TableCell>
                 <TableCell>Email</TableCell>
                 <TableCell>Role</TableCell>
+                <TableCell align="center">Biometrics</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={3}>
+                  <TableCell colSpan={4}>
                     <Typography color="text.secondary">Loading…</Typography>
                   </TableCell>
                 </TableRow>
               ) : users.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={3}>
+                  <TableCell colSpan={4}>
                     <Typography color="text.secondary">No users found.</Typography>
                   </TableCell>
                 </TableRow>
@@ -81,6 +129,35 @@ export default function UserManagement() {
                     <TableCell>{u.fullName || "—"}</TableCell>
                     <TableCell>{u.email || "—"}</TableCell>
                     <TableCell>{u.role || "—"}</TableCell>
+                    
+                    {/* Biometric Controls */}
+                    <TableCell align="center">
+                      {u.biometricId ? (
+                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1 }}>
+                          <Tooltip title="Fingerprint Registered">
+                            <CheckCircleIcon color="success" />
+                          </Tooltip>
+                          <Tooltip title="Re-register Fingerprint">
+                            <IconButton 
+                              size="small" 
+                              onClick={() => handleRegisterBio(u)}
+                            >
+                              <ReplayIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
+                      ) : (
+                        <Button 
+                          size="small" 
+                          variant="outlined" 
+                          startIcon={<FingerprintIcon />}
+                          onClick={() => handleRegisterBio(u)}
+                        >
+                          Register
+                        </Button>
+                      )}
+                    </TableCell>
+
                   </TableRow>
                 ))
               )}
@@ -90,12 +167,11 @@ export default function UserManagement() {
 
         <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
           To add users, create the account in <strong>Firebase Authentication</strong>, then add a matching
-          document in <code>users/&lt;uid&gt;</code> with fields: <code>fullName</code>, <code>email</code>,{" "}
-          <code>role</code> (e.g. <code>"staff"</code> or <code>"superadmin"</code>).
+          document in <code>users/&lt;uid&gt;</code>.
         </Typography>
       </Card>
 
-      {/* ----- MOBILE (compact & scroll-friendly) ----- */}
+      {/* ----- MOBILE (Compact View) ----- */}
       <Card
         sx={{
           p: 2,
@@ -127,7 +203,7 @@ export default function UserManagement() {
             <TableHead>
               <TableRow>
                 <TableCell>Name & Email</TableCell>
-                <TableCell align="right">Role</TableCell>
+                <TableCell align="right">Bio</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -155,18 +231,24 @@ export default function UserManagement() {
                         color="text.secondary"
                         sx={{
                           display: "block",
-                          maxWidth: 260,
+                          maxWidth: 200,
                           whiteSpace: "nowrap",
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                         }}
-                        title={u.email || ""}
                       >
                         {u.email || "—"}
                       </Typography>
                     </TableCell>
                     <TableCell align="right">
-                      <Typography variant="body2">{u.role || "—"}</Typography>
+                      {/* Simple Icon for Mobile */}
+                      {u.biometricId ? (
+                         <CheckCircleIcon color="success" fontSize="small" />
+                      ) : (
+                        <IconButton size="small" onClick={() => handleRegisterBio(u)}>
+                          <FingerprintIcon fontSize="small" />
+                        </IconButton>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))
@@ -174,11 +256,6 @@ export default function UserManagement() {
             </TableBody>
           </Table>
         </TableContainer>
-
-        <Typography variant="caption" color="text.secondary" sx={{ mt: 1.5, display: "block" }}>
-          To add users: create in <strong>Firebase Auth</strong>, then add <code>users/&lt;uid&gt;</code> with{" "}
-          <code>fullName</code>, <code>email</code>, <code>role</code>.
-        </Typography>
       </Card>
     </Box>
   );
