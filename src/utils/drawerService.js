@@ -8,7 +8,7 @@ const DRAWER_PREF_KEY = 'printplay_drawer_pref';
  * Triggers the cash drawer to open via the Web Serial API.
  * Uses a saved "fingerprint" (VendorID + ProductID) to find the correct device,
  * ignoring other serial devices like printers.
- * * @param {Object} user - The current firebase user object (for logging).
+ * @param {Object} user - The current firebase user object (for logging).
  * @param {string} triggerType - 'manual', 'transaction', 'biometric', or 'setup'.
  * @param {boolean} forceConfig - If true, ignores saved preference and forces a new device selection (User Gesture Required).
  * @returns {Promise<boolean>} - Returns true if successful.
@@ -110,7 +110,8 @@ export const openDrawer = async (user, triggerType = 'manual', forceConfig = fal
     console.error('Failed to log drawer event:', logErr);
   }
 
-  // Rethrow error for manual triggers so the UI can show an alert
+  // Rethrow error for manual/setup triggers so the UI can show an alert.
+  // We suppress errors for automatic 'transaction' triggers to avoid interrupting the sale flow.
   if (!success && triggerType !== 'transaction') {
     throw new Error(errorMsg || 'Failed to trigger drawer.');
   }

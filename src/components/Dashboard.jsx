@@ -15,7 +15,7 @@ import HistoryIcon from '@mui/icons-material/History';
 import ClearIcon from '@mui/icons-material/Clear';
 import CommentIcon from '@mui/icons-material/Comment';
 import PointOfSaleIcon from '@mui/icons-material/PointOfSale';
-import FingerprintIcon from '@mui/icons-material/Fingerprint';
+import FingerprintIcon from '@mui/icons-material/Fingerprint'; 
 import SettingsIcon from '@mui/icons-material/Settings'; // <--- NEW IMPORT
 
 import CustomerDialog from './CustomerDialog';
@@ -35,7 +35,7 @@ import { verifyFingerprint } from '../utils/biometrics';
 import logo from '/icon.ico';
 
 function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
-  // ... [STATE DECLARATIONS - NO CHANGE] ...
+  // --- STATE ---
   const [item, setItem] = useState('');
   const [expenseType, setExpenseType] = useState('');
   const [expenseStaffId, setExpenseStaffId] = useState('');
@@ -112,8 +112,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
   };
   // ------------------------------------------
 
-  // ... [EXISTING HANDLERS: openControlsAndScroll, handleBiometricOpenDrawer, etc. - NO CHANGE] ...
-
   const openControlsAndScroll = () => {
     setControlsOpen(true);
     setTimeout(() => {
@@ -122,10 +120,13 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     }, 220);
   };
 
+  /* ---------- CASH DRAWER HANDLERS ---------- */
+
   // --- BIOMETRIC DRAWER HANDLER ---
   const handleBiometricOpenDrawer = async () => {
     setDrawerLoading(true);
     try {
+      // 1. Fetch latest user data to get the biometricId
       const userDocRef = doc(db, 'users', user.uid);
       const userSnap = await getDoc(userDocRef);
       
@@ -142,9 +143,11 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         return;
       }
 
+      // 2. Trigger Windows Hello verification
       const isVerified = await verifyFingerprint(storedBiometricId);
 
       if (isVerified) {
+        // 3. Success! Open Drawer
         setOpenDrawerDialog(false);
         await openDrawer(user, 'biometric'); 
       } else {
@@ -158,19 +161,25 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     }
   };
 
+  // --- CLICK HANDLER (Auto-Trigger) ---
   const handleOpenDrawerClick = () => {
     setDrawerPassword("");
     setOpenDrawerDialog(true);
+    
+    // Automatically start scanning when dialog opens
     handleBiometricOpenDrawer();
   };
 
+  // Password Fallback Handler
   const handleConfirmOpenDrawer = async (e) => {
     e.preventDefault();
     if (!drawerPassword) return;
 
     setDrawerLoading(true);
     try {
+      // Verify Password via Re-Auth
       await signInWithEmailAndPassword(auth, user.email, drawerPassword);
+      
       setOpenDrawerDialog(false);
       await openDrawer(user, 'manual');
 
@@ -185,11 +194,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
       setDrawerLoading(false);
     }
   };
-
-  // ... [USE EFFECTS AND OTHER HANDLERS REMAIN UNCHANGED] ...
-  
-  // NOTE: Skipping large block of existing effects and table logic for brevity. 
-  // They remain exactly as in your provided file.
+  /* ------------------------------------------ */
 
   useEffect(() => {
     let unsub = () => {};
@@ -296,7 +301,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     else setTimeout(() => itemInputRef.current?.focus?.(), 0);
   }, [currentlyEditing, isMobile]);
 
-  // ... [handleItemChange, handleStaffSelect, handleEndShiftClick, etc.] ...
   const handleItemChange = (event) => {
     const newItemName = event.target.value;
     setItem(newItemName);
@@ -419,9 +423,10 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     };
 
     try {
+      // 1. Save to Database
       await addDoc(collection(db, "transactions"), newTransactionData);
       
-      // Auto-Open Drawer logic
+      // 2. Auto-Open Drawer
       if (item !== 'New Debt') {
         openDrawer(user, 'transaction')
           .catch(err => console.warn("Auto-drawer trigger skipped:", err.message));
@@ -583,6 +588,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             </Box>
           </Box>
 
+          {/* Desktop actions */}
           <Box sx={{ ml: 'auto', display: { xs: 'none', sm: 'flex' }, gap: 1 }}>
             <Button 
               size="small" 
@@ -602,6 +608,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             </Button>
           </Box>
 
+          {/* Mobile actions */}
           <IconButton
             sx={{ ml: 'auto', display: { xs: 'inline-flex', sm: 'none' } }}
             onClick={(e) => setMenuAnchor(e.currentTarget)}
@@ -609,7 +616,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
           >
             <MenuIcon />
           </IconButton>
-          
           <MuiMenu
             anchorEl={menuAnchor}
             open={Boolean(menuAnchor)}
@@ -620,7 +626,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             <MenuItem onClick={() => { setMenuAnchor(null); handleEndShiftClick(); }}>End Shift</MenuItem>
           </MuiMenu>
 
-          {/* STAFF MENU (DROPDOWN) */}
+          {/* STAFF DROPDOWN MENU */}
           <MuiMenu
             id="staff-menu"
             anchorEl={staffMenuAnchor}
@@ -635,7 +641,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
               </Box>
             </MenuItem>
             <Divider />
-            
+
             <MenuItem onClick={() => { setStaffMenuAnchor(null); handleLogoutOnly(); }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <LogoutIcon fontSize="small" />
@@ -646,7 +652,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         </Toolbar>
       </AppBar>
 
-      {/* ... [REST OF THE COMPONENT (Body, Dialogs, etc.) - NO CHANGE] ... */}
+      {/* BODY */}
       <Box
         sx={{
           flex: 1,
@@ -918,7 +924,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         </Paper>
       </Box>
 
-      {/* Dialogs and Popups remain unchanged */}
       <Dialog open={openEndShiftDialog} onClose={handleCloseDialog} fullWidth maxWidth="sm">
         <DialogTitle>End of Shift</DialogTitle>
         <DialogContent>
