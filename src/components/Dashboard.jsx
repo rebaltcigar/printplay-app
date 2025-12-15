@@ -14,13 +14,11 @@ import EditIcon from '@mui/icons-material/Edit';
 import HistoryIcon from '@mui/icons-material/History';
 import ClearIcon from '@mui/icons-material/Clear';
 import CommentIcon from '@mui/icons-material/Comment';
-import PointOfSaleIcon from '@mui/icons-material/PointOfSale'; 
-import SettingsIcon from '@mui/icons-material/Settings';
-import FingerprintIcon from '@mui/icons-material/Fingerprint';
+import PointOfSaleIcon from '@mui/icons-material/PointOfSale';
+import FingerprintIcon from '@mui/icons-material/Fingerprint'; // Biometric Icon
 
 import CustomerDialog from './CustomerDialog';
 import StaffDebtLookupDialog from '../components/StaffDebtLookupDialog';
-import DrawerSettingsDialog from './DrawerSettingsDialog'; // NEW IMPORT
 
 import { auth, db } from '../firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
@@ -31,6 +29,7 @@ import {
 
 // --- HELPERS ---
 import { openDrawer } from '../utils/drawerService';
+import { verifyFingerprint } from '../utils/biometrics'; 
 
 import logo from '/icon.ico';
 
@@ -63,12 +62,13 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
 
   // --- CASH DRAWER STATE ---
   const [openDrawerDialog, setOpenDrawerDialog] = useState(false);
-  const [openSettingsDialog, setOpenSettingsDialog] = useState(false); // NEW STATE
   const [drawerPassword, setDrawerPassword] = useState("");
   const [drawerLoading, setDrawerLoading] = useState(false);
+  // -------------------------
 
   const [pcRental, setPcRental] = useState('');
-  // print-related states removed
+  const [showReceipt, setShowReceipt] = useState(false);
+  const [receiptData, setReceiptData] = useState(null);
 
   const [staffOptions, setStaffOptions] = useState([]); 
   const [shiftStart, setShiftStart] = useState(null);     
@@ -106,22 +106,34 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     }, 220);
   };
 
-  // --- BIOMETRIC/DRAWER HANDLERS ---
+  /* ---------- CASH DRAWER HANDLERS ---------- */
+
+  // --- BIOMETRIC DRAWER HANDLER ---
   const handleBiometricOpenDrawer = async () => {
     setDrawerLoading(true);
     try {
+      // 1. Fetch latest user data to get the biometricId
       const userDocRef = doc(db, 'users', user.uid);
       const userSnap = await getDoc(userDocRef);
-      if (!userSnap.exists()) throw new Error("User record not found.");
+      
+      if (!userSnap.exists()) {
+        throw new Error("User record not found.");
+      }
+
       const userData = userSnap.data();
       const storedBiometricId = userData.biometricId;
+
       if (!storedBiometricId) {
         alert("No fingerprint registered. Please go to User Management to set it up.");
         setDrawerLoading(false);
         return;
       }
+
+      // 2. Trigger Windows Hello verification
       const isVerified = await verifyFingerprint(storedBiometricId);
+
       if (isVerified) {
+        // 3. Success! Open Drawer
         setOpenDrawerDialog(false);
         await openDrawer(user, 'biometric'); 
       } else {
@@ -135,20 +147,28 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     }
   };
 
+  // --- CLICK HANDLER (Auto-Trigger) ---
   const handleOpenDrawerClick = () => {
     setDrawerPassword("");
     setOpenDrawerDialog(true);
+    
+    // Automatically start scanning when dialog opens
     handleBiometricOpenDrawer();
   };
 
+  // Password Fallback Handler
   const handleConfirmOpenDrawer = async (e) => {
     e.preventDefault();
     if (!drawerPassword) return;
+
     setDrawerLoading(true);
     try {
+      // Verify Password via Re-Auth
       await signInWithEmailAndPassword(auth, user.email, drawerPassword);
+      
       setOpenDrawerDialog(false);
       await openDrawer(user, 'manual');
+
     } catch (err) {
       console.error("Drawer Unlock Failed:", err);
       if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
@@ -160,6 +180,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
       setDrawerLoading(false);
     }
   };
+  /* ------------------------------------------ */
 
   useEffect(() => {
     let unsub = () => {};
@@ -242,7 +263,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         setExpenseStaffEmail(me.email);
       }
     }
-  }, [expenseType, staffOptions]);
+  }, [expenseType, staffOptions]); 
 
   useEffect(() => {
     if (!currentlyEditing) return;
@@ -388,10 +409,10 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     };
 
     try {
+      // 1. Save to Database
       await addDoc(collection(db, "transactions"), newTransactionData);
       
-      // --- AUTO OPEN DRAWER (COM PORT) ---
-      // Triggered for everything except 'New Debt'
+      // 2. Auto-Open Drawer
       if (item !== 'New Debt') {
         openDrawer(user, 'transaction')
           .catch(err => console.warn("Auto-drawer trigger skipped:", err.message));
@@ -515,11 +536,9 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
       await updateDoc(doc(db, 'shifts', activeShiftId), summary);
       const statusRef = doc(db, 'app_status', 'current_shift');
       await setDoc(statusRef, { activeShiftId: null, staffEmail: user.email }, { merge: true });
-      // Removed receipt printing
+      setReceiptData({ ...summary, endTime: new Date(), salesBreakdown, expensesBreakdown });
       setOpenEndShiftDialog(false);
-      
-      // Auto logout
-      auth.signOut();
+      setShowReceipt(true);
     } catch (e) {
       console.error(e);
       showError('Failed to end shift.');
@@ -555,6 +574,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             </Box>
           </Box>
 
+          {/* Desktop actions */}
           <Box sx={{ ml: 'auto', display: { xs: 'none', sm: 'flex' }, gap: 1 }}>
             <Button 
               size="small" 
@@ -574,6 +594,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             </Button>
           </Box>
 
+          {/* Mobile actions */}
           <IconButton
             sx={{ ml: 'auto', display: { xs: 'inline-flex', sm: 'none' } }}
             onClick={(e) => setMenuAnchor(e.currentTarget)}
@@ -581,7 +602,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
           >
             <MenuIcon />
           </IconButton>
-          
           <MuiMenu
             anchorEl={menuAnchor}
             open={Boolean(menuAnchor)}
@@ -598,13 +618,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             open={Boolean(staffMenuAnchor)}
             onClose={() => setStaffMenuAnchor(null)}
           >
-            <MenuItem onClick={() => { setStaffMenuAnchor(null); setOpenSettingsDialog(true); }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <SettingsIcon fontSize="small" />
-                Configure Drawer
-              </Box>
-            </MenuItem>
-            <Divider />
             <MenuItem onClick={() => { setStaffMenuAnchor(null); handleLogoutOnly(); }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <LogoutIcon fontSize="small" />
@@ -950,12 +963,76 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         </DialogActions>
       </Dialog>
 
-      {/* NEW: DRAWER SETTINGS DIALOG */}
-      <DrawerSettingsDialog 
-        open={openSettingsDialog} 
-        onClose={() => setOpenSettingsDialog(false)} 
-      />
+      <Dialog open={showReceipt} onClose={() => {}} fullWidth maxWidth="xs">
+        <DialogTitle>Shift Summary Receipt</DialogTitle>
+        <DialogContent dividers>
+          <Typography variant="subtitle2">{staffDisplayName}</Typography>
+          <Typography variant="body2" gutterBottom>
+            {shiftPeriod} Shift — {receiptData?.endTime?.toLocaleDateString?.() || new Date().toLocaleDateString()}
+          </Typography>
 
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+            <Typography>PC Rental</Typography>
+            <Typography>₱{pcRentalNum.toFixed(2)}</Typography>
+          </Box>
+
+          <Typography variant="subtitle2" sx={{ mt: 1 }}>Sales</Typography>
+          {salesBreakdown.length === 0 && (
+            <Typography variant="body2" sx={{ opacity: 0.7 }}>No sales entries.</Typography>
+          )}
+          {salesBreakdown.map(([label, amt]) => (
+            <Box key={label} sx={{ display: 'flex', justifyContent: 'space-between' }}>
+              <Typography>{label}</Typography>
+              <Typography>₱{Number(amt).toFixed(2)}</Typography>
+            </Box>
+          ))}
+
+          <Divider sx={{ my: 2 }} />
+
+          <Typography variant="subtitle2">Expenses</Typography>
+          {expensesBreakdown.length === 0 && (
+            <Typography variant="body2" sx={{ opacity: 0.7 }}>No expense entries.</Typography>
+          )}
+          {expensesBreakdown.map(([label, amt]) => (
+            <Box key={label} sx={{ display: 'flex', justifyContent: 'space-between' }}>
+              <Typography>{label}</Typography>
+              <Typography>₱{Number(amt).toFixed(2)}</Typography>
+            </Box>
+          ))}
+
+          <Divider sx={{ my: 2 }} />
+
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+            <Typography>Total Sales</Typography>
+            <Typography>₱{salesTotalWithPc.toFixed(2)}</Typography>
+          </Box>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+            <Typography>Total Expenses</Typography>
+            <Typography>₱{expensesTotal.toFixed(2)}</Typography>
+          </Box>
+
+          <Divider sx={{ my: 2 }} />
+
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+            <Typography variant="h5" fontWeight={700}>SYSTEM TOTAL</Typography>
+            <Typography variant="h4" fontWeight={800}>₱{finalTotal.toFixed(2)}</Typography>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={async () => {
+              try {
+                await setDoc(doc(db, 'app_status', 'current_shift'), { activeShiftId: null, staffEmail: user.email }, { merge: true });
+              } catch {}
+              auth.signOut();
+            }}
+          >
+            Close & Logout
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* --- CASH DRAWER DIALOG (UPDATED) --- */}
       <Dialog open={openDrawerDialog} onClose={() => setOpenDrawerDialog(false)} maxWidth="xs" fullWidth>
         <DialogTitle>Unlock Cash Drawer</DialogTitle>
         <form onSubmit={handleConfirmOpenDrawer}>
@@ -975,6 +1052,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             />
           </DialogContent>
           <DialogActions sx={{ flexDirection: 'column', gap: 1, p: 2 }}>
+            {/* FINGERPRINT BUTTON */}
             <Button 
               fullWidth 
               variant="contained" 
@@ -1005,6 +1083,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
           </DialogActions>
         </form>
       </Dialog>
+      {/* -------------------------- */}
 
       <CustomerDialog
         open={openCustomerDialog}

@@ -77,6 +77,9 @@ export const verifyFingerprint = async (storedCredentialId) => {
     allowCredentials: [{
       id: base64ToBuffer(storedCredentialId), // Convert stored string back to binary
       type: "public-key",
+      // Force browser to look at internal authenticators (TouchID/Windows Hello)
+      // preventing the "Passkey / Insert Key" popup if ID is missing.
+      transports: ['internal'] 
     }],
     userVerification: "required",
     timeout: 60000,
