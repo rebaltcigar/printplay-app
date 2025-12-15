@@ -14,11 +14,13 @@ import EditIcon from '@mui/icons-material/Edit';
 import HistoryIcon from '@mui/icons-material/History';
 import ClearIcon from '@mui/icons-material/Clear';
 import CommentIcon from '@mui/icons-material/Comment';
-import PointOfSaleIcon from '@mui/icons-material/PointOfSale'; // Icon for Cash Drawer
+import PointOfSaleIcon from '@mui/icons-material/PointOfSale'; 
+import SettingsIcon from '@mui/icons-material/Settings';
+import FingerprintIcon from '@mui/icons-material/Fingerprint';
 
 import CustomerDialog from './CustomerDialog';
 import StaffDebtLookupDialog from '../components/StaffDebtLookupDialog';
-import { SimpleReceipt } from './SimpleReceipt'; 
+import DrawerSettingsDialog from './DrawerSettingsDialog'; // NEW IMPORT
 
 import { auth, db } from '../firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
@@ -29,7 +31,6 @@ import {
 
 // --- HELPERS ---
 import { openDrawer } from '../utils/drawerService';
-import { verifyFingerprint } from '../utils/biometrics'; 
 
 import logo from '/icon.ico';
 
@@ -62,17 +63,12 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
 
   // --- CASH DRAWER STATE ---
   const [openDrawerDialog, setOpenDrawerDialog] = useState(false);
+  const [openSettingsDialog, setOpenSettingsDialog] = useState(false); // NEW STATE
   const [drawerPassword, setDrawerPassword] = useState("");
   const [drawerLoading, setDrawerLoading] = useState(false);
-  // -------------------------
-
-  // --- PRINT STATE ---
-  const [printTxData, setPrintTxData] = useState(null);
-  // -------------------
 
   const [pcRental, setPcRental] = useState('');
-  const [showReceipt, setShowReceipt] = useState(false);
-  const [receiptData, setReceiptData] = useState(null);
+  // print-related states removed
 
   const [staffOptions, setStaffOptions] = useState([]); 
   const [shiftStart, setShiftStart] = useState(null);     
@@ -100,80 +96,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
 
   const handleLogoutOnly = () => {
     try { auth.signOut(); } catch (e) { console.error('Logout failed:', e); }
-  };
-
-  // --- CONFIG HANDLERS ---
-  const handleConfigureDrawer = async () => {
-    try {
-      // Sends a test signal to your local Python script
-      await openDrawer(user, 'setup');
-      alert("Signal sent to Drawer Service!");
-    } catch (e) {
-      showError(e.message);
-    }
-  };
-
-  const handleConfigurePrinter = async () => {
-    try {
-      await printReceipt(user, "Printer Test OK", true);
-      alert("Printer configured successfully!");
-    } catch (e) {
-      if (e.message.includes('cancelled')) return;
-      showError(e.message);
-    }
-  };
-  // -----------------------
-
-  // --- PRINT EFFECT ---
-  // When printTxData is updated, trigger the browser print dialog
-  useEffect(() => {
-    if (printTxData) {
-      const timer = setTimeout(() => {
-        window.print();
-        setPrintTxData(null); 
-      }, 500);
-      return () => clearTimeout(timer);
-    }
-  }, [printTxData]);
-  // --------------------
-
-  const handlePrintReceipt = async () => {
-    if (!receiptData) return;
-    
-    const dateStr = receiptData.endTime?.toLocaleString() || new Date().toLocaleString();
-    let text = `
-PRINT + PLAY
---------------------------------
-Shift: ${shiftPeriod}
-Staff: ${staffDisplayName}
-Date:  ${dateStr}
---------------------------------
-PC Rental:      P${receiptData.pcRentalTotal?.toFixed(2)}
-Sales Total:    P${receiptData.servicesTotal?.toFixed(2)}
-Expenses:      -P${receiptData.expensesTotal?.toFixed(2)}
---------------------------------
-NET TOTAL:      P${receiptData.systemTotal?.toFixed(2)}
---------------------------------
-`;
-    if (receiptData.salesBreakdown?.length > 0) {
-        text += `\nSALES:\n`;
-        receiptData.salesBreakdown.forEach(([label, amt]) => {
-            text += `${label.padEnd(20)} P${Number(amt).toFixed(2)}\n`;
-        });
-    }
-    if (receiptData.expensesBreakdown?.length > 0) {
-        text += `\nEXPENSES:\n`;
-        receiptData.expensesBreakdown.forEach(([label, amt]) => {
-            text += `${label.padEnd(20)} P${Number(amt).toFixed(2)}\n`;
-        });
-    }
-    text += `\n\nThank you!\n`;
-
-    try {
-      await printReceipt(user, text, false);
-    } catch (e) {
-      showError(e.message);
-    }
   };
 
   const openControlsAndScroll = () => {
@@ -344,7 +266,6 @@ NET TOTAL:      P${receiptData.systemTotal?.toFixed(2)}
     else setTimeout(() => itemInputRef.current?.focus?.(), 0);
   }, [currentlyEditing, isMobile]);
 
-  // ... [Handlers] ...
   const handleItemChange = (event) => {
     const newItemName = event.target.value;
     setItem(newItemName);
@@ -469,18 +390,12 @@ NET TOTAL:      P${receiptData.systemTotal?.toFixed(2)}
     try {
       await addDoc(collection(db, "transactions"), newTransactionData);
       
-      // --- AUTOMATIC DRAWER TRIGGER (VIA LOCAL SCRIPT) ---
-      // We trigger the drawer for all transactions except 'New Debt'.
+      // --- AUTO OPEN DRAWER (COM PORT) ---
+      // Triggered for everything except 'New Debt'
       if (item !== 'New Debt') {
         openDrawer(user, 'transaction')
           .catch(err => console.warn("Auto-drawer trigger skipped:", err.message));
       }
-      // ---------------------------------------------------
-
-      // --- AUTO PRINT RECEIPT (DISABLED) ---
-      // Commented out to prevent popup as requested.
-      // setPrintTxData(newTransactionData);
-      // -------------------------------------
 
       clearForm();
       if (isMobile) setControlsOpen(false);
@@ -600,9 +515,11 @@ NET TOTAL:      P${receiptData.systemTotal?.toFixed(2)}
       await updateDoc(doc(db, 'shifts', activeShiftId), summary);
       const statusRef = doc(db, 'app_status', 'current_shift');
       await setDoc(statusRef, { activeShiftId: null, staffEmail: user.email }, { merge: true });
-      setReceiptData({ ...summary, endTime: new Date(), salesBreakdown, expensesBreakdown });
+      // Removed receipt printing
       setOpenEndShiftDialog(false);
-      setShowReceipt(true);
+      
+      // Auto logout
+      auth.signOut();
     } catch (e) {
       console.error(e);
       showError('Failed to end shift.');
@@ -681,16 +598,10 @@ NET TOTAL:      P${receiptData.systemTotal?.toFixed(2)}
             open={Boolean(staffMenuAnchor)}
             onClose={() => setStaffMenuAnchor(null)}
           >
-            <MenuItem onClick={() => { setStaffMenuAnchor(null); handleConfigureDrawer(); }}>
+            <MenuItem onClick={() => { setStaffMenuAnchor(null); setOpenSettingsDialog(true); }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <SettingsIcon fontSize="small" />
                 Configure Drawer
-              </Box>
-            </MenuItem>
-            <MenuItem onClick={() => { setStaffMenuAnchor(null); handleConfigurePrinter(); }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <PrintIcon fontSize="small" />
-                Configure Printer
               </Box>
             </MenuItem>
             <Divider />
@@ -976,10 +887,6 @@ NET TOTAL:      P${receiptData.systemTotal?.toFixed(2)}
         </Paper>
       </Box>
 
-      {/* --- PRINTABLE RECEIPT COMPONENT --- */}
-      <SimpleReceipt data={printTxData} staffName={staffDisplayName} />
-      {/* ----------------------------------- */}
-
       <Dialog open={openEndShiftDialog} onClose={handleCloseDialog} fullWidth maxWidth="sm">
         <DialogTitle>End of Shift</DialogTitle>
         <DialogContent>
@@ -1043,74 +950,11 @@ NET TOTAL:      P${receiptData.systemTotal?.toFixed(2)}
         </DialogActions>
       </Dialog>
 
-      <Dialog open={showReceipt} onClose={() => {}} fullWidth maxWidth="xs">
-        <DialogTitle>Shift Summary Receipt</DialogTitle>
-        <DialogContent dividers>
-          <Typography variant="subtitle2">{staffDisplayName}</Typography>
-          <Typography variant="body2" gutterBottom>
-            {shiftPeriod} Shift — {receiptData?.endTime?.toLocaleDateString?.() || new Date().toLocaleDateString()}
-          </Typography>
-
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-            <Typography>PC Rental</Typography>
-            <Typography>₱{pcRentalNum.toFixed(2)}</Typography>
-          </Box>
-
-          <Typography variant="subtitle2" sx={{ mt: 1 }}>Sales</Typography>
-          {salesBreakdown.length === 0 && (
-            <Typography variant="body2" sx={{ opacity: 0.7 }}>No sales entries.</Typography>
-          )}
-          {salesBreakdown.map(([label, amt]) => (
-            <Box key={label} sx={{ display: 'flex', justifyContent: 'space-between' }}>
-              <Typography>{label}</Typography>
-              <Typography>₱{Number(amt).toFixed(2)}</Typography>
-            </Box>
-          ))}
-
-          <Divider sx={{ my: 2 }} />
-
-          <Typography variant="subtitle2">Expenses</Typography>
-          {expensesBreakdown.length === 0 && (
-            <Typography variant="body2" sx={{ opacity: 0.7 }}>No expense entries.</Typography>
-          )}
-          {expensesBreakdown.map(([label, amt]) => (
-            <Box key={label} sx={{ display: 'flex', justifyContent: 'space-between' }}>
-              <Typography>{label}</Typography>
-              <Typography>₱{Number(amt).toFixed(2)}</Typography>
-            </Box>
-          ))}
-
-          <Divider sx={{ my: 2 }} />
-
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-            <Typography>Total Sales</Typography>
-            <Typography>₱{salesTotalWithPc.toFixed(2)}</Typography>
-          </Box>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-            <Typography>Total Expenses</Typography>
-            <Typography>₱{expensesTotal.toFixed(2)}</Typography>
-          </Box>
-
-          <Divider sx={{ my: 2 }} />
-
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-            <Typography variant="h5" fontWeight={700}>SYSTEM TOTAL</Typography>
-            <Typography variant="h4" fontWeight={800}>₱{finalTotal.toFixed(2)}</Typography>
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button
-            onClick={async () => {
-              try {
-                await setDoc(doc(db, 'app_status', 'current_shift'), { activeShiftId: null, staffEmail: user.email }, { merge: true });
-              } catch {}
-              auth.signOut();
-            }}
-          >
-            Close & Logout
-          </Button>
-        </DialogActions>
-      </Dialog>
+      {/* NEW: DRAWER SETTINGS DIALOG */}
+      <DrawerSettingsDialog 
+        open={openSettingsDialog} 
+        onClose={() => setOpenSettingsDialog(false)} 
+      />
 
       <Dialog open={openDrawerDialog} onClose={() => setOpenDrawerDialog(false)} maxWidth="xs" fullWidth>
         <DialogTitle>Unlock Cash Drawer</DialogTitle>

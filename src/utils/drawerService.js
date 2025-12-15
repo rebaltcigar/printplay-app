@@ -1,33 +1,40 @@
-// src/utils/drawerService.js
 import { db } from '../firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 /**
- * Triggers the cash drawer via the local Python background service.
- * * Logic:
- * 1. Web App sends POST request to http://localhost:5000/open-drawer
- * 2. Python Script (running in background) receives it.
- * 3. Python Script sends the raw kick code to the Default Printer (Fake Printer).
+ * Triggers the cash drawer via the local Node.js backend using a COM Port.
  */
 export const openDrawer = async (user, triggerType = 'manual') => {
   let success = false;
   let errorMsg = '';
+  
+  // 1. Get the configured port
+  const portName = localStorage.getItem('drawer_com_port');
+
+  if (!portName) {
+      console.warn("No COM port configured. Skipping drawer trigger.");
+      if (triggerType === 'manual') {
+          alert("Please configure the Cash Drawer COM Port in Settings first.");
+      }
+      return false;
+  }
 
   try {
-    // Send signal to the local Python script running on port 5000
+    // 2. Send signal to backend
     const response = await fetch('http://localhost:5000/open-drawer', {
         method: 'POST',
-        mode: 'cors',
         headers: {
             'Content-Type': 'application/json'
-        }
+        },
+        body: JSON.stringify({ portName })
     });
 
     if (response.ok) {
         success = true;
-        console.log('Drawer triggered successfully via Local Service.');
+        console.log(`Drawer triggered on ${portName}`);
     } else {
-        throw new Error('Local Service reached, but it returned an error.');
+        const data = await response.json();
+        throw new Error(data.error || 'Server returned an error.');
     }
 
   } catch (err) {
@@ -35,13 +42,12 @@ export const openDrawer = async (user, triggerType = 'manual') => {
     errorMsg = err.message;
     success = false;
 
-    // Provide a helpful error message if the background script is down
     if (err.message.includes('Failed to fetch')) {
-        errorMsg = 'Drawer Service is not running. Please start the background script (drawer.py).';
+        errorMsg = 'Backend Service is not running on Port 5000.';
     }
   }
 
-  // Log the attempt to Firebase (Audit Trail)
+  // 3. Log to Firebase
   try {
     await addDoc(collection(db, 'drawer_logs'), {
       timestamp: serverTimestamp(),
@@ -49,13 +55,13 @@ export const openDrawer = async (user, triggerType = 'manual') => {
       triggerType: triggerType, 
       success: success,
       errorMessage: errorMsg || null,
-      device: 'Local_Python_Proxy'
+      device: portName
     });
   } catch (logErr) {
     console.error('Failed to log drawer event:', logErr);
   }
 
-  // If manual trigger failed, throw error to alert the user
+  // Alert user if manual trigger failed
   if (!success && triggerType !== 'transaction') {
     throw new Error(errorMsg || 'Failed to trigger drawer.');
   }
