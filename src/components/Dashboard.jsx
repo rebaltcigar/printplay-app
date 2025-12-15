@@ -14,10 +14,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import HistoryIcon from '@mui/icons-material/History';
 import ClearIcon from '@mui/icons-material/Clear';
 import CommentIcon from '@mui/icons-material/Comment';
-import PointOfSaleIcon from '@mui/icons-material/PointOfSale';
-import FingerprintIcon from '@mui/icons-material/Fingerprint'; 
-import SettingsIcon from '@mui/icons-material/Settings';
-import PrintIcon from '@mui/icons-material/Print'; 
+import PointOfSaleIcon from '@mui/icons-material/PointOfSale'; // Icon for Cash Drawer
 
 import CustomerDialog from './CustomerDialog';
 import StaffDebtLookupDialog from '../components/StaffDebtLookupDialog';
