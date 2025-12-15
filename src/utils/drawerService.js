@@ -5,13 +5,11 @@ import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 const DRAWER_PREF_KEY = 'printplay_drawer_pref';
 
 /**
- * Triggers the cash drawer to open via the Web Serial API.
- * Uses a saved "fingerprint" (VendorID + ProductID) to find the correct device,
- * ignoring other serial devices like printers.
- * @param {Object} user - The current firebase user object (for logging).
- * @param {string} triggerType - 'manual', 'transaction', 'biometric', or 'setup'.
- * @param {boolean} forceConfig - If true, ignores saved preference and forces a new device selection (User Gesture Required).
- * @returns {Promise<boolean>} - Returns true if successful.
+ * Triggers the cash drawer via Web Serial.
+ * UPDATED: Sends the Universal ESC/POS "Kick Drawer" command.
+ * * Why this works for your setup:
+ * 1. If it's a raw BT100U, it opens on ANY data received.
+ * 2. If it's set up as a "Printer" (or is a real printer), it looks for this specific command.
  */
 export const openDrawer = async (user, triggerType = 'manual', forceConfig = false) => {
   let port;
@@ -27,40 +25,31 @@ export const openDrawer = async (user, triggerType = 'manual', forceConfig = fal
     // 2. GET ALL AUTHORIZED PORTS
     const ports = await navigator.serial.getPorts();
     
-    // 3. RETRIEVE SAVED FINGERPRINT
+    // 3. RETRIEVE SAVED FINGERPRINT (Identity Check)
     const savedPref = localStorage.getItem(DRAWER_PREF_KEY);
     
-    // 4. SMART SEARCH (If we have a preference and aren't forcing a reset)
+    // 4. SMART SEARCH
     if (!forceConfig && savedPref) {
       try {
         const { vendorId, productId } = JSON.parse(savedPref);
-        
-        // Find the specific device that matches our saved hardware ID
         port = ports.find(p => {
           const info = p.getInfo();
           return info.usbVendorId === vendorId && info.usbProductId === productId;
         });
-        
-        if (!port) {
-          console.warn('Saved drawer device not found among connected ports.');
-        }
       } catch (e) {
-        console.warn('Invalid drawer preference found. Requiring re-selection.');
+        console.warn('Invalid drawer preference, requiring re-selection.');
       }
     }
 
-    // 5. IF NO PORT FOUND (OR FORCED RESET), REQUEST ONE
+    // 5. DEVICE SELECTION (If not found or forced reset)
     if (!port) {
-      // CRITICAL: 'transaction' triggers happen automatically and CANNOT show a popup.
-      // We must fail gracefully if the drawer hasn't been set up yet.
       if (triggerType === 'transaction') {
-        throw new Error('Drawer not configured. Please use "Configure Drawer" in the menu once to set it up.');
+        throw new Error('Drawer not configured. Please click "Configure Drawer" in the menu.');
       }
-
-      // For 'manual', 'biometric', or 'setup', we can show the popup.
+      
+      // User selects the device (COM3 / BT100U)
       port = await navigator.serial.requestPort();
       
-      // SAVE THE NEW FINGERPRINT
       const info = port.getInfo();
       if (info.usbVendorId && info.usbProductId) {
         localStorage.setItem(DRAWER_PREF_KEY, JSON.stringify({
@@ -71,15 +60,21 @@ export const openDrawer = async (user, triggerType = 'manual', forceConfig = fal
     }
 
     // 6. OPEN CONNECTION
-    // 9600 baud is standard for the BT100U trigger.
+    // 9600 baud is the standard for both BT100U and most Receipt Printers
     await port.open({ baudRate: 9600 });
 
-    // 7. SEND TRIGGER SIGNAL (0x01)
+    // 7. SEND UNIVERSAL TRIGGER SIGNAL
     const writer = port.writable.getWriter();
-    await writer.write(new Uint8Array([0x01]));
+    
+    // Command: ESC p m t1 t2
+    // Hex: 1B 70 00 19 FA
+    // This tells a printer: "Send pulse to Pin 2 (Drawer) for 50ms"
+    const kickCommand = new Uint8Array([0x1B, 0x70, 0x00, 0x19, 0xFA]);
+    
+    await writer.write(kickCommand);
     writer.releaseLock();
 
-    // 8. CLOSE CONNECTION (Immediately, so we don't lock the port)
+    // 8. CLOSE CONNECTION
     await port.close();
     
     success = true;
@@ -90,13 +85,14 @@ export const openDrawer = async (user, triggerType = 'manual', forceConfig = fal
     errorMsg = err.message;
     success = false;
     
-    // Ignore "User cancelled" errors to keep logs clean
     if (err.name === 'NotFoundError') {
-        errorMsg = 'Device selection cancelled or device disconnected.';
+        errorMsg = 'Device selection cancelled.';
+    } else if (err.name === 'NetworkError') {
+        errorMsg = 'Port is busy. Ensure no other "Printer Software" has locked COM3.';
     }
   }
 
-  // 9. LOG TO FIRESTORE
+  // 9. LOGGING
   try {
     await addDoc(collection(db, 'drawer_logs'), {
       timestamp: serverTimestamp(),
@@ -104,14 +100,12 @@ export const openDrawer = async (user, triggerType = 'manual', forceConfig = fal
       triggerType: triggerType, 
       success: success,
       errorMessage: errorMsg || null,
-      device: 'BT100U'
+      device: 'Universal_Trigger'
     });
   } catch (logErr) {
     console.error('Failed to log drawer event:', logErr);
   }
 
-  // Rethrow error for manual/setup triggers so the UI can show an alert.
-  // We suppress errors for automatic 'transaction' triggers to avoid interrupting the sale flow.
   if (!success && triggerType !== 'transaction') {
     throw new Error(errorMsg || 'Failed to trigger drawer.');
   }

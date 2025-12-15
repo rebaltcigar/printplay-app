@@ -99,18 +99,18 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     try { auth.signOut(); } catch (e) { console.error('Logout failed:', e); }
   };
 
-  // --- NEW HANDLER FOR DRAWER CONFIGURATION ---
+  // --- CONFIG HANDLER ---
   const handleConfigureDrawer = async () => {
     try {
-      // Pass 'true' to force a reset of the device configuration
+      // 'true' forces the Identity Check to reset and show the popup
       await openDrawer(user, 'setup', true);
       alert("Drawer configured successfully!");
     } catch (e) {
-      if (e.message.includes('cancelled')) return; // Ignore cancellations
+      if (e.message.includes('cancelled')) return;
       showError(e.message);
     }
   };
-  // ------------------------------------------
+  // ---------------------
 
   const openControlsAndScroll = () => {
     setControlsOpen(true);
@@ -126,7 +126,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
   const handleBiometricOpenDrawer = async () => {
     setDrawerLoading(true);
     try {
-      // 1. Fetch latest user data to get the biometricId
       const userDocRef = doc(db, 'users', user.uid);
       const userSnap = await getDoc(userDocRef);
       
@@ -143,11 +142,9 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         return;
       }
 
-      // 2. Trigger Windows Hello verification
       const isVerified = await verifyFingerprint(storedBiometricId);
 
       if (isVerified) {
-        // 3. Success! Open Drawer
         setOpenDrawerDialog(false);
         await openDrawer(user, 'biometric'); 
       } else {
@@ -165,8 +162,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
   const handleOpenDrawerClick = () => {
     setDrawerPassword("");
     setOpenDrawerDialog(true);
-    
-    // Automatically start scanning when dialog opens
     handleBiometricOpenDrawer();
   };
 
@@ -177,9 +172,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
 
     setDrawerLoading(true);
     try {
-      // Verify Password via Re-Auth
       await signInWithEmailAndPassword(auth, user.email, drawerPassword);
-      
       setOpenDrawerDialog(false);
       await openDrawer(user, 'manual');
 
@@ -423,10 +416,9 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     };
 
     try {
-      // 1. Save to Database
       await addDoc(collection(db, "transactions"), newTransactionData);
       
-      // 2. Auto-Open Drawer
+      // Auto-Open Drawer
       if (item !== 'New Debt') {
         openDrawer(user, 'transaction')
           .catch(err => console.warn("Auto-drawer trigger skipped:", err.message));
@@ -588,7 +580,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             </Box>
           </Box>
 
-          {/* Desktop actions */}
           <Box sx={{ ml: 'auto', display: { xs: 'none', sm: 'flex' }, gap: 1 }}>
             <Button 
               size="small" 
@@ -608,7 +599,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             </Button>
           </Box>
 
-          {/* Mobile actions */}
           <IconButton
             sx={{ ml: 'auto', display: { xs: 'inline-flex', sm: 'none' } }}
             onClick={(e) => setMenuAnchor(e.currentTarget)}
@@ -616,6 +606,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
           >
             <MenuIcon />
           </IconButton>
+          
           <MuiMenu
             anchorEl={menuAnchor}
             open={Boolean(menuAnchor)}
@@ -626,7 +617,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             <MenuItem onClick={() => { setMenuAnchor(null); handleEndShiftClick(); }}>End Shift</MenuItem>
           </MuiMenu>
 
-          {/* STAFF DROPDOWN MENU */}
+          {/* STAFF MENU (DROPDOWN) */}
           <MuiMenu
             id="staff-menu"
             anchorEl={staffMenuAnchor}
@@ -641,7 +632,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
               </Box>
             </MenuItem>
             <Divider />
-
+            
             <MenuItem onClick={() => { setStaffMenuAnchor(null); handleLogoutOnly(); }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <LogoutIcon fontSize="small" />
