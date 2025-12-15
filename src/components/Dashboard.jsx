@@ -21,7 +21,7 @@ import PrintIcon from '@mui/icons-material/Print';
 
 import CustomerDialog from './CustomerDialog';
 import StaffDebtLookupDialog from '../components/StaffDebtLookupDialog';
-import { SimpleReceipt } from './SimpleReceipt'; // <--- NEW IMPORT
+import { SimpleReceipt } from './SimpleReceipt'; 
 
 import { auth, db } from '../firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
@@ -32,7 +32,6 @@ import {
 
 // --- HELPERS ---
 import { openDrawer } from '../utils/drawerService';
-import { printReceipt } from '../utils/printerService'; 
 import { verifyFingerprint } from '../utils/biometrics'; 
 
 import logo from '/icon.ico';
@@ -109,10 +108,10 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
   // --- CONFIG HANDLERS ---
   const handleConfigureDrawer = async () => {
     try {
-      await openDrawer(user, 'setup', true);
-      alert("Drawer configured successfully!");
+      // Sends a test signal to your local Python script
+      await openDrawer(user, 'setup');
+      alert("Signal sent to Drawer Service!");
     } catch (e) {
-      if (e.message.includes('cancelled')) return;
       showError(e.message);
     }
   };
@@ -132,10 +131,9 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
   // When printTxData is updated, trigger the browser print dialog
   useEffect(() => {
     if (printTxData) {
-      // Small timeout to ensure the DOM has updated with the new data
       const timer = setTimeout(() => {
         window.print();
-        setPrintTxData(null); // Reset after printing
+        setPrintTxData(null); 
       }, 500);
       return () => clearTimeout(timer);
     }
@@ -145,7 +143,6 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
   const handlePrintReceipt = async () => {
     if (!receiptData) return;
     
-    // Construct receipt text (for End Shift)
     const dateStr = receiptData.endTime?.toLocaleString() || new Date().toLocaleString();
     let text = `
 PRINT + PLAY
@@ -244,9 +241,6 @@ NET TOTAL:      P${receiptData.systemTotal?.toFixed(2)}
       setDrawerLoading(false);
     }
   };
-
-  // ... [USE EFFECTS remain unchanged] ...
-  // (Paste the standard useEffects for shiftStart, staffOptions, userDisplayName here)
 
   useEffect(() => {
     let unsub = () => {};
@@ -478,16 +472,18 @@ NET TOTAL:      P${receiptData.systemTotal?.toFixed(2)}
     try {
       await addDoc(collection(db, "transactions"), newTransactionData);
       
-      // --- DISABLED DRAWER OPEN FOR NOW ---
-      // if (item !== 'New Debt') {
-      //   openDrawer(user, 'transaction')
-      //     .catch(err => console.warn("Auto-drawer trigger skipped:", err.message));
-      // }
-      // ------------------------------------
+      // --- AUTOMATIC DRAWER TRIGGER (VIA LOCAL SCRIPT) ---
+      // We trigger the drawer for all transactions except 'New Debt'.
+      if (item !== 'New Debt') {
+        openDrawer(user, 'transaction')
+          .catch(err => console.warn("Auto-drawer trigger skipped:", err.message));
+      }
+      // ---------------------------------------------------
 
-      // --- AUTO PRINT ---
-      setPrintTxData(newTransactionData);
-      // ------------------
+      // --- AUTO PRINT RECEIPT (DISABLED) ---
+      // Commented out to prevent popup as requested.
+      // setPrintTxData(newTransactionData);
+      // -------------------------------------
 
       clearForm();
       if (isMobile) setControlsOpen(false);
