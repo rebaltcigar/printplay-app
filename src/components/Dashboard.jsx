@@ -16,10 +16,12 @@ import ClearIcon from '@mui/icons-material/Clear';
 import CommentIcon from '@mui/icons-material/Comment';
 import PointOfSaleIcon from '@mui/icons-material/PointOfSale';
 import FingerprintIcon from '@mui/icons-material/Fingerprint'; 
-import SettingsIcon from '@mui/icons-material/Settings'; // <--- NEW IMPORT
+import SettingsIcon from '@mui/icons-material/Settings';
+import PrintIcon from '@mui/icons-material/Print'; 
 
 import CustomerDialog from './CustomerDialog';
 import StaffDebtLookupDialog from '../components/StaffDebtLookupDialog';
+import { SimpleReceipt } from './SimpleReceipt'; // <--- NEW IMPORT
 
 import { auth, db } from '../firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
@@ -30,6 +32,7 @@ import {
 
 // --- HELPERS ---
 import { openDrawer } from '../utils/drawerService';
+import { printReceipt } from '../utils/printerService'; 
 import { verifyFingerprint } from '../utils/biometrics'; 
 
 import logo from '/icon.ico';
@@ -67,6 +70,10 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
   const [drawerLoading, setDrawerLoading] = useState(false);
   // -------------------------
 
+  // --- PRINT STATE ---
+  const [printTxData, setPrintTxData] = useState(null);
+  // -------------------
+
   const [pcRental, setPcRental] = useState('');
   const [showReceipt, setShowReceipt] = useState(false);
   const [receiptData, setReceiptData] = useState(null);
@@ -99,10 +106,9 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     try { auth.signOut(); } catch (e) { console.error('Logout failed:', e); }
   };
 
-  // --- CONFIG HANDLER ---
+  // --- CONFIG HANDLERS ---
   const handleConfigureDrawer = async () => {
     try {
-      // 'true' forces the Identity Check to reset and show the popup
       await openDrawer(user, 'setup', true);
       alert("Drawer configured successfully!");
     } catch (e) {
@@ -110,7 +116,71 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
       showError(e.message);
     }
   };
-  // ---------------------
+
+  const handleConfigurePrinter = async () => {
+    try {
+      await printReceipt(user, "Printer Test OK", true);
+      alert("Printer configured successfully!");
+    } catch (e) {
+      if (e.message.includes('cancelled')) return;
+      showError(e.message);
+    }
+  };
+  // -----------------------
+
+  // --- PRINT EFFECT ---
+  // When printTxData is updated, trigger the browser print dialog
+  useEffect(() => {
+    if (printTxData) {
+      // Small timeout to ensure the DOM has updated with the new data
+      const timer = setTimeout(() => {
+        window.print();
+        setPrintTxData(null); // Reset after printing
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [printTxData]);
+  // --------------------
+
+  const handlePrintReceipt = async () => {
+    if (!receiptData) return;
+    
+    // Construct receipt text (for End Shift)
+    const dateStr = receiptData.endTime?.toLocaleString() || new Date().toLocaleString();
+    let text = `
+PRINT + PLAY
+--------------------------------
+Shift: ${shiftPeriod}
+Staff: ${staffDisplayName}
+Date:  ${dateStr}
+--------------------------------
+PC Rental:      P${receiptData.pcRentalTotal?.toFixed(2)}
+Sales Total:    P${receiptData.servicesTotal?.toFixed(2)}
+Expenses:      -P${receiptData.expensesTotal?.toFixed(2)}
+--------------------------------
+NET TOTAL:      P${receiptData.systemTotal?.toFixed(2)}
+--------------------------------
+`;
+    if (receiptData.salesBreakdown?.length > 0) {
+        text += `\nSALES:\n`;
+        receiptData.salesBreakdown.forEach(([label, amt]) => {
+            text += `${label.padEnd(20)} P${Number(amt).toFixed(2)}\n`;
+        });
+    }
+    if (receiptData.expensesBreakdown?.length > 0) {
+        text += `\nEXPENSES:\n`;
+        receiptData.expensesBreakdown.forEach(([label, amt]) => {
+            text += `${label.padEnd(20)} P${Number(amt).toFixed(2)}\n`;
+        });
+    }
+    text += `\n\nThank you!\n`;
+
+    try {
+      await printReceipt(user, text, false);
+    } catch (e) {
+      showError(e.message);
+    }
+  };
 
   const openControlsAndScroll = () => {
     setControlsOpen(true);
@@ -120,30 +190,21 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     }, 220);
   };
 
-  /* ---------- CASH DRAWER HANDLERS ---------- */
-
-  // --- BIOMETRIC DRAWER HANDLER ---
+  // --- BIOMETRIC/DRAWER HANDLERS ---
   const handleBiometricOpenDrawer = async () => {
     setDrawerLoading(true);
     try {
       const userDocRef = doc(db, 'users', user.uid);
       const userSnap = await getDoc(userDocRef);
-      
-      if (!userSnap.exists()) {
-        throw new Error("User record not found.");
-      }
-
+      if (!userSnap.exists()) throw new Error("User record not found.");
       const userData = userSnap.data();
       const storedBiometricId = userData.biometricId;
-
       if (!storedBiometricId) {
         alert("No fingerprint registered. Please go to User Management to set it up.");
         setDrawerLoading(false);
         return;
       }
-
       const isVerified = await verifyFingerprint(storedBiometricId);
-
       if (isVerified) {
         setOpenDrawerDialog(false);
         await openDrawer(user, 'biometric'); 
@@ -158,24 +219,20 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     }
   };
 
-  // --- CLICK HANDLER (Auto-Trigger) ---
   const handleOpenDrawerClick = () => {
     setDrawerPassword("");
     setOpenDrawerDialog(true);
     handleBiometricOpenDrawer();
   };
 
-  // Password Fallback Handler
   const handleConfirmOpenDrawer = async (e) => {
     e.preventDefault();
     if (!drawerPassword) return;
-
     setDrawerLoading(true);
     try {
       await signInWithEmailAndPassword(auth, user.email, drawerPassword);
       setOpenDrawerDialog(false);
       await openDrawer(user, 'manual');
-
     } catch (err) {
       console.error("Drawer Unlock Failed:", err);
       if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
@@ -187,7 +244,9 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
       setDrawerLoading(false);
     }
   };
-  /* ------------------------------------------ */
+
+  // ... [USE EFFECTS remain unchanged] ...
+  // (Paste the standard useEffects for shiftStart, staffOptions, userDisplayName here)
 
   useEffect(() => {
     let unsub = () => {};
@@ -270,7 +329,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
         setExpenseStaffEmail(me.email);
       }
     }
-  }, [expenseType, staffOptions]); 
+  }, [expenseType, staffOptions]);
 
   useEffect(() => {
     if (!currentlyEditing) return;
@@ -294,6 +353,7 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     else setTimeout(() => itemInputRef.current?.focus?.(), 0);
   }, [currentlyEditing, isMobile]);
 
+  // ... [Handlers] ...
   const handleItemChange = (event) => {
     const newItemName = event.target.value;
     setItem(newItemName);
@@ -418,11 +478,16 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
     try {
       await addDoc(collection(db, "transactions"), newTransactionData);
       
-      // Auto-Open Drawer
-      if (item !== 'New Debt') {
-        openDrawer(user, 'transaction')
-          .catch(err => console.warn("Auto-drawer trigger skipped:", err.message));
-      }
+      // --- DISABLED DRAWER OPEN FOR NOW ---
+      // if (item !== 'New Debt') {
+      //   openDrawer(user, 'transaction')
+      //     .catch(err => console.warn("Auto-drawer trigger skipped:", err.message));
+      // }
+      // ------------------------------------
+
+      // --- AUTO PRINT ---
+      setPrintTxData(newTransactionData);
+      // ------------------
 
       clearForm();
       if (isMobile) setControlsOpen(false);
@@ -617,22 +682,25 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
             <MenuItem onClick={() => { setMenuAnchor(null); handleEndShiftClick(); }}>End Shift</MenuItem>
           </MuiMenu>
 
-          {/* STAFF MENU (DROPDOWN) */}
           <MuiMenu
             id="staff-menu"
             anchorEl={staffMenuAnchor}
             open={Boolean(staffMenuAnchor)}
             onClose={() => setStaffMenuAnchor(null)}
           >
-            {/* NEW CONFIGURE DRAWER ITEM */}
             <MenuItem onClick={() => { setStaffMenuAnchor(null); handleConfigureDrawer(); }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <SettingsIcon fontSize="small" />
                 Configure Drawer
               </Box>
             </MenuItem>
+            <MenuItem onClick={() => { setStaffMenuAnchor(null); handleConfigurePrinter(); }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <PrintIcon fontSize="small" />
+                Configure Printer
+              </Box>
+            </MenuItem>
             <Divider />
-            
             <MenuItem onClick={() => { setStaffMenuAnchor(null); handleLogoutOnly(); }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <LogoutIcon fontSize="small" />
@@ -914,6 +982,10 @@ function Dashboard({ user, userRole, activeShiftId, shiftPeriod }) {
           </Box>
         </Paper>
       </Box>
+
+      {/* --- PRINTABLE RECEIPT COMPONENT --- */}
+      <SimpleReceipt data={printTxData} staffName={staffDisplayName} />
+      {/* ----------------------------------- */}
 
       <Dialog open={openEndShiftDialog} onClose={handleCloseDialog} fullWidth maxWidth="sm">
         <DialogTitle>End of Shift</DialogTitle>
