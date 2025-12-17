@@ -5,12 +5,13 @@ import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 /**
  * Triggers the cash drawer to open via the Web Serial API.
  * Logs the event to Firestore.
- * * @param {Object} user - The current firebase user object (for logging).
- * @param {string} triggerType - 'manual' or 'transaction'.
+ * @param {Object} user - The current firebase user object (for logging).
+ * @param {string} triggerType - 'manual', 'transaction', or 'biometric'.
  * @returns {Promise<boolean>} - Returns true if successful, false otherwise.
  */
 export const openDrawer = async (user, triggerType = 'manual') => {
   let port;
+  let writer;
   let success = false;
   let errorMsg = '';
 
@@ -21,54 +22,79 @@ export const openDrawer = async (user, triggerType = 'manual') => {
     }
 
     // 2. FIND OR REQUEST PORT
-    // We check if the user has already granted permission to a device.
     const ports = await navigator.serial.getPorts();
     
     if (ports.length > 0) {
-      // Use the first available port (usually the one previously selected)
       port = ports[0];
     } else {
-      // If no port is authorized, prompt the user to select one.
-      // They should select the device that appears as "COM3" or "USB Serial Device".
+      // If triggered by a transaction (automatic), we can't pop up a request window 
+      // because browsers block hardware requests that aren't user-initiated.
+      if (triggerType === 'transaction') {
+         console.warn("No authorized device found for auto-trigger.");
+         return false;
+      }
       port = await navigator.serial.requestPort();
     }
 
     // 3. OPEN CONNECTION
-    // 9600 baud is standard for these triggers, but BT100U is often baud-agnostic.
-    await port.open({ baudRate: 9600 });
+    // Ensure we aren't trying to open an already open port (rare, but good safety)
+    if (!port.readable) {
+        await port.open({ baudRate: 9600 });
+    }
 
     // 4. SEND TRIGGER SIGNAL
-    // Writing any data triggers the BT100U. We send a single byte.
-    const writer = port.writable.getWriter();
-    await writer.write(new Uint8Array([0x01])); // Sending 0x01
-    writer.releaseLock();
-
-    // 5. CLOSE CONNECTION
-    // We close it immediately so it doesn't block other tabs or refreshes.
-    await port.close();
-    
-    success = true;
-    console.log('Drawer triggered successfully.');
+    // Use a nested try-finally for the writer to ensure the lock is ALWAYS released
+    try {
+        writer = port.writable.getWriter();
+        
+        // Send the signal
+        await writer.write(new Uint8Array([0x01])); 
+        
+        // OPTIONAL: Wait 100ms to ensure the hardware registers the pulse before closing
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        success = true;
+        console.log('Drawer triggered successfully.');
+    } finally {
+        // CRITICAL: Always release the lock, even if writing failed
+        if (writer) {
+            writer.releaseLock();
+        }
+    }
 
   } catch (err) {
     console.error('Drawer Error:', err);
     errorMsg = err.message;
     success = false;
-    
-    // User cancelled the port picker is a common "error" we can ignore logging if desired,
-    // but logging it helps debug why it didn't open.
+
     if (err.name === 'NotFoundError') {
         errorMsg = 'User cancelled device selection or device disconnected.';
+    }
+    // Handle the specific "Port already open" error gracefully
+    if (err.name === 'InvalidStateError') {
+        errorMsg = 'Device is busy or already open. Try again.';
+    }
+  } finally {
+    // 5. CLOSE CONNECTION
+    // CRITICAL: Attempt to close the port in the outer finally block
+    // to ensure we don't leave it locked for the next time.
+    if (port && port.readable) {
+        try {
+            await port.close();
+        } catch (closeErr) {
+            console.error('Failed to close port:', closeErr);
+        }
     }
   }
 
   // 6. LOG TO FIRESTORE
-  // We log the attempt regardless of hardware success, to track usage and errors.
+  // Log strictly for manual/biometric attempts or failed transactions
+  // to avoid cluttering logs if transactions are frequent.
   try {
     await addDoc(collection(db, 'drawer_logs'), {
       timestamp: serverTimestamp(),
       staffEmail: user?.email || 'unknown',
-      triggerType: triggerType, // 'manual' or 'transaction'
+      triggerType: triggerType,
       success: success,
       errorMessage: errorMsg || null,
       device: 'BT100U'
@@ -77,9 +103,11 @@ export const openDrawer = async (user, triggerType = 'manual') => {
     console.error('Failed to log drawer event:', logErr);
   }
 
-  if (!success) {
+  if (!success && triggerType !== 'transaction') {
+    // Only throw UI errors for manual triggers. 
+    // For transactions, we want the sale to complete even if the drawer fails.
     throw new Error(errorMsg || 'Failed to trigger drawer.');
   }
 
-  return true;
+  return success;
 };
