@@ -4,10 +4,7 @@ import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 /**
  * Triggers the cash drawer to open via the Web Serial API.
- * Logs the event to Firestore.
- * @param {Object} user - The current firebase user object (for logging).
- * @param {string} triggerType - 'manual', 'transaction', or 'biometric'.
- * @returns {Promise<boolean>} - Returns true if successful, false otherwise.
+ * Matches the ESC/POS command used in PowerShell: ESC p 0 25 250
  */
 export const openDrawer = async (user, triggerType = 'manual') => {
   let port;
@@ -27,8 +24,7 @@ export const openDrawer = async (user, triggerType = 'manual') => {
     if (ports.length > 0) {
       port = ports[0];
     } else {
-      // If triggered by a transaction (automatic), we can't pop up a request window 
-      // because browsers block hardware requests that aren't user-initiated.
+      // If auto-transaction, don't block with a popup prompt
       if (triggerType === 'transaction') {
          console.warn("No authorized device found for auto-trigger.");
          return false;
@@ -37,26 +33,29 @@ export const openDrawer = async (user, triggerType = 'manual') => {
     }
 
     // 3. OPEN CONNECTION
-    // Ensure we aren't trying to open an already open port (rare, but good safety)
+    // Ensure we aren't trying to open an already open port
     if (!port.readable) {
         await port.open({ baudRate: 9600 });
     }
 
     // 4. SEND TRIGGER SIGNAL
-    // Use a nested try-finally for the writer to ensure the lock is ALWAYS released
     try {
         writer = port.writable.getWriter();
         
-        // Send the signal
-        await writer.write(new Uint8Array([0x01])); 
+        // --- THE FIX: SEND THE EXACT SAME SIGNAL AS POWERSHELL ---
+        // PowerShell: [char]27 + "p" + [char]0 + [char]25 + [char]250
+        // Decimal:    27, 112, 0, 25, 250
+        const signal = new Uint8Array([27, 112, 0, 25, 250]);
         
-        // OPTIONAL: Wait 100ms to ensure the hardware registers the pulse before closing
+        await writer.write(signal); 
+        
+        // Wait 100ms to ensure the hardware processes the command
         await new Promise(resolve => setTimeout(resolve, 100));
         
         success = true;
         console.log('Drawer triggered successfully.');
     } finally {
-        // CRITICAL: Always release the lock, even if writing failed
+        // CRITICAL: Always release the lock so the port can be closed
         if (writer) {
             writer.releaseLock();
         }
@@ -68,16 +67,14 @@ export const openDrawer = async (user, triggerType = 'manual') => {
     success = false;
 
     if (err.name === 'NotFoundError') {
-        errorMsg = 'User cancelled device selection or device disconnected.';
+        errorMsg = 'Device selection cancelled or device disconnected.';
     }
-    // Handle the specific "Port already open" error gracefully
     if (err.name === 'InvalidStateError') {
-        errorMsg = 'Device is busy or already open. Try again.';
+        errorMsg = 'Device is busy. Try unplugging it and plugging it back in.';
     }
   } finally {
     // 5. CLOSE CONNECTION
-    // CRITICAL: Attempt to close the port in the outer finally block
-    // to ensure we don't leave it locked for the next time.
+    // Always close the port so it's ready for the next click
     if (port && port.readable) {
         try {
             await port.close();
@@ -88,8 +85,6 @@ export const openDrawer = async (user, triggerType = 'manual') => {
   }
 
   // 6. LOG TO FIRESTORE
-  // Log strictly for manual/biometric attempts or failed transactions
-  // to avoid cluttering logs if transactions are frequent.
   try {
     await addDoc(collection(db, 'drawer_logs'), {
       timestamp: serverTimestamp(),
@@ -100,12 +95,11 @@ export const openDrawer = async (user, triggerType = 'manual') => {
       device: 'BT100U'
     });
   } catch (logErr) {
-    console.error('Failed to log drawer event:', logErr);
+    // Ignore logging errors to keep the UI smooth
+    console.warn('Logging failed:', logErr);
   }
 
   if (!success && triggerType !== 'transaction') {
-    // Only throw UI errors for manual triggers. 
-    // For transactions, we want the sale to complete even if the drawer fails.
     throw new Error(errorMsg || 'Failed to trigger drawer.');
   }
 
