@@ -37,6 +37,7 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import HistoryIcon from "@mui/icons-material/History";
 import ClearIcon from "@mui/icons-material/Clear";
 import CommentIcon from "@mui/icons-material/Comment";
+import LinkOffIcon from "@mui/icons-material/LinkOff";
 
 import { db, auth } from "../firebase";
 import {
@@ -395,6 +396,31 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     } catch (e) {
       console.error(e);
       alert("Failed to delete entry.");
+    }
+  };
+  
+  const handleUnlink = async (tx) => {
+    const reason = window.prompt("Reason for unlinking this transaction from the shift?");
+    if (!reason) return alert("Unlink cancelled. Reason is required.");
+    
+    if (!window.confirm("Are you sure? This will remove the transaction from this shift but keep the record in the database.")) {
+      return;
+    }
+
+    try {
+      await updateDoc(doc(db, "transactions", tx.id), {
+        shiftId: null, // This effectively unlinks it
+        isEdited: true,
+        editedBy: auth.currentUser?.email || "admin",
+        editReason: `Unlinked from shift: ${reason}`,
+        lastUpdatedAt: serverTimestamp(),
+      });
+      // Note: The onSnapshot listener will automatically remove this from the 
+      // 'transactions' state, triggering the 'servicesTotal' useMemo, 
+      // which triggers the useEffect that updates the shift totals.
+    } catch (e) {
+      console.error(e);
+      alert("Failed to unlink transaction.");
     }
   };
 
@@ -993,6 +1019,11 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
                     <TableCell align="right">{fmtPeso(tx.total || 0)}</TableCell>
                     <TableCell>{identifierText(tx)}</TableCell>
                     <TableCell align="right">
+                      <Tooltip title="Unlink from Shift">
+                        <IconButton size="small" onClick={() => handleUnlink(tx)} color="warning">
+                          <LinkOffIcon fontSize="inherit" />
+                        </IconButton>
+                      </Tooltip>
                       <IconButton size="small" onClick={() => startEdit(tx)}>
                         <EditIcon fontSize="inherit" />
                       </IconButton>
@@ -1198,6 +1229,11 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
                     <TableCell align="right">{fmtPeso(tx.total || 0)}</TableCell>
                     <TableCell>{identifierText(tx)}</TableCell>
                     <TableCell align="right">
+                      <Tooltip title="Unlink">
+                         <IconButton size="small" onClick={() => handleUnlink(tx)} color="warning">
+                           <LinkOffIcon fontSize="inherit" />
+                         </IconButton>
+                      </Tooltip>
                       <IconButton size="small" onClick={() => startEdit(tx)}>
                         <EditIcon fontSize="inherit" />
                       </IconButton>
