@@ -449,7 +449,7 @@ export default function RunPayroll({
           let ownerAdvance = 0;
           const ownerAdvanceRefs = [];
           advSnap.docs.forEach((ad) => {
-            const tx = ad.data() || {};
+            const tx = advDoc.data() || {};
             if (tx.voided) return;
             const amt = Number(tx.total || 0);
             const targetEmail =
@@ -1064,7 +1064,7 @@ export default function RunPayroll({
               )}] | Shift: ${s.label} | Gross: ${peso(
                 shiftGross
               )} | Net: ${peso(shiftNet)}`,
-              shiftId: s.id,
+              shiftId: null, // <--- CHANGED FROM s.id TO null
               source: `payroll_run:${id}`,
               payrollRunId: id,
               voided: false,
