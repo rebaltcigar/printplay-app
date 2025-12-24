@@ -66,8 +66,11 @@ export default function RunDialog({
   showPaystubs,
 }) {
   const [expanded, setExpanded] = useState({});
-  const [deductionEdit, setDeductionEdit] = useState({
+  
+  // Refactored to generic "itemEdit" to handle both additions and deductions
+  const [itemEdit, setItemEdit] = useState({
     open: false,
+    type: "deduction", // 'deduction' | 'addition'
     lineId: null,
     index: -1,
     label: "",
@@ -83,6 +86,8 @@ export default function RunDialog({
     const included = line.shiftRows.filter((r) => !r.excluded);
     const minutes = included.reduce((m, r) => m + Number(r.minutes || r.minutesUsed || 0), 0);
     const gross = calcGross(minutes, line.rate);
+    
+    // Deductions
     const advances = included.reduce((s, r) => s + Number(r.advance || 0), 0);
     const shortages = included.reduce((s, r) => s + Number(r.shortage || 0), 0);
     const extraAdvances = (line.extraAdvances || []).reduce(
@@ -94,10 +99,28 @@ export default function RunDialog({
       0
     );
     const otherDeductions = Number((extraAdvances + customDeductions).toFixed(2));
-    const net = Number(
-      (gross - advances - shortages - otherDeductions).toFixed(2)
+
+    // Additions (New)
+    const customAdditions = (line.customAdditions || []).reduce(
+      (s, d) => s + Number(d.amount || 0),
+      0
     );
-    return { minutes, gross, advances, shortages, otherDeductions, net };
+    const totalAdditions = Number(customAdditions.toFixed(2));
+
+    // Net Calculation
+    const net = Number(
+      (gross + totalAdditions - advances - shortages - otherDeductions).toFixed(2)
+    );
+    
+    return { 
+      minutes, 
+      gross, 
+      advances, 
+      shortages, 
+      otherDeductions, 
+      totalAdditions, 
+      net 
+    };
   };
 
   const setLine = (id, patch) => {
@@ -160,6 +183,10 @@ export default function RunDialog({
     () => Number(preview.reduce((s, l) => s + Number(l.otherDeductions || 0), 0).toFixed(2)),
     [preview]
   );
+  const totalAdditions = useMemo(
+    () => Number(preview.reduce((s, l) => s + Number(l.totalAdditions || 0), 0).toFixed(2)),
+    [preview]
+  );
   const totalNet = useMemo(
     () => Number(preview.reduce((s, l) => s + Number(l.net || 0), 0).toFixed(2)),
     [preview]
@@ -167,18 +194,20 @@ export default function RunDialog({
 
   const disableEdits = status === "posted" || status === "voided";
 
-  const openDeduction = (lineId, existing) => {
+  const openItemDialog = (type, lineId, existing) => {
     if (existing) {
-      setDeductionEdit({
+      setItemEdit({
         open: true,
+        type,
         lineId,
         index: existing.index,
         label: existing.label,
         amount: existing.amount,
       });
     } else {
-      setDeductionEdit({
+      setItemEdit({
         open: true,
+        type,
         lineId,
         index: -1,
         label: "",
@@ -187,58 +216,69 @@ export default function RunDialog({
     }
   };
 
-  const saveDeduction = () => {
-    const { lineId, index, label, amount } = deductionEdit;
+  const saveItem = () => {
+    const { type, lineId, index, label, amount } = itemEdit;
     const nAmount = Number(amount || 0);
     if (!lineId || !label) {
-      setDeductionEdit({
-        open: false,
-        lineId: null,
-        index: -1,
-        label: "",
-        amount: "",
-      });
+      closeItemDialog();
       return;
     }
+
     setPreview((prev) =>
       prev.map((l) => {
         if (l.id !== lineId) return l;
-        const list = Array.isArray(l.customDeductions)
-          ? [...l.customDeductions]
-          : [];
+        
+        // Decide which array to update based on type
+        const field = type === "addition" ? "customAdditions" : "customDeductions";
+        const list = Array.isArray(l[field]) ? [...l[field]] : [];
+        
+        const idPrefix = type === "addition" ? "manual-add" : "manual-ded";
+
         if (index >= 0 && index < list.length) {
           list[index] = { ...list[index], label, amount: nAmount };
         } else {
           list.push({
-            id: `manual-${Date.now()}`,
+            id: `${idPrefix}-${Date.now()}`,
             label,
             amount: nAmount,
           });
         }
-        const totals = recalcLine({ ...l, customDeductions: list });
-        return { ...l, customDeductions: list, ...totals };
+        
+        // Reconstruct line with new list
+        const updatedLine = { ...l, [field]: list };
+        const totals = recalcLine(updatedLine);
+        return { ...updatedLine, ...totals };
       })
     );
-    setDeductionEdit({
+    closeItemDialog();
+  };
+
+  const deleteItem = (type, lineId, index) => {
+    setPreview((prev) =>
+      prev.map((l) => {
+        if (l.id !== lineId) return l;
+
+        const field = type === "addition" ? "customAdditions" : "customDeductions";
+        const list = Array.isArray(l[field])
+          ? l[field].filter((_, i) => i !== index)
+          : [];
+          
+        const updatedLine = { ...l, [field]: list };
+        const totals = recalcLine(updatedLine);
+        return { ...updatedLine, ...totals };
+      })
+    );
+  };
+
+  const closeItemDialog = () => {
+    setItemEdit({
       open: false,
+      type: "deduction",
       lineId: null,
       index: -1,
       label: "",
       amount: "",
     });
-  };
-
-  const deleteDeduction = (lineId, index) => {
-    setPreview((prev) =>
-      prev.map((l) => {
-        if (l.id !== lineId) return l;
-        const list = Array.isArray(l.customDeductions)
-          ? l.customDeductions.filter((_, i) => i !== index)
-          : [];
-        const totals = recalcLine({ ...l, customDeductions: list });
-        return { ...l, customDeductions: list, ...totals };
-      })
-    );
   };
 
   const handleExpenseModeChange = (val) => {
@@ -325,9 +365,10 @@ export default function RunDialog({
             <StatChip label="Staff" value={preview.length} />
             <StatChip label="Hours" value={`${toHours(totalMinutes)} hrs`} />
             <StatChip label="Gross" value={peso(totalGross)} />
+            <StatChip label="Adds" value={peso(totalAdditions)} color="success" />
             <StatChip label="Adv" value={peso(totalAdvances)} />
             <StatChip label="Short" value={peso(totalShortages)} />
-            <StatChip label="Other" value={peso(totalOtherDeds)} />
+            <StatChip label="Other Deds" value={peso(totalOtherDeds)} />
             <StatChip bold label="NET" value={peso(totalNet)} />
           </Stack>
         </Box>
@@ -344,6 +385,7 @@ export default function RunDialog({
                 <TableCell align="right">Hours</TableCell>
                 <TableCell align="right">Rate/hr</TableCell>
                 <TableCell align="right">Gross</TableCell>
+                <TableCell align="right">Additions</TableCell>
                 <TableCell align="right">Advances</TableCell>
                 <TableCell align="right">Shortages</TableCell>
                 <TableCell align="right">Other Deds</TableCell>
@@ -374,22 +416,25 @@ export default function RunDialog({
                         value={l.rate}
                         onChange={(e) => {
                           const rate = Number(e.target.value || 0);
-                          const gross = Number(
-                            (((l.minutes / 60) * rate)).toFixed(2)
-                          );
-                          const otherDeds = Number(
-                            (l.otherDeductions || 0).toFixed(2)
-                          );
-                          const net = Number(
-                            (gross - l.advances - l.shortages - otherDeds).toFixed(2)
-                          );
-                          setLine(l.id, { rate, gross, net });
+                          setLine(l.id, { rate });
+                          // Force recalc happens via setLine -> but we need to run recalc logic
+                          // Actually setLine only patches. 
+                          // We need to re-trigger calculations manually here or inside setLine.
+                          // The easiest way with current structure:
+                          setPreview(prev => prev.map(line => {
+                            if(line.id !== l.id) return line;
+                            const newLine = { ...line, rate };
+                            return { ...newLine, ...recalcLine(newLine) };
+                          }));
                         }}
                         inputProps={{ step: "0.01", min: 0 }}
                         disabled={disableEdits}
                       />
                     </TableCell>
                     <TableCell align="right">{peso(l.gross)}</TableCell>
+                    <TableCell align="right" sx={{ color: "green" }}>
+                      {peso(l.totalAdditions)}
+                    </TableCell>
                     <TableCell align="right">{peso(l.advances)}</TableCell>
                     <TableCell align="right">{peso(l.shortages)}</TableCell>
                     <TableCell align="right">
@@ -401,7 +446,7 @@ export default function RunDialog({
                   </TableRow>
                   {/* expanded row */}
                   <TableRow>
-                    <TableCell colSpan={10} sx={{ p: 0, border: 0 }}>
+                    <TableCell colSpan={11} sx={{ p: 0, border: 0 }}>
                       <Collapse in={!!expanded[l.id]} timeout="auto" unmountOnExit>
                         <Box sx={{ p: 2, bgcolor: "background.default" }}>
                           {/* SHIFTS INCLUDED */}
@@ -588,6 +633,85 @@ export default function RunDialog({
 
                           <Divider sx={{ my: 2 }} />
 
+                          {/* ADDITIONS / ADDITIONAL PAY */}
+                          <Stack
+                            direction="row"
+                            spacing={1}
+                            alignItems="center"
+                            sx={{ mb: 1 }}
+                          >
+                            <Typography variant="subtitle2" gutterBottom sx={{ color: 'green' }}>
+                              Additional Pay / Bonuses
+                            </Typography>
+                            <Button
+                              size="small"
+                              onClick={() => openItemDialog("addition", l.id)}
+                              disabled={disableEdits}
+                            >
+                              + Add Pay
+                            </Button>
+                          </Stack>
+                          
+                          <Table size="small" sx={{ mb: 2 }}>
+                            <TableHead>
+                              <TableRow>
+                                <TableCell>Label</TableCell>
+                                <TableCell align="right">Amount</TableCell>
+                                <TableCell align="center">Actions</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {(l.customAdditions && l.customAdditions.length > 0) ? (
+                                l.customAdditions.map((d, idx) => (
+                                  <TableRow key={`add-${idx}`}>
+                                    <TableCell>{d.label}</TableCell>
+                                    <TableCell align="right" sx={{ color: 'green', fontWeight: 'bold' }}>
+                                      {peso(d.amount)}
+                                    </TableCell>
+                                    <TableCell align="center">
+                                      <Stack
+                                        direction="row"
+                                        spacing={1}
+                                        justifyContent="center"
+                                      >
+                                        <Button
+                                          size="small"
+                                          onClick={() =>
+                                            openItemDialog("addition", l.id, {
+                                              index: idx,
+                                              label: d.label,
+                                              amount: d.amount,
+                                            })
+                                          }
+                                          disabled={disableEdits}
+                                        >
+                                          Edit
+                                        </Button>
+                                        <Button
+                                          size="small"
+                                          onClick={() =>
+                                            deleteItem("addition", l.id, idx)
+                                          }
+                                          disabled={disableEdits}
+                                        >
+                                          Delete
+                                        </Button>
+                                      </Stack>
+                                    </TableCell>
+                                  </TableRow>
+                                ))
+                              ) : (
+                                <TableRow>
+                                  <TableCell colSpan={3} align="center" sx={{ color: "text.secondary", fontStyle: 'italic' }}>
+                                    No additional pay.
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                            </TableBody>
+                          </Table>
+
+                          <Divider sx={{ my: 2 }} />
+
                           {/* DEDUCTIONS */}
                           <Stack
                             direction="row"
@@ -600,16 +724,13 @@ export default function RunDialog({
                             </Typography>
                             <Button
                               size="small"
-                              onClick={() => openDeduction(l.id)}
+                              onClick={() => openItemDialog("deduction", l.id)}
                               disabled={disableEdits}
                             >
                               + Add Custom Deduction
                             </Button>
                           </Stack>
 
-                          <Typography variant="subtitle2" sx={{ mt: 1, mb: 1 }}>
-                            Other Deductions
-                          </Typography>
                           <Table size="small" sx={{ mb: 2 }}>
                             <TableHead>
                               <TableRow>
@@ -656,7 +777,7 @@ export default function RunDialog({
                                           <Button
                                             size="small"
                                             onClick={() =>
-                                              openDeduction(l.id, {
+                                              openItemDialog("deduction", l.id, {
                                                 index: idx,
                                                 label: d.label,
                                                 amount: d.amount,
@@ -669,7 +790,7 @@ export default function RunDialog({
                                           <Button
                                             size="small"
                                             onClick={() =>
-                                              deleteDeduction(l.id, idx)
+                                              deleteItem("deduction", l.id, idx)
                                             }
                                             disabled={disableEdits}
                                           >
@@ -698,7 +819,7 @@ export default function RunDialog({
                     </TableCell>
                   </TableRow>
                   <TableRow>
-                    <TableCell colSpan={10} sx={{ p: 0, border: 0 }}>
+                    <TableCell colSpan={11} sx={{ p: 0, border: 0 }}>
                       <Divider />
                     </TableCell>
                   </TableRow>
@@ -746,54 +867,36 @@ export default function RunDialog({
         )}
       </DialogActions>
 
-      {/* mini dialog for custom ded */}
+      {/* mini dialog for custom ded/add */}
       <Dialog
-        open={deductionEdit.open}
-        onClose={() =>
-          setDeductionEdit({
-            open: false,
-            lineId: null,
-            index: -1,
-            label: "",
-            amount: "",
-          })
-        }
+        open={itemEdit.open}
+        onClose={closeItemDialog}
       >
-        <DialogTitle>Custom Deduction</DialogTitle>
+        <DialogTitle>
+          {itemEdit.type === 'addition' ? 'Additional Pay' : 'Custom Deduction'}
+        </DialogTitle>
         <DialogContent sx={{ display: "flex", gap: 2, mt: 1 }}>
           <TextField
             label="Label"
             fullWidth
-            value={deductionEdit.label}
+            value={itemEdit.label}
             onChange={(e) =>
-              setDeductionEdit((p) => ({ ...p, label: e.target.value }))
+              setItemEdit((p) => ({ ...p, label: e.target.value }))
             }
           />
           <TextField
             label="Amount"
             type="number"
-            value={deductionEdit.amount}
+            value={itemEdit.amount}
             onChange={(e) =>
-              setDeductionEdit((p) => ({ ...p, amount: e.target.value }))
+              setItemEdit((p) => ({ ...p, amount: e.target.value }))
             }
             inputProps={{ step: "0.01", min: 0 }}
           />
         </DialogContent>
         <DialogActions>
-          <Button
-            onClick={() =>
-              setDeductionEdit({
-                open: false,
-                lineId: null,
-                index: -1,
-                label: "",
-                amount: "",
-              })
-            }
-          >
-            Cancel
-          </Button>
-          <Button variant="contained" onClick={saveDeduction}>
+          <Button onClick={closeItemDialog}>Cancel</Button>
+          <Button variant="contained" onClick={saveItem}>
             Save
           </Button>
         </DialogActions>

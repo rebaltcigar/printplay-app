@@ -1,3 +1,4 @@
+// src/components/Paystub.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
@@ -74,6 +75,14 @@ function Paystub({ stub }) {
       document.body.removeChild(link);
     });
   };
+  
+  // Totals for display
+  const grossPay = Number(stub.grossPay || 0);
+  const totalAdditions = Number(stub.totalAdditions || 0);
+  const totalDeductions = Number(stub.totalDeductions || 0);
+  const netPay = Number(stub.netPay || 0);
+  
+  const hasAdditions = (stub.additionItems && stub.additionItems.length > 0);
 
   return (
     <Box>
@@ -155,7 +164,7 @@ function Paystub({ stub }) {
         <Typography variant="h6" sx={{ fontWeight: "bold", mb: 1 }}>
           Shift Details
         </Typography>
-        <TableContainer sx={{ border: "1px solid #ddd" }}>
+        <TableContainer sx={{ border: "1px solid #ddd", mb: 2 }}>
           <Table size="small">
             <TableHead>
               <TableRow sx={{ backgroundColor: "#f5f5f5" }}>
@@ -181,21 +190,60 @@ function Paystub({ stub }) {
                 </TableCell>
                 <TableCell align="right" sx={{ fontWeight: "bold" }}>
                   {Number(stub.totalHours || 0).toFixed(2)} |{" "}
-                  {formatCurrency(stub.grossPay)}
+                  {formatCurrency(grossPay)}
                 </TableCell>
               </TableRow>
             </TableBody>
           </Table>
         </TableContainer>
 
+        {/* Additions (New Section) */}
+        {hasAdditions && (
+          <>
+            <Typography variant="h6" sx={{ fontWeight: "bold", mb: 1 }}>
+              Additions
+            </Typography>
+            <TableContainer sx={{ border: "1px solid #ddd", mb: 2 }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow sx={{ backgroundColor: "#e8f5e9" }}>
+                    <TableCell sx={{ fontWeight: "bold" }}>Item</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: "bold" }}>
+                      Amount
+                    </TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {stub.additionItems.map((item, index) => (
+                      <TableRow key={item.id + index}>
+                        <TableCell>{item.label}</TableCell>
+                        <TableCell align="right">
+                          {formatCurrency(item.amount)}
+                        </TableCell>
+                      </TableRow>
+                  ))}
+                  <TableRow sx={{ backgroundColor: "#e8f5e9" }}>
+                    <TableCell component="th" scope="row" sx={{ fontWeight: "bold" }}>
+                      Total Additions
+                    </TableCell>
+                    <TableCell align="right" sx={{ fontWeight: "bold" }}>
+                      {formatCurrency(totalAdditions)}
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </>
+        )}
+
         {/* Deductions */}
-        <Typography variant="h6" sx={{ fontWeight: "bold", mt: 3, mb: 1 }}>
+        <Typography variant="h6" sx={{ fontWeight: "bold", mb: 1 }}>
           Deductions
         </Typography>
         <TableContainer sx={{ border: "1px solid #ddd" }}>
           <Table size="small">
             <TableHead>
-              <TableRow sx={{ backgroundColor: "#f5f5f5" }}>
+              <TableRow sx={{ backgroundColor: "#ffebee" }}>
                 <TableCell sx={{ fontWeight: "bold" }}>Item</TableCell>
                 <TableCell align="right" sx={{ fontWeight: "bold" }}>
                   Amount
@@ -218,12 +266,12 @@ function Paystub({ stub }) {
                 </TableRow>
               )}
               {/* Total for Deductions */}
-              <TableRow sx={{ backgroundColor: "#f0f0f0" }}>
+              <TableRow sx={{ backgroundColor: "#ffebee" }}>
                 <TableCell component="th" scope="row" sx={{ fontWeight: "bold" }}>
                   Total Deductions
                 </TableCell>
                 <TableCell align="right" sx={{ fontWeight: "bold" }}>
-                  {formatCurrency(stub.totalDeductions)}
+                  {formatCurrency(totalDeductions)}
                 </TableCell>
               </TableRow>
             </TableBody>
@@ -236,15 +284,23 @@ function Paystub({ stub }) {
             <Table size="small">
               <TableBody>
                 <TableRow>
-                  <TableCell sx={{ border: 0 }}>Gross Pay</TableCell>
+                  <TableCell sx={{ border: 0 }}>Gross Pay (Shifts)</TableCell>
                   <TableCell align="right" sx={{ border: 0 }}>
-                    {formatCurrency(stub.grossPay)}
+                    {formatCurrency(grossPay)}
                   </TableCell>
                 </TableRow>
+                {totalAdditions > 0 && (
+                  <TableRow>
+                    <TableCell sx={{ border: 0, color: 'green !important' }}>Additions</TableCell>
+                    <TableCell align="right" sx={{ border: 0, color: 'green !important' }}>
+                      + {formatCurrency(totalAdditions)}
+                    </TableCell>
+                  </TableRow>
+                )}
                 <TableRow>
                   <TableCell sx={{ border: 0 }}>Deductions</TableCell>
-                  <TableCell align="right" sx={{ border: 0 }}>
-                    {formatCurrency(stub.totalDeductions)}
+                  <TableCell align="right" sx={{ border: 0, color: 'red !important' }}>
+                    - {formatCurrency(totalDeductions)}
                   </TableCell>
                 </TableRow>
                 <TableRow sx={{ backgroundColor: "#f0f0f0" }}>
@@ -256,7 +312,7 @@ function Paystub({ stub }) {
                       fontSize: "1.1rem",
                     }}
                   >
-                    {formatCurrency(stub.netPay)}
+                    {formatCurrency(netPay)}
                   </TableCell>
                 </TableRow>
               </TableBody>

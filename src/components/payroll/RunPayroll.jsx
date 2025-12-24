@@ -321,8 +321,12 @@ export default function RunPayroll({
           0
         );
         const otherDeductions = Number(extraAdvanceTotal.toFixed(2));
+        
+        // New: Default to 0 additions
+        const totalAdditions = 0; 
+
         const net = Number(
-          (gross - advancesFromShifts - shortages - otherDeductions).toFixed(2)
+          (gross + totalAdditions - advancesFromShifts - shortages - otherDeductions).toFixed(2)
         );
         out.push({
           id: rec.uid || `email:${email}`,
@@ -335,10 +339,12 @@ export default function RunPayroll({
           advances: advancesFromShifts,
           shortages,
           otherDeductions,
+          totalAdditions,
           net,
           shiftRows: bucket.shiftRows,
           extraAdvances: bucket.extraAdvances || [],
           customDeductions: [],
+          customAdditions: [], // NEW
         });
       }
 
@@ -473,6 +479,11 @@ export default function RunPayroll({
         const manualAdjustments = Array.isArray(l.adjustments)
           ? l.adjustments.filter((a) => a?.type === "manual-deduction")
           : [];
+        // NEW: parse additions
+        const manualAdditions = Array.isArray(l.adjustments)
+          ? l.adjustments.filter((a) => a?.type === "manual-addition")
+          : [];
+
         const extraAdvAdjustments = Array.isArray(l.adjustments)
           ? l.adjustments.filter((a) => a?.type === "extra-advance")
           : [];
@@ -496,9 +507,16 @@ export default function RunPayroll({
           (s, a) => s + Number(a.amount || 0),
           0
         );
+        const additionTotal = manualAdditions.reduce(
+          (s, a) => s + Number(a.amount || 0),
+          0
+        );
+
         const otherDeductions = Number((extraAdvTotal + manualTotal).toFixed(2));
+        const totalAdditions = Number(additionTotal.toFixed(2));
+
         const net = Number(
-          (gross - advances - shortages - otherDeductions).toFixed(2)
+          (gross + totalAdditions - advances - shortages - otherDeductions).toFixed(2)
         );
         out.push({
           id: lineId,
@@ -511,6 +529,7 @@ export default function RunPayroll({
           advances,
           shortages,
           otherDeductions,
+          totalAdditions,
           net,
           shiftRows,
           extraAdvances: extraAdvAdjustments.map((a) => ({
@@ -520,6 +539,11 @@ export default function RunPayroll({
             fromShiftId: a.fromShiftId || null,
           })),
           customDeductions: manualAdjustments.map((a) => ({
+            id: a.id,
+            label: a.label,
+            amount: a.amount,
+          })),
+          customAdditions: manualAdditions.map((a) => ({
             id: a.id,
             label: a.label,
             amount: a.amount,
@@ -581,6 +605,11 @@ export default function RunPayroll({
               .reduce((s, l) => s + Number(l.otherDeductions || 0), 0)
               .toFixed(2)
           ),
+          additions: Number(
+            preview
+              .reduce((s, l) => s + Number(l.totalAdditions || 0), 0)
+              .toFixed(2)
+          ),
           net: Number(
             preview.reduce((s, l) => s + Number(l.net || 0), 0).toFixed(2)
           ),
@@ -599,8 +628,14 @@ export default function RunPayroll({
           gross: line.gross,
           adjustments: [
             ...(line.customDeductions || []).map((d, idx) => ({
-              id: d.id || `manual-${idx}`,
+              id: d.id || `manual-ded-${idx}`,
               type: "manual-deduction",
+              label: d.label,
+              amount: Number(d.amount || 0),
+            })),
+            ...(line.customAdditions || []).map((d, idx) => ({
+              id: d.id || `manual-add-${idx}`,
+              type: "manual-addition",
               label: d.label,
               amount: Number(d.amount || 0),
             })),
@@ -692,6 +727,11 @@ export default function RunPayroll({
           otherDeductions: Number(
             preview
               .reduce((s, l) => s + Number(l.otherDeductions || 0), 0)
+              .toFixed(2)
+          ),
+          additions: Number(
+            preview
+              .reduce((s, l) => s + Number(l.totalAdditions || 0), 0)
               .toFixed(2)
           ),
           net: Number(
@@ -919,7 +959,16 @@ export default function RunPayroll({
           0
         );
 
-        // **FIX:** We no longer read 'extra-advance' from adjustments.
+        // NEW: Additions
+        const manualAdditions = Array.isArray(l.adjustments)
+          ? l.adjustments.filter((a) => a?.type === "manual-addition")
+          : [];
+        const additionTotal = manualAdditions.reduce(
+            (s, a) => s + Number(a.amount || 0),
+            0
+        );
+
+        // We no longer read 'extra-advance' from adjustments.
         // We re-calculate it every time from the cross-shift logic.
         materializedLines.push({
           lineId,
@@ -934,13 +983,14 @@ export default function RunPayroll({
           totalShortages,
           manualAdjustments, // This is *only* custom deductions
           manualTotal,
+          manualAdditions, // NEW
+          additionTotal,   // NEW
           crossDeductions: [], // Will be populated in Loop 3
         });
       }
 
       updateBusy("Merging cross-staff salary advances...");
-      // **FIX:** This loop now *only* populates `crossDeductions`.
-      // It DOES NOT modify `totalAdvances`.
+      // This loop now *only* populates `crossDeductions`.
       for (const [targetLineId, extraList] of extraDeductionsByLineId.entries()) {
         const target = materializedLines.find((m) => m.lineId === targetLineId);
         if (target) {
@@ -953,6 +1003,7 @@ export default function RunPayroll({
         staffCount: 0,
         minutes: 0,
         gross: 0,
+        additions: 0,
         advances: 0,
         shortages: 0,
         otherDeductions: 0,
@@ -963,6 +1014,7 @@ export default function RunPayroll({
 
       for (const m of materializedLines) {
         const deductionItems = [];
+        const additionItems = []; // NEW
 
         m.shifts.forEach((s) => {
           if (s.advances > 0) {
@@ -989,7 +1041,16 @@ export default function RunPayroll({
           })
         );
         
-        // **FIX:** Only add re-calculated cross-deductions.
+        // NEW: Populate Addition Items
+        m.manualAdditions.forEach((a) =>
+          additionItems.push({
+            id: a.id,
+            label: a.label,
+            amount: Number(a.amount || 0),
+          })
+        );
+
+        // Only add re-calculated cross-deductions.
         (m.crossDeductions || []).forEach((a) =>
           deductionItems.push({
             id: a.id,
@@ -998,20 +1059,20 @@ export default function RunPayroll({
           })
         );
         
-        // **FIX:** Calculate cross-staff total from the correct (re-calculated) source.
+        // Calculate cross-staff total from the correct (re-calculated) source.
         const crossStaffTotal = (m.crossDeductions || []).reduce(
           (s, a) => s + Number(a.amount || 0),
           0
         );
 
-        // **FIX:** totalDeductions is now shift-advances + shortages + manual + cross-staff
+        // totalDeductions is now shift-advances + shortages + manual + cross-staff
         const totalDeductions =
           m.totalAdvances +
           m.totalShortages +
           m.manualTotal +
           crossStaffTotal;
 
-        const netPay = Number((m.grossPay - totalDeductions).toFixed(2));
+        const netPay = Number((m.grossPay + m.additionTotal - totalDeductions).toFixed(2));
 
         const paystubData = {
           staffUid: m.staffUid,
@@ -1026,8 +1087,10 @@ export default function RunPayroll({
             hours: s.hours,
           })),
           deductionItems,
+          additionItems, // NEW
           totalHours: toHours(m.totalMinutes),
           grossPay: m.grossPay,
+          totalAdditions: m.additionTotal, // NEW
           totalDeductions: Number(totalDeductions.toFixed(2)),
           netPay,
           createdAt: serverTimestamp(),
@@ -1036,8 +1099,34 @@ export default function RunPayroll({
 
         txBatch.set(doc(collection(runRef, "paystubs")), paystubData);
 
+        // --- POST TRANSACTIONS ---
+        
+        // 1. Post Pay Additions (Bonuses) - Always dated on Pay Date usually
+        // These are Expenses for the business.
+        if (m.additionTotal > 0) {
+           txBatch.set(doc(collection(db, "transactions")), {
+            item: "Expenses",
+            expenseType: "Salary",
+            expenseStaffId: m.staffUid,
+            expenseStaffName: m.staffName,
+            expenseStaffEmail: m.staffEmail,
+            quantity: 1,
+            price: m.additionTotal,
+            total: m.additionTotal,
+            notes: `Payroll Additions/Bonuses [${toYMD_PHT_fromTS(periodStartTS)} — ${toYMD_PHT_fromTS(periodEndTS)}]`,
+            shiftId: null,
+            source: `payroll_run:${id}`,
+            payrollRunId: id,
+            voided: false,
+            timestamp: runPayDateTS,
+            staffEmail: auth.currentUser?.email || "admin",
+            isDeleted: false,
+            isEdited: false,
+           });
+        }
+
         if (expenseModeToUse === "per-shift") {
-          // per shift
+          // per shift logic for salary
           m.shifts.forEach((s) => {
             const shiftGross = Number(
               (((s.minutes || 0) / 60) * Number(m.rate || 0)).toFixed(2)
@@ -1045,6 +1134,10 @@ export default function RunPayroll({
             const shiftDeductions = deductionItems
               .filter((d) => d.id === s.id)
               .reduce((sum, d) => sum + Number(d.amount || 0), 0);
+            
+            // Note: Additions are not usually per-shift, so we don't include them in per-shift calculation here
+            // We just posted them separately above.
+            
             const shiftNet = Number((shiftGross - shiftDeductions).toFixed(2));
             if (shiftGross === 0 && shiftDeductions === 0) return;
 
@@ -1064,7 +1157,7 @@ export default function RunPayroll({
               )}] | Shift: ${s.label} | Gross: ${peso(
                 shiftGross
               )} | Net: ${peso(shiftNet)}`,
-              shiftId: null, // <--- CHANGED FROM s.id TO null
+              shiftId: null,
               source: `payroll_run:${id}`,
               payrollRunId: id,
               voided: false,
@@ -1075,7 +1168,7 @@ export default function RunPayroll({
             });
           });
 
-          // **FIX:** Calculate non-shift deductions based on manual + cross-staff
+          // Calculate non-shift deductions based on manual + cross-staff
           const nonShiftDeds = deductionItems.filter(
             (d) => !m.shifts.find((s) => s.id === d.id)
           );
@@ -1109,7 +1202,8 @@ export default function RunPayroll({
             }
           }
         } else {
-          // per staff only
+          // per staff only (Standard Net Pay posting)
+          // Net Pay already includes Additions and Deductions
           txBatch.set(doc(collection(db, "transactions")), {
             item: "Expenses",
             expenseType: "Salary",
@@ -1123,7 +1217,7 @@ export default function RunPayroll({
               periodStartTS
             )} — ${toYMD_PHT_fromTS(periodEndTS)}] | Gross: ${peso(
               m.grossPay
-            )} | Net: ${peso(netPay)}`,
+            )} | Adds: ${peso(m.additionTotal)} | Net: ${peso(netPay)}`,
             shiftId: null,
             source: `payroll_run:${id}`,
             payrollRunId: id,
@@ -1135,17 +1229,18 @@ export default function RunPayroll({
           });
         }
 
-        // **FIX:** Update runTotals calculation
+        // Update runTotals calculation
         runTotals = {
           staffCount: runTotals.staffCount + 1,
           minutes: runTotals.minutes + m.totalMinutes,
           gross: runTotals.gross + m.grossPay,
-          advances: runTotals.advances + m.totalAdvances, // (shift-owner)
+          additions: runTotals.additions + m.additionTotal, // NEW
+          advances: runTotals.advances + m.totalAdvances,
           shortages: runTotals.shortages + m.totalShortages,
           otherDeductions:
             runTotals.otherDeductions +
             m.manualTotal +
-            crossStaffTotal, // (manual + cross-staff)
+            crossStaffTotal,
           net: runTotals.net + netPay,
         };
       }
@@ -1193,6 +1288,9 @@ export default function RunPayroll({
     const gross = Number(
       preview.reduce((s, l) => s + Number(l.gross || 0), 0).toFixed(2)
     );
+    const adds = Number(
+        preview.reduce((s, l) => s + Number(l.totalAdditions || 0), 0).toFixed(2)
+    );
     const adv = Number(
       preview.reduce((s, l) => s + Number(l.advances || 0), 0).toFixed(2)
     );
@@ -1205,7 +1303,7 @@ export default function RunPayroll({
     const net = Number(
       preview.reduce((s, l) => s + Number(l.net || 0), 0).toFixed(2)
     );
-    return { minutes, gross, adv, short, other, net };
+    return { minutes, gross, adds, adv, short, other, net };
   }, [preview]);
 
   const hasData = preview.length > 0;
@@ -1324,6 +1422,7 @@ export default function RunPayroll({
                 value={`${toHours(totals.minutes)} hrs`}
               />
               <StatChip label="Gross" value={peso(totals.gross)} />
+              <StatChip label="Adds" value={peso(totals.adds)} color="success" />
               <StatChip label="Adv" value={peso(totals.adv)} />
               <StatChip label="Short" value={peso(totals.short)} />
               <StatChip label="Other" value={peso(totals.other)} />
@@ -1338,6 +1437,7 @@ export default function RunPayroll({
                     <TableCell align="right">Hours</TableCell>
                     <TableCell align="right">Rate/hr</TableCell>
                     <TableCell align="right">Gross</TableCell>
+                    <TableCell align="right">Additions</TableCell>
                     <TableCell align="right">Advances</TableCell>
                     <TableCell align="right">Shortages</TableCell>
                     <TableCell align="right">Other Deds</TableCell>
@@ -1352,6 +1452,7 @@ export default function RunPayroll({
                       <TableCell align="right">{toHours(l.minutes)}</TableCell>
                       <TableCell align="right">{peso(l.rate)}</TableCell>
                       <TableCell align="right">{peso(l.gross)}</TableCell>
+                      <TableCell align="right" sx={{ color: 'green' }}>{peso(l.totalAdditions)}</TableCell>
                       <TableCell align="right">{peso(l.advances)}</TableCell>
                       <TableCell align="right">{peso(l.shortages)}</TableCell>
                       <TableCell align="right">
