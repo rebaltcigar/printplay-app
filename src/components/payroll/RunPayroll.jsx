@@ -27,6 +27,7 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  DialogContentText, //
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import CheckIcon from "@mui/icons-material/Check";
@@ -93,6 +94,12 @@ export default function RunPayroll({
     message: "",
   });
 
+  //
+  const [ongoingPrompt, setOngoingPrompt] = useState({
+    open: false,
+    shifts: [],
+  });
+
   const openFeedback = (title, message) =>
     setFeedback({ open: true, title, message });
   const closeFeedback = () =>
@@ -124,7 +131,8 @@ export default function RunPayroll({
   }, [requestOpenDialogRef, runId, preview.length]);
 
   /** ----------------- generate preview from shifts ----------------- */
-  const generatePreview = async () => {
+  //
+  const generatePreview = async (decision = null) => {
     if (!periodStart || !periodEnd) {
       openFeedback("Select period", "Pick a start and end date first.");
       return;
@@ -144,23 +152,60 @@ export default function RunPayroll({
       );
       const sSnap = await getDocs(qShifts);
 
+      //
+      const rawShifts = sSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const ongoing = rawShifts.filter((s) => !s.endTime);
+
+      // If we found ongoing shifts and haven't made a decision yet
+      if (ongoing.length > 0 && decision === null) {
+        setOngoingPrompt({ open: true, shifts: ongoing });
+        stopBusy();
+        return;
+      }
+
+      // Filter based on decision
+      const shiftsToProcess = rawShifts.filter((s) => {
+        if (s.endTime) return true; // always include completed
+        if (decision === "include") return true; // include ongoing if user said yes
+        return false; // exclude ongoing if user said no (or default behavior)
+      });
+
+      if (shiftsToProcess.length === 0) {
+        openFeedback("No shifts", "No eligible shifts found in this period.");
+        stopBusy();
+        return;
+      }
+
+      updateBusy("Processing shifts...");
+
       const byStaff = new Map();
       const shiftsById = new Map();
 
-      sSnap.forEach((d) => {
-        const s = d.data() || {};
-        if (!s.startTime || !s.endTime) return;
+      shiftsToProcess.forEach((s) => {
+        //
+        if (!s.startTime) return; 
+
         const email = s.staffEmail || "unknown";
-        const minutes = minutesBetweenTS(s.startTime, s.endTime);
+        
+        //
+        const isOngoing = !s.endTime;
+        const effectiveEnd = isOngoing ? Timestamp.now() : s.endTime;
+        
+        // If it's ongoing, we set an overrideEnd immediately so the calc works
+        const overrideEnd = isOngoing ? effectiveEnd : null;
+
+        const minutes = minutesBetweenTS(s.startTime, effectiveEnd);
         const shortage = shortageForShift(s);
+        
         const row = {
-          id: d.id,
+          id: s.id,
           start: s.startTime,
-          end: s.endTime,
+          end: s.endTime || null, // keep null in 'end' to signify ongoing source
           title: s.title || s.shiftTitle || null,
           label: s.label || null,
           overrideStart: null,
-          overrideEnd: null,
+          overrideEnd: overrideEnd, // Set presumed end here
+          isOngoing: isOngoing,     // Mark as ongoing
           excluded: false,
           minutesOriginal: minutes,
           minutesUsed: minutes,
@@ -172,7 +217,8 @@ export default function RunPayroll({
           staffEmail: email,
           expenseDate: null,
         };
-        shiftsById.set(d.id, row);
+        shiftsById.set(s.id, row);
+        
         const bucket =
           byStaff.get(email) || {
             staffUid: s.staffUid || null,
@@ -322,7 +368,6 @@ export default function RunPayroll({
         );
         const otherDeductions = Number(extraAdvanceTotal.toFixed(2));
         
-        // New: Default to 0 additions
         const totalAdditions = 0; 
 
         const net = Number(
@@ -344,7 +389,7 @@ export default function RunPayroll({
           shiftRows: bucket.shiftRows,
           extraAdvances: bucket.extraAdvances || [],
           customDeductions: [],
-          customAdditions: [], // NEW
+          customAdditions: [],
         });
       }
 
@@ -416,22 +461,30 @@ export default function RunPayroll({
           if (!sDoc.exists()) continue;
           const s = sDoc.data() || {};
           const ov = overrides.get(sid) || {};
+          
+          //
+          const isOngoing = !s.endTime;
+          
           const start = ov.overrideStart || s.startTime;
-          const end = ov.overrideEnd || s.endTime;
-          const minutesOriginal = minutesBetweenTS(s.startTime, s.endTime);
+          //
+          const end = ov.overrideEnd || s.endTime || (isOngoing ? Timestamp.now() : null); 
+          
+          const minutesOriginal = minutesBetweenTS(s.startTime, s.endTime || Timestamp.now());
           const minutesUsed = ov.excluded
             ? 0
             : ov.minutesUsed != null
             ? ov.minutesUsed
             : minutesBetweenTS(start, end);
+          
           const row = {
             id: sid,
             start: s.startTime,
-            end: s.endTime,
+            end: s.endTime || null, // null if ongoing
             title: s.title || s.shiftTitle || null,
             label: s.label || null,
             overrideStart: ov.overrideStart || null,
             overrideEnd: ov.overrideEnd || null,
+            isOngoing: isOngoing,
             excluded: !!ov.excluded,
             minutesOriginal,
             minutesUsed,
@@ -455,7 +508,7 @@ export default function RunPayroll({
           let ownerAdvance = 0;
           const ownerAdvanceRefs = [];
           advSnap.docs.forEach((ad) => {
-            const tx = advDoc.data() || {};
+            const tx = ad.data() || {};
             if (tx.voided) return;
             const amt = Number(tx.total || 0);
             const targetEmail =
@@ -479,11 +532,9 @@ export default function RunPayroll({
         const manualAdjustments = Array.isArray(l.adjustments)
           ? l.adjustments.filter((a) => a?.type === "manual-deduction")
           : [];
-        // NEW: parse additions
         const manualAdditions = Array.isArray(l.adjustments)
           ? l.adjustments.filter((a) => a?.type === "manual-addition")
           : [];
-
         const extraAdvAdjustments = Array.isArray(l.adjustments)
           ? l.adjustments.filter((a) => a?.type === "extra-advance")
           : [];
@@ -661,13 +712,14 @@ export default function RunPayroll({
         overSnap.forEach((o) => batch.delete(o.ref));
 
         for (const r of line.shiftRows) {
-          if (r.excluded || r.overrideStart || r.overrideEnd || r.expenseDate) {
+          //
+          if (r.excluded || r.overrideStart || r.overrideEnd || r.expenseDate || r.isOngoing) {
             batch.set(
               doc(db, "payrollRuns", id, "lines", line.id, "shifts", r.id),
               {
                 shiftId: r.id,
                 originalStart: r.start,
-                originalEnd: r.end,
+                originalEnd: r.end || null, // Ensure explicit null if ongoing
                 overrideStart: r.overrideStart
                   ? r.overrideStart.seconds
                     ? r.overrideStart
@@ -860,7 +912,9 @@ export default function RunPayroll({
           if (ov.excluded) continue;
 
           const start = ov.overrideStart || s.startTime;
-          const end = ov.overrideEnd || s.endTime;
+          //
+          const end = ov.overrideEnd || s.endTime; 
+          
           const minutesUsed =
             ov.minutesUsed != null
               ? ov.minutesUsed
@@ -1383,7 +1437,7 @@ export default function RunPayroll({
                   onClick={
                     hasData
                       ? () => setConfirmFinalizeOpen(true)
-                      : generatePreview
+                      : () => generatePreview(null) //
                   }
                   disabled={
                     isFinalized || (!hasData && (!periodStart || !periodEnd))
@@ -1528,6 +1582,42 @@ export default function RunPayroll({
             }}
           >
             Finalize now
+          </Button>
+        </DialogActions>
+      </Dialog>
+      
+      {/* */}
+      <Dialog
+        open={ongoingPrompt.open}
+        onClose={() => setOngoingPrompt({ open: false, shifts: [] })}
+      >
+        <DialogTitle>Ongoing Shifts Detected</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Found {ongoingPrompt.shifts.length} shift(s) that have started but not ended yet 
+            within this period.
+            <br /><br />
+            Do you want to include them in this payroll calculation (using "now" as the presumed end time), 
+            or skip them?
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button 
+            onClick={() => {
+              setOngoingPrompt({ open: false, shifts: [] });
+              generatePreview("exclude");
+            }}
+          >
+            Skip Ongoing
+          </Button>
+          <Button 
+            variant="contained" 
+            onClick={() => {
+              setOngoingPrompt({ open: false, shifts: [] });
+              generatePreview("include");
+            }}
+          >
+            Include (Assume Ended Now)
           </Button>
         </DialogActions>
       </Dialog>

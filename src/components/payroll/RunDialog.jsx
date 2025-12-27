@@ -3,6 +3,7 @@ import React, { useMemo, useState } from "react";
 import {
   Box,
   Button,
+  Chip, //
   Collapse,
   Dialog,
   DialogActions,
@@ -143,11 +144,12 @@ export default function RunDialog({
             ? Timestamp.fromDate(new Date(next.overrideStart))
             : next.start;
 
+          //
           const end = next.overrideEnd?.seconds
             ? next.overrideEnd
             : next.overrideEnd
             ? Timestamp.fromDate(new Date(next.overrideEnd))
-            : next.end;
+            : next.end || next.overrideEnd; // critical change for ongoing support
 
           next.minutesUsed = next.excluded ? 0 : minutesBetweenTS(start, end);
           next.shortage = shortageForShift({
@@ -472,9 +474,12 @@ export default function RunDialog({
                                 .filter((r) => !r.excluded)
                                 .map((r) => {
                                   const startForISO = r.overrideStart || r.start;
+                                  //
                                   const endForISO = r.overrideEnd || r.end;
+                                  
                                   const startISO = toLocalISO_PHT_fromTS(startForISO);
                                   const endISO = toLocalISO_PHT_fromTS(endForISO);
+                                  
                                   const label = `${inferShiftName(
                                     r.start,
                                     r.title,
@@ -492,6 +497,16 @@ export default function RunDialog({
                                       <TableCell>
                                         <Typography variant="body2">
                                           {label}
+                                          {/* */}
+                                          {r.isOngoing && (
+                                            <Chip 
+                                              label="Ongoing" 
+                                              size="small" 
+                                              color="warning" 
+                                              variant="outlined" 
+                                              sx={{ ml: 1, height: 20, fontSize: 10 }} 
+                                            />
+                                          )}
                                         </Typography>
                                       </TableCell>
                                       <TableCell>
