@@ -18,6 +18,7 @@ import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, g
 import { generateOrderNumber, createOrderObject } from '../utils/orderService';
 import CustomerDialog from './CustomerDialog';
 import CheckoutDialog from './CheckoutDialog';
+import ChangeDisplayDialog from './ChangeDisplayDialog';
 import { SimpleReceipt } from './SimpleReceipt';
 
 // Initial state for a fresh order
@@ -38,6 +39,8 @@ export default function POSView({ showSnackbar }) {
     // Dialogs
     const [customerOpen, setCustomerOpen] = useState(false);
     const [checkoutOpen, setCheckoutOpen] = useState(false);
+    const [changeDialogOpen, setChangeDialogOpen] = useState(false);
+    const [lastChange, setLastChange] = useState(0);
     const [expenseOpen, setExpenseOpen] = useState(false);
 
     // Printing
@@ -119,7 +122,7 @@ export default function POSView({ showSnackbar }) {
 
     // --- ACTIONS ---
 
-    const handleCheckout = async (paymentData) => {
+    const handleCheckout = async (paymentData, shouldPrint = true) => {
         try {
             const user = auth.currentUser;
             const orderNum = await generateOrderNumber();
@@ -161,7 +164,18 @@ export default function POSView({ showSnackbar }) {
 
             // 4. Close & Print
             setCheckoutOpen(false);
-            setPrintOrder(fullOrder); // Triggers the useEffect to print
+
+            // Show Change Dialog
+            // Show for Cash always, or if there's any change (just in case)
+            if (paymentData.paymentMethod === 'Cash' || paymentData.change > 0) {
+                setLastChange(paymentData.change);
+                setChangeDialogOpen(true);
+            }
+
+            if (shouldPrint) {
+                setPrintOrder(fullOrder); // Triggers the useEffect to print
+            }
+
             clearCurrentOrder();
 
         } catch (err) {
@@ -370,6 +384,13 @@ export default function POSView({ showSnackbar }) {
                 onClose={() => setCheckoutOpen(false)}
                 total={currentTotal}
                 onConfirm={handleCheckout}
+            />
+
+            {/* Change Display */}
+            <ChangeDisplayDialog
+                open={changeDialogOpen}
+                onClose={() => setChangeDialogOpen(false)}
+                change={lastChange}
             />
 
             {/* Expense Entry */}

@@ -6,7 +6,7 @@ import {
   Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
   Menu as MuiMenu, useMediaQuery, Chip, Tabs, Tab, List, ListItem,
   Grid, Checkbox, Avatar, CssBaseline, Tooltip, Divider, ListItemButton, Switch,
-  Autocomplete, Snackbar, Alert // ADDED
+  Autocomplete, Snackbar, Alert, Backdrop, CircularProgress // ADDED
 } from '@mui/material';
 import { useTheme, createTheme, ThemeProvider } from '@mui/material/styles';
 
@@ -41,6 +41,7 @@ import DrawerDialog from './DrawerDialog';
 import EndShiftDialog from './EndShiftDialog';
 import EditTransactionDialog from './EditTransactionDialog';
 import DeleteTransactionDialog from './DeleteTransactionDialog'; // ADDED
+import ChangeDisplayDialog from './ChangeDisplayDialog'; // ADDED
 import { SimpleReceipt } from './SimpleReceipt';
 
 // Firebase
@@ -166,8 +167,17 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
   // --- UI STATE ---
   const [menuAnchor, setMenuAnchor] = useState(null);
   const [staffMenuAnchor, setStaffMenuAnchor] = useState(null);
+
+
   const [selectedTransactions, setSelectedTransactions] = useState([]);
   const [shiftOrders, setShiftOrders] = useState([]);
+
+  // Change Dialog State
+  const [changeDialogOpen, setChangeDialogOpen] = useState(false);
+  const [lastChange, setLastChange] = useState(0);
+
+  // Loading State
+  const [isLoading, setIsLoading] = useState(false);
 
   // Removed OrderDetailsDialog state
 
@@ -442,6 +452,7 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
         return showSnackbar("Select a Customer for debt.", "error");
       }
 
+      setIsLoading(true); // START LOADING
       try {
         await addDoc(collection(db, 'transactions'), {
           item,
@@ -466,6 +477,8 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
       } catch (e) {
         console.error(e);
         showSnackbar("Failed to save action.", "error");
+      } finally {
+        setIsLoading(false); // STOP LOADING
       }
       return;
     }
@@ -561,6 +574,7 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
   };
 
   const handleCheckout = async (paymentData, shouldPrint = false) => {
+    setIsLoading(true); // START LOADING
     try {
       const orderNum = await generateOrderNumber();
       const fullOrder = {
@@ -600,8 +614,10 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
       });
       await batch.commit();
 
-      if (paymentData.paymentMethod === 'Cash') {
-        // Show change in snackbar or alert? Dialog logic usually handles this.
+
+      if (paymentData.paymentMethod === 'Cash' || paymentData.change > 0) {
+        setLastChange(paymentData.change);
+        setChangeDialogOpen(true);
       }
       showSnackbar("Transaction completed!", "success");
 
@@ -622,6 +638,8 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
     } catch (err) {
       console.error(err);
       showSnackbar("Transaction failed.", 'error');
+    } finally {
+      setIsLoading(false); // STOP LOADING
     }
   };
 
@@ -1554,12 +1572,27 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
         title="Delete Order(s)"
         warning="This action cannot be undone. These orders will be marked as deleted."
       />
+
+      {/* Change Display Dialog */}
+      <ChangeDisplayDialog
+        open={changeDialogOpen}
+        onClose={() => setChangeDialogOpen(false)}
+        change={lastChange}
+      />
       {/* GLOBAL SNACKBAR */}
       <Snackbar open={snackbar.open} autoHideDuration={3000} onClose={handleCloseSnackbar} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
         <Alert onClose={handleCloseSnackbar} severity={snackbar.severity} sx={{ width: '100%' }} variant="filled">
           {snackbar.message}
         </Alert>
       </Snackbar>
+
+      {/* GLOBAL LOADING BACKDROP */}
+      <Backdrop
+        sx={{ color: '#fff', zIndex: (theme) => theme.zIndex.drawer + 9999 }}
+        open={isLoading}
+      >
+        <CircularProgress color="inherit" />
+      </Backdrop>
     </Box>
   );
 }
