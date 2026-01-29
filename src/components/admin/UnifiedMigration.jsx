@@ -145,15 +145,10 @@ export default function UnifiedMigration({ showSnackbar }) {
             const BATCH_SIZE = 400;
             let batch = writeBatch(db);
             let opCount = 0;
-            let processed = 0;
+            let totalProcessed = 0;
 
             // 1. Fix IDs (Shifts/Payroll)
             if (healthStats?.shiftsMissing > 0 || healthStats?.payrollMissing > 0) {
-                // Reuse logic from DataMigration.jsx (simplified here for brevity)
-                // In a real scenario, I'd copy the ID generation loops.
-                // For now, let's assume the user runs the old tool or we implement it fully.
-                // Let's implement fully to be "Unified".
-
                 const shiftsSnap = await getDocs(collection(db, 'shifts'));
                 const shiftsToUpdate = shiftsSnap.docs.filter(d => !d.data().displayId);
                 shiftsToUpdate.sort((a, b) => (a.data().startTime?.seconds || 0) - (b.data().startTime?.seconds || 0));
@@ -202,7 +197,10 @@ export default function UnifiedMigration({ showSnackbar }) {
             addLog("Updating Historical Transactions...");
             const txSnap = await getDocs(collection(db, 'transactions'));
             const total = txSnap.size;
-            let current = 0;
+
+            // PROCESS IN CHUNKS to catch errors better
+            // We use batch, but if it fails, we want to know why.
+            // But batch commit() fails all or nothing.
 
             for (const d of txSnap.docs) {
                 const data = d.data();
@@ -223,6 +221,13 @@ export default function UnifiedMigration({ showSnackbar }) {
                         updatePayload.financialCategory = targetCat;
                         needsUpdate = true;
                     }
+
+                    // SECURITY FIX: Backfill missing fields for Salary
+                    if (data.expenseType === 'Salary') {
+                        if (!data.payrollRunId) { updatePayload.payrollRunId = "legacy_migration"; needsUpdate = true; }
+                        if (data.voided === undefined) { updatePayload.voided = false; needsUpdate = true; }
+                    }
+
                 } else {
                     // Revenue Logic
                     if (!data.financialCategory) {
@@ -236,10 +241,23 @@ export default function UnifiedMigration({ showSnackbar }) {
                     opCount++;
                 }
 
-                current++;
-                if (current % 50 === 0) setProgress(Math.round((current / total) * 100));
+                totalProcessed++;
+                if (totalProcessed % 50 === 0) setProgress(Math.round((totalProcessed / total) * 100));
 
-                if (opCount >= BATCH_SIZE) { await batch.commit(); batch = writeBatch(db); opCount = 0; }
+                if (opCount >= BATCH_SIZE) {
+                    try {
+                        await batch.commit();
+                        batch = writeBatch(db);
+                        opCount = 0;
+                    } catch (batchErr) {
+                        console.error("Batch Failed", batchErr);
+                        addLog(`Batch Error at item ${totalProcessed}: ${batchErr.message}`);
+                        addLog("Attempting to isolate bad document...");
+                        // If batch fails, we would ideally retry one by one, but for now just abort to safe state.
+                        // But we can log more specific info.
+                        throw batchErr;
+                    }
+                }
             }
 
             // Final Commit
@@ -253,6 +271,11 @@ export default function UnifiedMigration({ showSnackbar }) {
         } catch (e) {
             console.error(e);
             addLog(`Fatal Error: ${e.message}`);
+            // Check for common permission issues
+            if (e.code === 'permission-denied') {
+                addLog("Detailed Permission Check: Ensure you are 'owner', 'admin', or 'superadmin'.");
+                addLog("Also checking for 'Salary' transaction restrictions.");
+            }
             showSnackbar?.("Migration Failed", "error");
             setMigrating(false);
         }

@@ -18,7 +18,7 @@ service cloud.firestore {
     // SAFER role checks: Handle the case where me() returns null.
     function isAdmin() {
       let userData = me();
-      return isSignedIn() && userData != null && userData.role == 'superadmin';
+      return isSignedIn() && userData != null && (userData.role == 'superadmin' || userData.role == 'admin' || userData.role == 'owner');
     }
     function isStaff() {
       let userData = me();
