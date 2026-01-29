@@ -38,10 +38,11 @@ export default function TrendSection({
           Trend
         </Typography>
         <Typography variant="body2" sx={{ opacity: 0.6 }}>
-          {preset === "past7" && "Daily (MM/DD)"}
-          {(preset === "thisMonth" || preset === "monthYear") &&
+          {(preset === "past7" || preset === "thisWeek" || preset === "lastWeek") && "Daily"}
+          {(preset === "today" || preset === "yesterday") && "Hourly"}
+          {(preset === "thisMonth" || preset === "lastMonth" || preset === "monthYear") &&
             "Daily (1–31)"}
-          {preset === "thisYear" && "Monthly (Jan–Dec)"}
+          {(preset === "thisYear" || preset === "lastYear") && "Monthly (Jan–Dec)"}
           {preset === "allTime" &&
             (allTimeMode === "monthly" ? "Monthly" : "Yearly")}
         </Typography>

@@ -4,8 +4,10 @@
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc";
 import tz from "dayjs/plugin/timezone";
+import isoWeek from "dayjs/plugin/isoWeek";
 dayjs.extend(utc);
 dayjs.extend(tz);
+dayjs.extend(isoWeek);
 
 export const ZONE = "Asia/Manila"; // always UTC+8
 
@@ -40,12 +42,12 @@ export function getRange(preset, monthYear /* Date|null */, allTimeStart /* Date
       end = now.subtract(1, "day").endOf("day");
       break;
     case "thisWeek":
-      start = now.startOf("week"); // Locale aware (usually Sunday start, use isoWeek for Monday)
-      end = now.endOf("week");
+      start = now.startOf("isoWeek");
+      end = now.endOf("isoWeek");
       break;
     case "lastWeek":
-      start = now.subtract(1, "week").startOf("week");
-      end = now.subtract(1, "week").endOf("week");
+      start = now.subtract(1, "week").startOf("isoWeek");
+      end = now.subtract(1, "week").endOf("isoWeek");
       break;
     case "thisMonth":
       start = now.startOf("month");
@@ -63,6 +65,12 @@ export function getRange(preset, monthYear /* Date|null */, allTimeStart /* Date
       start = now.subtract(1, "year").startOf("year");
       end = now.subtract(1, "year").endOf("year");
       break;
+    case "allTime": {
+      const s = allTimeStart ? dayjs(allTimeStart).tz(ZONE) : dayjs("1970-01-01").tz(ZONE);
+      start = s.startOf("day");
+      end = now.endOf("day");
+      break;
+    }
     default:
       start = now.startOf("month");
       end = now.endOf("month");
