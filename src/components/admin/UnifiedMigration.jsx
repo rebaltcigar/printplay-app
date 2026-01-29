@@ -80,34 +80,11 @@ export default function UnifiedMigration({ showSnackbar }) {
                 }
             });
 
-            // 2. Scan Transactions
-            const txSnap = await getDocs(collection(db, 'transactions'));
-            txSnap.forEach(d => {
-                const data = d.data();
-                if (data.isDeleted) return;
-
-                // Identify if expense
-                const isExpense = data.category === 'credit' || data.item === 'Expenses' || data.expenseType;
-
-                if (isExpense) {
-                    // Get the "Type" name
-                    let typeName = data.expenseType || data.item || 'Generic Expense';
-                    if (typeName === 'Expenses') typeName = data.expenseType || 'Misc';
-
-                    typeName = typeName.trim();
-
-                    const existing = typeMap.get(typeName) || { count: 0, category: 'OPEX' };
-                    existing.count++;
-
-                    // Heuristics
-                    if (!data.financialCategory && (typeName.toLowerCase().includes('asset') || typeName.toLowerCase().includes('equipment'))) {
-                        existing.category = 'CAPEX';
-                    }
-                    if (data.financialCategory) existing.category = data.financialCategory;
-
-                    typeMap.set(typeName, existing);
-                }
-            });
+            // 2. Scan Transactions - REMOVED TO SAVE QUOTA
+            // We will only rely on Services for definitions. 
+            // Older "orphan" types in history will default to OPEX or can be caught by heuristics.
+            addLog("Skipping full transaction history scan to save Read Quota.");
+            addLog("Using 'Services' list for Expense Types.");
 
             // Convert to array
             const list = Array.from(typeMap.entries()).map(([name, val]) => ({
@@ -193,75 +170,96 @@ export default function UnifiedMigration({ showSnackbar }) {
                 if (opCount >= BATCH_SIZE) { await batch.commit(); batch = writeBatch(db); opCount = 0; }
             }
 
-            // 3. Update Transactions (Historical Data)
-            addLog("Updating Historical Transactions...");
-            const txSnap = await getDocs(collection(db, 'transactions'));
-            const total = txSnap.size;
+            // 3. Update Transactions (Historical Data) - WITH PAGINATION
+            addLog("Updating Transactions (Batching 500 at a time)...");
 
-            // PROCESS IN CHUNKS to catch errors better
-            // We use batch, but if it fails, we want to know why.
-            // But batch commit() fails all or nothing.
+            let hasMore = true;
+            let lastDoc = null;
+            const CHUNK_SIZE = 500;
+            let totalFetched = 0;
 
-            for (const d of txSnap.docs) {
-                const data = d.data();
-                if (data.isDeleted) continue;
+            while (hasMore) {
+                // Construct Query
+                let qConstraint = [
+                    orderBy('timestamp', 'desc'), // Consistent ordering
+                    limit(CHUNK_SIZE)
+                ];
+                if (lastDoc) {
+                    qConstraint.push(startAfter(lastDoc));
+                }
 
-                let needsUpdate = false;
-                let updatePayload = {};
+                const q = query(collection(db, 'transactions'), ...qConstraint);
+                const snapshot = await getDocs(q);
 
-                // Expense Logic
-                const isExpense = data.category === 'credit' || data.item === 'Expenses' || data.expenseType;
-                if (isExpense) {
-                    let typeName = data.expenseType || data.item || 'Generic Expense';
-                    if (typeName === 'Expenses') typeName = data.expenseType || 'Misc';
-                    typeName = typeName.trim();
+                if (snapshot.empty) {
+                    hasMore = false;
+                    break;
+                }
 
-                    const targetCat = categoryMap.get(typeName) || 'OPEX';
-                    if (data.financialCategory !== targetCat) {
-                        updatePayload.financialCategory = targetCat;
-                        needsUpdate = true;
+                lastDoc = snapshot.docs[snapshot.docs.length - 1];
+                totalFetched += snapshot.size;
+
+                // Process CHUNK
+                for (const d of snapshot.docs) {
+                    const data = d.data();
+                    if (data.isDeleted) continue;
+
+                    let needsUpdate = false;
+                    let updatePayload = {};
+
+                    // Expense Logic
+                    const isExpense = data.category === 'credit' || data.item === 'Expenses' || data.expenseType;
+                    if (isExpense) {
+                        let typeName = data.expenseType || data.item || 'Generic Expense';
+                        if (typeName === 'Expenses') typeName = data.expenseType || 'Misc';
+                        typeName = typeName.trim();
+
+                        const targetCat = categoryMap.get(typeName) || 'OPEX';
+                        if (data.financialCategory !== targetCat) {
+                            updatePayload.financialCategory = targetCat;
+                            needsUpdate = true;
+                        }
+
+                        // SECURITY FIX: Backfill missing fields for Salary
+                        if (data.expenseType === 'Salary') {
+                            if (!data.payrollRunId) { updatePayload.payrollRunId = "legacy_migration"; needsUpdate = true; }
+                            if (data.voided === undefined) { updatePayload.voided = false; needsUpdate = true; }
+                        }
+
+                    } else {
+                        // Revenue Logic
+                        if (!data.financialCategory) {
+                            updatePayload.financialCategory = 'Revenue';
+                            needsUpdate = true;
+                        }
+                        // Stock Check for old items (Optional, but safe if missing)
+                        if (data.unitCost === undefined && data.financialCategory === 'Revenue') {
+                            // Could backfill unitCost from current service price? 
+                            // Safer to leave as 0 or null unless we are sure.
+                            // Let's just fix the Category for now.
+                        }
                     }
 
-                    // SECURITY FIX: Backfill missing fields for Salary
-                    if (data.expenseType === 'Salary') {
-                        if (!data.payrollRunId) { updatePayload.payrollRunId = "legacy_migration"; needsUpdate = true; }
-                        if (data.voided === undefined) { updatePayload.voided = false; needsUpdate = true; }
-                    }
-
-                } else {
-                    // Revenue Logic
-                    if (!data.financialCategory) {
-                        updatePayload.financialCategory = 'Revenue';
-                        needsUpdate = true;
+                    if (needsUpdate) {
+                        batch.update(doc(db, 'transactions', d.id), updatePayload);
+                        opCount++;
                     }
                 }
 
-                if (needsUpdate) {
-                    batch.update(doc(db, 'transactions', d.id), updatePayload);
-                    opCount++;
+                // Commit Batch if needed (every chunk is a good cadence, or accumulate)
+                // Since CHUNK_SIZE (500) matches Batch limit (500), we commit every chunk.
+                if (opCount > 0) {
+                    await batch.commit();
+                    batch = writeBatch(db); // Reset
+                    opCount = 0;
+                    addLog(`Processed ${totalFetched} transactions...`);
                 }
 
-                totalProcessed++;
-                if (totalProcessed % 50 === 0) setProgress(Math.round((totalProcessed / total) * 100));
-
-                if (opCount >= BATCH_SIZE) {
-                    try {
-                        await batch.commit();
-                        batch = writeBatch(db);
-                        opCount = 0;
-                    } catch (batchErr) {
-                        console.error("Batch Failed", batchErr);
-                        addLog(`Batch Error at item ${totalProcessed}: ${batchErr.message}`);
-                        addLog("Attempting to isolate bad document...");
-                        // If batch fails, we would ideally retry one by one, but for now just abort to safe state.
-                        // But we can log more specific info.
-                        throw batchErr;
-                    }
-                }
+                // Progress (Estimate) - Hard to know total without costly count.
+                // Just showing processed count is better than nothing.
+                // Or we can rely on a pre-count if we did one. 
+                // Let's just update log.
             }
-
-            // Final Commit
-            if (opCount > 0) await batch.commit();
 
             setProgress(100);
             addLog("Migration Complete Successfully.");
