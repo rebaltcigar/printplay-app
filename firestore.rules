@@ -181,5 +181,11 @@ service cloud.firestore {
     match /counters/{counterId} {
       allow read, write: if isSignedIn();
     }
+
+    /* ---------- Optimization Stats ---------- */
+    match /stats_daily/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
   }
 }

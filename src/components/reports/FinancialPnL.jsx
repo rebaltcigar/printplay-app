@@ -44,62 +44,21 @@ import {
     fmtPeso
 } from '../../utils/analytics';
 import dayjs from 'dayjs';
+import { useAnalytics } from '../../contexts/AnalyticsContext';
 
 export default function FinancialPnL() {
-    // --- Controls ---
-    const [preset, setPreset] = useState("thisYear");
-    const [monthYear, setMonthYear] = useState(null); // Custom month support if needed later
-
-    // --- Data ---
-    const [transactions, setTransactions] = useState([]);
-    const [shifts, setShifts] = useState([]);
-    const [services, setServices] = useState([]); // for legacy classification
-    const [loading, setLoading] = useState(true);
-
-    // --- Computed Range ---
-    // If we wanted "Custom Month" we'd pass monthYear to getRange
-    const r = useMemo(() => getRange(preset, null, null), [preset]);
+    // --- Context ---
+    const {
+        preset, setPreset,
+        range: r,
+        transactions,
+        shifts,
+        services,
+        loading
+    } = useAnalytics();
 
     // --- Service Map ---
     const serviceMap = useMemo(() => buildServiceMap(services), [services]);
-
-    // --- 1. Load Data ---
-    useEffect(() => {
-        // Services
-        const unsubServices = onSnapshot(collection(db, "services"), (snap) => {
-            setServices(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        });
-
-        setLoading(true);
-
-        // Transactions
-        const qTx = query(
-            collection(db, "transactions"),
-            where("timestamp", ">=", r.startUtc),
-            where("timestamp", "<=", r.endUtc),
-            orderBy("timestamp", "asc") // Ascending for easier chronological processing
-        );
-        const unsubTx = onSnapshot(qTx, (snap) => {
-            setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        });
-
-        // Shifts (PC Rental)
-        const qShifts = query(
-            collection(db, "shifts"),
-            where("startTime", ">=", r.startUtc),
-            where("startTime", "<=", r.endUtc)
-        );
-        const unsubShifts = onSnapshot(qShifts, (snap) => {
-            setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-            setLoading(false);
-        });
-
-        return () => {
-            unsubServices();
-            unsubTx();
-            unsubShifts();
-        };
-    }, [r.startUtc, r.endUtc]);
 
     // --- 2. Process P&L ---
     const { tableData, summary } = useMemo(() => {
@@ -224,16 +183,16 @@ export default function FinancialPnL() {
 
             {/* SUMMARY CARDS */}
             <Grid container spacing={2}>
-                <Grid item xs={12} sm={6} md={3}>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                     <SummaryCard title="Total Revenue" value={summary?.sales} color="primary.main" />
                 </Grid>
-                <Grid item xs={12} sm={6} md={3}>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                     <SummaryCard title="COGS" value={summary?.cogs} color="text.secondary" />
                 </Grid>
-                <Grid item xs={12} sm={6} md={3}>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                     <SummaryCard title="OpEx" value={summary?.opex} color="error.main" />
                 </Grid>
-                <Grid item xs={12} sm={6} md={3}>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                     <Card>
                         <CardContent sx={{ pb: 1 }}>
                             <Typography variant="body2" color="text.secondary">Net Profit</Typography>

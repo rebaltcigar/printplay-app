@@ -1,34 +1,14 @@
 // src/components/AdminHome.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  Box,
-  Card,
-  Typography,
-  Stack,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  useMediaQuery
+  Box, Card, Typography, Stack, FormControl, InputLabel, Select, MenuItem, useMediaQuery
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import { db } from "../firebase";
-import {
-  collection,
-  onSnapshot,
-  query,
-  where,
-  doc,
-  updateDoc,
-  deleteDoc,
-  serverTimestamp,
-  Timestamp,
-  orderBy,
-  limit,
-} from "firebase/firestore";
+import { doc, updateDoc, deleteDoc, serverTimestamp, query, collection, where, onSnapshot } from "firebase/firestore";
+import { useAnalytics } from "../contexts/AnalyticsContext"; // Context hook
 
 import {
-  getRange,
   buildServiceMap,
   txAmount,
   buildTrendSeries,
@@ -41,58 +21,53 @@ import StaffLeaderboardPanel from "./dashboard/StaffLeaderboardPanel";
 import SalesBreakdownPanel from "./dashboard/SalesBreakdownPanel";
 import ExpenseBreakdownPanel from "./dashboard/ExpenseBreakdownPanel";
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
+import AdminLoading from "./common/AdminLoading"; // NEW IMPORT
 
 /* small helper */
 const currency = (n) => fmtPeso(n);
 
 async function clearShiftLockIfMatches(shiftId, endedByEmail) {
+  // ... (keep helper)
   const statusRef = doc(db, "app_status", "current_shift");
   const snap = await (await import("firebase/firestore")).getDoc(statusRef);
   const data = snap.exists() ? snap.data() : null;
   if (data?.activeShiftId === shiftId) {
     await (await import("firebase/firestore")).setDoc(
       statusRef,
-      {
-        activeShiftId: null,
-        endedBy: endedByEmail || "admin",
-        endedAt: serverTimestamp(),
-      },
+      { activeShiftId: null, endedBy: endedByEmail || "admin", endedAt: serverTimestamp() },
       { merge: true }
     );
   }
 }
 
-export default function AdminHome({ user, showSnackbar }) {
+export default function AdminHome({ user, showSnackbar, isActive = true }) {
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down("md"));
+
+  // --- CONTEXT CONSUMPTION ---
+  const {
+    preset, setPreset,
+    range: r,
+    transactions: filteredTx, // Context returns raw list, but we filter 'isDeleted' in context or here? Context returns all. We filter here.
+    shifts: shiftsScope,
+    services,
+    loading: analyticsLoading
+  } = useAnalytics();
+
+  // Local re-filter for deleted (Context gives everything found in range)
+  // Actually context *could* filter, but let's do it here to be safe or use `filteredTx` name for raw and then filter.
+  // Wait, `transactions` in context is raw.
+  const transactionsRaw = filteredTx; // Alias
 
   /* ------------ global controls ------------ */
-  const [preset, setPreset] = useState("thisMonth");
-  const [monthYear, setMonthYear] = useState(() => {
-    const d = new Date();
-    return new Date(d.getFullYear(), d.getMonth(), 1);
-  });
-
+  // Presets managed by Context now.
   const [showSales, setShowSales] = useState(true);
   const [showExpenses, setShowExpenses] = useState(true);
-  const [includeCapitalInExpenses, setIncludeCapitalInExpenses] =
-    useState(true);
+  const [includeCapitalInExpenses, setIncludeCapitalInExpenses] = useState(true);
   const [allTimeMode, setAllTimeMode] = useState("monthly");
 
   const [confirmDialog, setConfirmDialog] = useState({
-    open: false,
-    title: "",
-    message: "",
-    onConfirm: null,
-    requireReason: false,
+    open: false, title: "", message: "", onConfirm: null, requireReason: false,
   });
-
-  const [earliestShiftStart, setEarliestShiftStart] = useState(null);
-
-  const r = useMemo(
-    () => getRange(preset, monthYear, earliestShiftStart),
-    [preset, monthYear, earliestShiftStart]
-  );
 
   useEffect(() => {
     if (preset === "allTime") {
@@ -101,82 +76,11 @@ export default function AdminHome({ user, showSnackbar }) {
     }
   }, [preset, r.shouldDefaultYearly]);
 
-  /* ------------ data streams ------------ */
-  const [transactions, setTransactions] = useState([]);
-  const [txLoading, setTxLoading] = useState(true);
-
-  const [shiftsScope, setShiftsScope] = useState([]);
-  const [shiftsLoading, setShiftsLoading] = useState(true);
-
+  /* ------------ LIVE OPERATIONS (Active Shift) ------------ */
+  // These remain local because they track "Right Now" regardless of selected Analytics range.
   const [currentShiftStatus, setCurrentShiftStatus] = useState(null);
   const [theActiveShift, setTheActiveShift] = useState(null);
   const [activeShiftTx, setActiveShiftTx] = useState([]);
-
-  const [services, setServices] = useState([]);
-  const serviceMap = useMemo(() => buildServiceMap(services), [services]);
-
-  /* earliest shift for all-time */
-  useEffect(() => {
-    const qRef = query(
-      collection(db, "shifts"),
-      orderBy("startTime", "asc"),
-      limit(1)
-    );
-    const unsub = onSnapshot(qRef, (snap) => {
-      const first = snap.docs[0]?.data();
-      if (first?.startTime?.seconds) {
-        setEarliestShiftStart(new Date(first.startTime.seconds * 1000));
-      }
-    });
-    return () => unsub();
-  }, []);
-
-  /* 1. TRANSACTIONS (range) */
-  useEffect(() => {
-    if (!r.startUtc || !r.endUtc) return;
-    setTxLoading(true);
-    const q = query(
-      collection(db, "transactions"),
-      where("timestamp", ">=", Timestamp.fromDate(r.startUtc)),
-      where("timestamp", "<=", Timestamp.fromDate(r.endUtc))
-    );
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const list = [];
-        snap.forEach((doc) => {
-          list.push({ id: doc.id, ...doc.data() });
-        });
-        setTransactions(list);
-        setTxLoading(false);
-      },
-      (err) => {
-        console.error("Tx load error", err);
-        setTxLoading(false);
-      }
-    );
-    return () => unsub();
-  }, [r.startUtc, r.endUtc]);
-
-  /* 2. SHIFTS (range) */
-  useEffect(() => {
-    if (!r.startUtc || !r.endUtc) return;
-    setShiftsLoading(true);
-    const q = query(
-      collection(db, "shifts"),
-      where("startTime", ">=", Timestamp.fromDate(r.startUtc)),
-      where("startTime", "<=", Timestamp.fromDate(r.endUtc))
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      const list = [];
-      snap.forEach((doc) => {
-        list.push({ id: doc.id, ...doc.data() });
-      });
-      setShiftsScope(list);
-      setShiftsLoading(false);
-    });
-    return () => unsub();
-  }, [r.startUtc, r.endUtc]);
 
   /* 3. CURRENT SHIFT STATUS */
   useEffect(() => {
@@ -214,24 +118,18 @@ export default function AdminHome({ user, showSnackbar }) {
     };
   }, [currentShiftStatus?.activeShiftId]);
 
-  /* 5. SERVICES */
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, "services"), (snap) => {
-      const list = [];
-      snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
-      setServices(list);
-    });
-    return () => unsub();
-  }, []);
+  // Map services from context
+  const serviceMap = useMemo(() => buildServiceMap(services), [services]);
 
   /* ============ COMPUTATIONS ============ */
 
   // 1. FILTER TRANSACTIONS
-  const filteredTx = useMemo(() => {
-    return transactions.filter((t) => !t.isDeleted);
-  }, [transactions]);
+  // Re-implement filter on top of context data
+  const filteredTxValid = useMemo(() => {
+    return transactionsRaw.filter((t) => !t.isDeleted);
+  }, [transactionsRaw]);
 
-  // 2. METRICS
+  // 2. METRICS (Use filteredTxValid)
   const kpi = useMemo(() => {
     let sales = 0;
     let expenses = 0;
@@ -246,7 +144,7 @@ export default function AdminHome({ user, showSnackbar }) {
     });
 
     // Sum Transactions
-    filteredTx.forEach((t) => {
+    filteredTxValid.forEach((t) => {
       const amt = txAmount(t);
       const isExp =
         t.category === "credit" ||
@@ -268,25 +166,19 @@ export default function AdminHome({ user, showSnackbar }) {
           (t.notes || "").toLowerCase().includes("capex") ||
           t.financialCategory === 'CAPEX';
 
-        // Fix: Widget specifically asked to exclude CAPEX.
-        // We will calculate "expenses" as Pure OpEx for the KPI card.
-        // We can create a separate "totalOutflow" if needed, but for "Operating Expenses" widget:
         if (!isCap) {
           expenses += Math.abs(amt);
         }
       } else {
-        // Sales from Transactions (Items, Services, etc.)
         sales += amt;
       }
     });
 
-    // Total Gross Sales = Transaction Sales + PC Rental Revenue
     sales += pcRentalRevenue;
-
-    profit = sales - expenses; // Net Profit (OpEx based)
+    profit = sales - expenses;
 
     return { sales, expenses, profit, debtsIssued, debtsCollected };
-  }, [filteredTx, shiftsScope]);
+  }, [filteredTxValid, shiftsScope]);
 
   // 3. TRENDS
   const trendData = useMemo(() => {
@@ -298,19 +190,19 @@ export default function AdminHome({ user, showSnackbar }) {
     }
 
     return buildTrendSeries({
-      transactions: filteredTx,
+      transactions: filteredTxValid,
       shifts: shiftsScope,
       startLocal: r.startLocal,
       endLocal: r.endLocal,
       granularity,
       serviceMap
     });
-  }, [filteredTx, shiftsScope, r.startLocal, r.endLocal, preset, allTimeMode, serviceMap]);
+  }, [filteredTxValid, shiftsScope, r.startLocal, r.endLocal, preset, allTimeMode, serviceMap]);
 
   // 4. LEADERBOARD ROWS
   const leaderboardRows = useMemo(() => {
     const map = {};
-    filteredTx.forEach(t => {
+    filteredTxValid.forEach(t => {
       const amt = txAmount(t);
       if (t.isDeleted || amt <= 0) return;
       const isExp = t.category === "credit" || t.expenseType || t.item === "Expenses" || t.item === "Paid Debt";
@@ -323,7 +215,7 @@ export default function AdminHome({ user, showSnackbar }) {
     return Object.entries(map)
       .map(([staff, sales]) => ({ staff, sales }))
       .sort((a, b) => b.sales - a.sales);
-  }, [filteredTx]);
+  }, [filteredTxValid]);
 
   /* ============ ACTIONS ============ */
   const handleForceEndShift = (shift) => {
@@ -379,6 +271,10 @@ export default function AdminHome({ user, showSnackbar }) {
 
 
   /* ============ RENDER ============ */
+  if (analyticsLoading) {
+    return <AdminLoading message="Analyzing business data..." />;
+  }
+
   return (
     <Box
       sx={{
@@ -478,7 +374,7 @@ export default function AdminHome({ user, showSnackbar }) {
               {currency(kpi.sales)}
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              {filteredTx.filter(t => {
+              {filteredTxValid.filter(t => {
                 const amt = txAmount(t);
                 return amt > 0 && !t.expenseType && t.item !== "Paid Debt";
               }).length} transactions
@@ -505,18 +401,20 @@ export default function AdminHome({ user, showSnackbar }) {
         {/* ROW 2: Trend Chart (Full Width) */}
         <Box sx={{ mb: 3 }}>
           <Card sx={{ p: 2, height: 450, display: "flex", flexDirection: "column" }}>
-            <TrendSection
-              preset={preset}
-              allTimeMode={allTimeMode}
-              setAllTimeMode={setAllTimeMode}
-              trendSeries={trendData}
-              showSales={showSales}
-              setShowSales={setShowSales}
-              showExpenses={showExpenses}
-              setShowExpenses={setShowExpenses}
-              includeCapitalInExpenses={includeCapitalInExpenses}
-              setIncludeCapitalInExpenses={setIncludeCapitalInExpenses}
-            />
+            {isActive && (
+              <TrendSection
+                preset={preset}
+                allTimeMode={allTimeMode}
+                setAllTimeMode={setAllTimeMode}
+                trendSeries={trendData}
+                showSales={showSales}
+                setShowSales={setShowSales}
+                showExpenses={showExpenses}
+                setShowExpenses={setShowExpenses}
+                includeCapitalInExpenses={includeCapitalInExpenses}
+                setIncludeCapitalInExpenses={setIncludeCapitalInExpenses}
+              />
+            )}
           </Card>
         </Box>
 
@@ -546,10 +444,10 @@ export default function AdminHome({ user, showSnackbar }) {
         {/* ROW 4: Breakdowns */}
         <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mb: 5 }}>
           <Box sx={{ flex: 1 }}>
-            <SalesBreakdownPanel transactions={filteredTx} />
+            {isActive && <SalesBreakdownPanel transactions={filteredTxValid} />}
           </Box>
           <Box sx={{ flex: 1 }}>
-            <ExpenseBreakdownPanel transactions={filteredTx} />
+            {isActive && <ExpenseBreakdownPanel transactions={filteredTxValid} />}
           </Box>
         </Stack>
       </Box>

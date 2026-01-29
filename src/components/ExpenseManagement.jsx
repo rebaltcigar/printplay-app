@@ -49,9 +49,12 @@ import {
   onSnapshot,
   getDocs,
   deleteDoc,
+  limit,
+  startAfter,
 } from "firebase/firestore";
 import { db } from "../firebase";
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
+import AdminLoading from "./common/AdminLoading"; // NEW IMPORT
 
 const EXPENSE_TYPES_ALL = [
   "Supplies",
@@ -138,15 +141,6 @@ export default function ExpenseManagement({ user, showSnackbar }) {
   const [busy, setBusy] = useState(false);
   const [busyMsg, setBusyMsg] = useState("");
 
-  const startBusy = (msg = "Working...") => {
-    setBusy(true);
-    setBusyMsg(msg);
-  };
-  const stopBusy = () => {
-    setBusy(false);
-    setBusyMsg("");
-  };
-
   // reason dialogs
   const [editReasonDialog, setEditReasonDialog] = useState({
     open: false,
@@ -230,38 +224,110 @@ export default function ExpenseManagement({ user, showSnackbar }) {
     })();
   }, []);
 
-  /** ===================== LOAD EXPENSES (LISTENER) ===================== */
-  useEffect(() => {
+  /** ===================== LOAD EXPENSES (PAGINATION) ===================== */
+  const [lastDoc, setLastDoc] = useState(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [isArchiveMode, setIsArchiveMode] = useState(false);
+  const unsubRef = useRef(null);
+
+  const startBusy = (msg = "Working...") => {
+    setBusy(true);
+    setBusyMsg(msg);
+  };
+  const stopBusy = () => {
+    setBusy(false);
+    setBusyMsg("");
+  };
+
+  const isWideRange = useMemo(() => {
+    const duration = new Date(filterEnd) - new Date(filterStart);
+    return duration > 45 * 24 * 60 * 60 * 1000; // > 45 days
+  }, [filterStart, filterEnd]);
+
+  // Fetch Page (Archive Mode)
+  const fetchNextPage = async (isReset = false) => {
+    setLoadingMore(true);
+    try {
+      const start = new Date(filterStart); start.setHours(0, 0, 0, 0);
+      const end = new Date(filterEnd); end.setHours(23, 59, 59, 999);
+
+      let constraints = [
+        where("item", "==", "Expenses"),
+        where("timestamp", ">=", start),
+        where("timestamp", "<=", end),
+        orderBy("timestamp", "desc"),
+        limit(50)
+      ];
+
+      if (!isReset && lastDoc) {
+        constraints.push(startAfter(lastDoc));
+      }
+
+      const q = query(collection(db, "transactions"), ...constraints);
+      const snap = await getDocs(q);
+      const newRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+      if (isReset) {
+        setExpenses(newRows);
+      } else {
+        setExpenses(prev => [...prev, ...newRows]);
+      }
+
+      setLastDoc(snap.docs[snap.docs.length - 1] || null);
+      setHasMore(snap.docs.length === 50);
+
+    } catch (err) {
+      console.error("Pagination error", err);
+      if (showSnackbar) showSnackbar("Failed to load more expenses.", "error");
+    } finally {
+      setLoadingMore(false);
+      setLoading(false);
+    }
+  };
+
+  const attachStream = async () => {
+    if (unsubRef.current) {
+      unsubRef.current();
+      unsubRef.current = null;
+    }
+    setLastDoc(null);
+    setHasMore(true);
     setLoading(true);
-    const start = new Date(filterStart);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(filterEnd);
-    end.setHours(23, 59, 59, 999);
 
-    // keep ALL, don't filter deleted here — we want filterDeleted to control it
-    let qTx = query(
-      collection(db, "transactions"),
-      where("item", "==", "Expenses"),
-      where("timestamp", ">=", start),
-      where("timestamp", "<=", end),
-      orderBy("timestamp", "desc")
-    );
+    if (isWideRange) {
+      setIsArchiveMode(true);
+      setExpenses([]);
+      await fetchNextPage(true);
+    } else {
+      setIsArchiveMode(false);
+      const start = new Date(filterStart); start.setHours(0, 0, 0, 0);
+      const end = new Date(filterEnd); end.setHours(23, 59, 59, 999);
 
-    const unsub = onSnapshot(
-      qTx,
-      (snap) => {
+      const qTx = query(
+        collection(db, "transactions"),
+        where("item", "==", "Expenses"),
+        where("timestamp", ">=", start),
+        where("timestamp", "<=", end),
+        orderBy("timestamp", "desc"),
+        limit(200)
+      );
+
+      const unsub = onSnapshot(qTx, (snap) => {
         const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
         setExpenses(rows);
         setLoading(false);
-      },
-      (err) => {
-        console.error("Failed to listen expenses", err);
-        setExpenses([]);
+      }, (err) => {
+        console.error("Stream error", err);
         setLoading(false);
-      }
-    );
+      });
+      unsubRef.current = unsub;
+    }
+  };
 
-    return () => unsub();
+  useEffect(() => {
+    attachStream();
+    return () => { if (unsubRef.current) unsubRef.current(); };
   }, [filterStart, filterEnd]);
 
   /** ===================== DERIVED ROWS + FILTERS ===================== */
@@ -757,6 +823,10 @@ export default function ExpenseManagement({ user, showSnackbar }) {
   );
 
   /** ===================== RENDER ===================== */
+  if (loading) {
+    return <AdminLoading message="Loading expenses..." />;
+  }
+
   return (
     <Box
       sx={{

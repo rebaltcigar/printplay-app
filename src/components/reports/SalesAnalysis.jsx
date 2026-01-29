@@ -34,52 +34,21 @@ import {
     buildServiceMap,
     fmtPeso
 } from '../../utils/analytics';
+import { useAnalytics } from '../../contexts/AnalyticsContext';
 
 const COLORS = ["#007bff", "#28a745", "#ffc107", "#dc3545", "#6610f2", "#e83e8c", "#17a2b8"];
 
 export default function SalesAnalysis() {
-    const [preset, setPreset] = useState("thisMonth");
+    const {
+        preset, setPreset,
+        range: r,
+        transactions,
+        shifts,
+        services,
+        loading
+    } = useAnalytics();
 
-    const [transactions, setTransactions] = useState([]);
-    const [shifts, setShifts] = useState([]);
-    const [services, setServices] = useState([]);
-    const [loading, setLoading] = useState(true);
-
-    const r = useMemo(() => getRange(preset, null, null), [preset]);
     const serviceMap = useMemo(() => buildServiceMap(services), [services]);
-
-    useEffect(() => {
-        const unsubServices = onSnapshot(collection(db, "services"), (snap) => {
-            setServices(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        });
-
-        setLoading(true);
-
-        const qTx = query(
-            collection(db, "transactions"),
-            where("timestamp", ">=", r.startUtc),
-            where("timestamp", "<=", r.endUtc)
-        );
-        const unsubTx = onSnapshot(qTx, (snap) => {
-            setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        });
-
-        const qShifts = query(
-            collection(db, "shifts"),
-            where("startTime", ">=", r.startUtc),
-            where("startTime", "<=", r.endUtc)
-        );
-        const unsubShifts = onSnapshot(qShifts, (snap) => {
-            setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-            setLoading(false);
-        });
-
-        return () => {
-            unsubServices();
-            unsubTx();
-            unsubShifts();
-        };
-    }, [r.startUtc, r.endUtc]);
 
     const { categoryData, itemData, totalSales } = useMemo(() => {
         if (loading) return { categoryData: [], itemData: [], totalSales: 0 };
@@ -173,7 +142,7 @@ export default function SalesAnalysis() {
             <Grid container spacing={2} sx={{ flex: 1, minHeight: 0 }}>
 
                 {/* LEFT COL: TABLE (Takes more width for clean columns) */}
-                <Grid item xs={12} md={8} sx={{ display: 'flex', flexDirection: 'column' }}>
+                <Grid size={{ xs: 12, md: 8 }} sx={{ display: 'flex', flexDirection: 'column' }}>
                     <Paper sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                         <Box sx={{ p: 2, pb: 1 }}>
                             <Typography variant="h6">Top Selling Items</Typography>
@@ -213,7 +182,7 @@ export default function SalesAnalysis() {
                 </Grid>
 
                 {/* RIGHT COL: KPI + CHART */}
-                <Grid item xs={12} md={4} sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Grid size={{ xs: 12, md: 4 }} sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                     {/* KPI Card */}
                     <Card>
                         <CardContent sx={{ textAlign: 'center', py: 3 }}>

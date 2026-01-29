@@ -40,6 +40,7 @@ import ServiceCatalog from "./admin/ServiceCatalog"; // New
 import InventoryManagement from "./admin/InventoryManagement"; // New
 import ExpenseSettings from "./admin/ExpenseSettings"; // New
 import UnifiedMigration from "./admin/UnifiedMigration"; // New
+import DataAggregator from "./admin/DataAggregator"; // New Optimization Tool
 
 import UserManagement from "./UserManagement";
 import AdminHome from "./AdminHome";
@@ -55,15 +56,14 @@ function TabPanel({ value, index, children }) {
       hidden={value !== index}
       sx={{ height: "100%", display: value === index ? "flex" : "none" }}
     >
-      {value === index && (
-        <Box sx={{ p: 2, width: "100%", height: "100%" }}>{children}</Box>
-      )}
+      {children}
     </Box>
   );
 }
 
 export default function AdminDashboard({ user }) {
   const [tab, setTab] = useState(0);
+  const [visitedTabs, setVisitedTabs] = useState(new Set([0])); // Track visited tabs
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [openSettings, setOpenSettings] = useState(false);
   const [showHistoryDialog, setShowHistoryDialog] = useState(false); // ADDED
@@ -79,8 +79,14 @@ export default function AdminDashboard({ user }) {
 
   // --- SNACKBAR STATE ---
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
-  const handleCloseSnackbar = () => setSnackbar(prev => ({ ...prev, open: false }));
-  const showSnackbar = (msg, sev = 'success') => setSnackbar({ open: true, message: msg, severity: sev });
+
+  const handleCloseSnackbar = React.useCallback(() => {
+    setSnackbar(prev => ({ ...prev, open: false }));
+  }, []);
+
+  const showSnackbar = React.useCallback((msg, sev = 'success') => {
+    setSnackbar({ open: true, message: msg, severity: sev });
+  }, []);
 
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
@@ -113,6 +119,11 @@ export default function AdminDashboard({ user }) {
 
   const handleSelectTab = (idx) => {
     setTab(idx);
+    setVisitedTabs((prev) => {
+      const next = new Set(prev);
+      next.add(idx);
+      return next;
+    });
     setDrawerOpen(false);
   };
 
@@ -187,7 +198,7 @@ export default function AdminDashboard({ user }) {
         {!isMobile && (
           <Tabs
             value={tab}
-            onChange={(_, v) => setTab(v)}
+            onChange={(_, v) => handleSelectTab(v)}
             variant="scrollable"
             scrollButtons="auto"
             sx={{ px: 1 }}
@@ -239,87 +250,133 @@ export default function AdminDashboard({ user }) {
 
       <Box sx={{ flex: 1, minHeight: 0 }}>
         <TabPanel value={tab} index={0}>
-          <Box sx={{ height: "100%", display: "flex", flexDirection: "column", width: "100%" }}>
-            <AdminHome user={user} showSnackbar={showSnackbar} />
-          </Box>
+          {visitedTabs.has(0) && (
+            <Box sx={{ p: 2, width: "100%", height: "100%" }}>
+              <Box sx={{ height: "100%", display: "flex", flexDirection: "column", width: "100%" }}>
+                <AdminHome user={user} showSnackbar={showSnackbar} isActive={tab === 0} />
+              </Box>
+            </Box>
+          )}
         </TabPanel>
 
         <TabPanel value={tab} index={1}>
-          <Box sx={{ height: "100%", width: "100%" }}>
-            <Reports />
-          </Box>
+          {visitedTabs.has(1) && (
+            <Box sx={{ p: 2, width: "100%", height: "100%" }}>
+              <Box sx={{ height: "100%", width: "100%" }}>
+                <Reports isActive={tab === 1} />
+              </Box>
+            </Box>
+          )}
         </TabPanel>
 
         <TabPanel value={tab} index={2}>
-          <Box sx={{ height: "100%", width: "100%" }}>
-            <Shifts showSnackbar={showSnackbar} />
-          </Box>
+          {visitedTabs.has(2) && (
+            <Box sx={{ p: 2, width: "100%", height: "100%" }}>
+              <Box sx={{ height: "100%", width: "100%" }}>
+                <Shifts showSnackbar={showSnackbar} />
+              </Box>
+            </Box>
+          )}
         </TabPanel>
 
         <TabPanel value={tab} index={3}>
-          <Box sx={{ height: "100%", width: "100%" }}>
-            <Transactions showSnackbar={showSnackbar} />
-          </Box>
+          {visitedTabs.has(3) && (
+            <Box sx={{ p: 2, width: "100%", height: "100%" }}>
+              <Box sx={{ height: "100%", width: "100%" }}>
+                <Transactions showSnackbar={showSnackbar} />
+              </Box>
+            </Box>
+          )}
         </TabPanel>
 
         <TabPanel value={tab} index={4}>
-          <Box sx={{ height: "100%", width: "100%" }}>
-            <ExpenseManagement showSnackbar={showSnackbar} />
-          </Box>
+          {visitedTabs.has(4) && (
+            <Box sx={{ p: 2, width: "100%", height: "100%" }}>
+              <Box sx={{ height: "100%", width: "100%" }}>
+                <ExpenseManagement showSnackbar={showSnackbar} />
+              </Box>
+            </Box>
+          )}
         </TabPanel>
 
         <TabPanel value={tab} index={5}>
-          <Box sx={{ height: "100%", width: "100%" }}>
-            <DebtReport showSnackbar={showSnackbar} />
-          </Box>
+          {visitedTabs.has(5) && (
+            <Box sx={{ p: 2, width: "100%", height: "100%" }}>
+              <Box sx={{ height: "100%", width: "100%" }}>
+                <DebtReport showSnackbar={showSnackbar} />
+              </Box>
+            </Box>
+          )}
         </TabPanel>
 
         <TabPanel value={tab} index={6}>
-          <Box sx={{ height: "100%", width: "100%" }}>
-            <ServiceCatalog showSnackbar={showSnackbar} />
-          </Box>
+          {visitedTabs.has(6) && (
+            <Box sx={{ p: 2, width: "100%", height: "100%" }}>
+              <Box sx={{ height: "100%", width: "100%" }}>
+                <ServiceCatalog showSnackbar={showSnackbar} />
+              </Box>
+            </Box>
+          )}
         </TabPanel>
 
         <TabPanel value={tab} index={7}>
-          <Box sx={{ height: "100%", width: "100%" }}>
-            <InventoryManagement showSnackbar={showSnackbar} />
-          </Box>
+          {visitedTabs.has(7) && (
+            <Box sx={{ p: 2, width: "100%", height: "100%" }}>
+              <Box sx={{ height: "100%", width: "100%" }}>
+                <InventoryManagement showSnackbar={showSnackbar} />
+              </Box>
+            </Box>
+          )}
         </TabPanel>
 
         <TabPanel value={tab} index={8}>
-          <Box sx={{ height: "100%", width: "100%" }}>
-            <UserManagement showSnackbar={showSnackbar} />
-          </Box>
+          {visitedTabs.has(8) && (
+            <Box sx={{ p: 2, width: "100%", height: "100%" }}>
+              <Box sx={{ height: "100%", width: "100%" }}>
+                <UserManagement showSnackbar={showSnackbar} />
+              </Box>
+            </Box>
+          )}
         </TabPanel>
         <TabPanel value={tab} index={9}>
-          <Box sx={{ height: "100%", width: "100%" }}>
-            <Payroll showSnackbar={showSnackbar} />
-          </Box>
+          {visitedTabs.has(9) && (
+            <Box sx={{ p: 2, width: "100%", height: "100%" }}>
+              <Box sx={{ height: "100%", width: "100%" }}>
+                <Payroll showSnackbar={showSnackbar} />
+              </Box>
+            </Box>
+          )}
         </TabPanel>
 
         <TabPanel value={tab} index={10}>
-          <Box sx={{ height: "100%", width: "100%", overflow: "hidden", display: 'flex', flexDirection: 'column' }}>
-            <Box sx={{ borderBottom: 1, borderColor: 'divider', px: 2, bgcolor: 'background.paper' }}>
-              <Tabs value={systemTab} onChange={(e, v) => setSystemTab(v)}>
-                <Tab label="Settings" />
-                <Tab label="Utilities & Migration" />
-              </Tabs>
+          {visitedTabs.has(10) && (
+            <Box sx={{ p: 2, width: "100%", height: "100%" }}>
+              <Box sx={{ height: "100%", width: "100%", overflow: "hidden", display: 'flex', flexDirection: 'column' }}>
+                <Box sx={{ borderBottom: 1, borderColor: 'divider', px: 2, bgcolor: 'background.paper' }}>
+                  <Tabs value={systemTab} onChange={(e, v) => setSystemTab(v)}>
+                    <Tab label="Settings" />
+                    <Tab label="Utilities & Migration" />
+                  </Tabs>
+                </Box>
+
+                {/* SETTINGS SUB-TAB */}
+                {systemTab === 0 && (
+                  <Box sx={{ p: 3, overflow: 'auto', flex: 1 }}>
+                    <ExpenseSettings showSnackbar={showSnackbar} />
+                  </Box>
+                )}
+
+                {/* UTILITIES SUB-TAB */}
+                {systemTab === 1 && (
+                  <Box sx={{ p: 3, overflow: 'auto', flex: 1 }}>
+                    <UnifiedMigration showSnackbar={showSnackbar} />
+                    <Box sx={{ my: 4 }} />
+                    <DataAggregator showSnackbar={showSnackbar} />
+                  </Box>
+                )}
+              </Box>
             </Box>
-
-            {/* SETTINGS SUB-TAB */}
-            {systemTab === 0 && (
-              <Box sx={{ p: 3, overflow: 'auto', flex: 1 }}>
-                <ExpenseSettings showSnackbar={showSnackbar} />
-              </Box>
-            )}
-
-            {/* UTILITIES SUB-TAB */}
-            {systemTab === 1 && (
-              <Box sx={{ p: 3, overflow: 'auto', flex: 1 }}>
-                <UnifiedMigration showSnackbar={showSnackbar} />
-              </Box>
-            )}
-          </Box>
+          )}
         </TabPanel>
       </Box>
 

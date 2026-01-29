@@ -10,6 +10,7 @@ import {
 import Login from "./components/Login.jsx";
 import Dashboard from "./components/Dashboard.jsx";
 import AdminDashboard from "./components/AdminDashboard.jsx";
+import { AnalyticsProvider } from "./contexts/AnalyticsContext";
 
 import { auth, db } from "./firebase";
 import {
@@ -215,7 +216,9 @@ export default function App() {
     if (currentUser && userRole === "superadmin") {
       return (
         <Box sx={{ width: "100%", height: "100%", display: "flex" }}>
-          <AdminDashboard user={currentUser} onLogout={handleAdminLogout} />
+          <AnalyticsProvider>
+            <AdminDashboard user={currentUser} onLogout={handleAdminLogout} />
+          </AnalyticsProvider>
         </Box>
       );
     }

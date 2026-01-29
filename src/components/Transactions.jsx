@@ -53,10 +53,14 @@ import {
   writeBatch,
   deleteDoc,
   getDoc, // Added for fetching full order details
+  limit,
+  startAfter,
+  getDocs
 } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import { SimpleReceipt } from "./SimpleReceipt";
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
+import AdminLoading from "./common/AdminLoading"; // NEW IMPORT
 
 /* ---------- helpers ---------- */
 const startOfMonth = (d = new Date()) =>
@@ -107,7 +111,7 @@ const identifierText = (tx) => {
 const currency = (n) => `₱${Number(n || 0).toFixed(2)}`;
 
 /* ---------- component ---------- */
-export default function Transactions({ showSnackbar }) {
+const Transactions = ({ showSnackbar }) => {
   // Filters
   const [start, setStart] = useState(toDateInput(startOfMonth()));
   const [end, setEnd] = useState(toDateInput(endOfMonth()));
@@ -243,40 +247,110 @@ export default function Transactions({ showSnackbar }) {
     return () => unsub();
   }, []);
 
-  /* ---- Live transactions stream ---- */
-  const attachStream = (mode = liveMode) => {
+  /* ---- Pagination State ---- */
+  const [lastDoc, setLastDoc] = useState(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [initLoading, setInitLoading] = useState(true); // NEW STATE
+
+  /* ---- Live transactions stream (limited to recent) ---- */
+  // We stream ONLY if the range is small (<= 31 days) AND we are not in "All" mode.
+  // Actually, let's simplify:
+  // Mode 1: "Live" (This Month or Custom Range < 45 days). Uses Snapshot.
+  // Mode 2: "Archive" (All Time or Wide Range). Uses Pagination (getDocs).
+
+  const isWideRange = useMemo(() => {
+    const duration = new Date(end) - new Date(start);
+    return duration > 45 * 24 * 60 * 60 * 1000; // > 45 days
+  }, [start, end]);
+
+  const attachStream = async (mode = "month") => {
+    // Cleanup previous listener
     if (unsubRef.current) {
-      try {
-        unsubRef.current();
-      } catch { }
+      unsubRef.current();
       unsubRef.current = null;
     }
 
-    let qRef;
-    if (mode === "all") {
-      qRef = query(collection(db, "transactions"), orderBy("timestamp", "desc"));
+    setInitLoading(true); // Start loading
+
+    // Reset inputs
+    setLastDoc(null);
+    setHasMore(true);
+
+    if (mode === "all" || isWideRange) {
+      // PAGINATED MODE (One-time fetch)
+      setLiveMode("archive");
+      setTx([]); // Clear current
+      await fetchNextPage(true);
+      setInitLoading(false); // Stop loading
     } else {
-      const s = new Date(start);
-      s.setHours(0, 0, 0, 0);
-      const e = new Date(end);
-      e.setHours(23, 59, 59, 999);
-      qRef = query(
+      // LIVE MODE (Snapshot)
+      setLiveMode("month");
+      const s = new Date(start); s.setHours(0, 0, 0, 0);
+      const e = new Date(end); e.setHours(23, 59, 59, 999);
+
+      const qRef = query(
         collection(db, "transactions"),
         where("timestamp", ">=", s),
         where("timestamp", "<=", e),
-        orderBy("timestamp", "desc")
+        orderBy("timestamp", "desc"),
+        limit(200) // Safety limit for stream
       );
-    }
 
-    const unsub = onSnapshot(
-      qRef,
-      (snap) => setTx(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-      (err) => {
-        console.error("Transactions stream error:", err);
-        setTx([]);
+      const unsub = onSnapshot(qRef, (snap) => {
+        setTx(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setInitLoading(false); // Stop loading
+      }, (err) => {
+        console.error("Stream error", err);
+        setInitLoading(false); // Stop loading on error
+      });
+      unsubRef.current = unsub;
+    }
+  };
+
+  const fetchNextPage = async (isReset = false) => {
+    setLoadingMore(true);
+    try {
+      let constraints = [
+        orderBy("timestamp", "desc"),
+        limit(50)
+      ];
+
+      // Date Constraints (unless "all time" explicit mode, but even then limit is good)
+      // If liveMode is 'archive' and NOT 'all', we respect dates?
+      // Actually 'all' just means "Ignore Dates".
+      if (liveMode !== "all" && liveMode !== "archive_all") { // Custom logic
+        const s = new Date(start); s.setHours(0, 0, 0, 0);
+        const e = new Date(end); e.setHours(23, 59, 59, 999);
+        constraints.push(where("timestamp", ">=", s));
+        constraints.push(where("timestamp", "<=", e));
       }
-    );
-    unsubRef.current = unsub;
+
+      if (!isReset && lastDoc) {
+        constraints.push(startAfter(lastDoc));
+      } else if (!isReset && !lastDoc && tx.length > 0) {
+        // Should not happen if logic is correct
+      }
+
+      const q = query(collection(db, "transactions"), ...constraints);
+      const snap = await getDocs(q);
+
+      const newRows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      if (isReset) {
+        setTx(newRows);
+      } else {
+        setTx(prev => [...prev, ...newRows]);
+      }
+
+      setLastDoc(snap.docs[snap.docs.length - 1] || null);
+      setHasMore(snap.docs.length === 50);
+
+    } catch (err) {
+      console.error("Pagination error", err);
+      showSnackbar?.("Failed to load more.", "error");
+    } finally {
+      setLoadingMore(false);
+    }
   };
 
   useEffect(() => {
@@ -322,6 +396,7 @@ export default function Transactions({ showSnackbar }) {
 
   /* ---- Actions ---- */
   const exportCSV = () => {
+    // ... (Keep exportCSV content same, just keep the function signature)
     const headers = [
       "Timestamp",
       "Item",
@@ -378,16 +453,6 @@ export default function Transactions({ showSnackbar }) {
     URL.revokeObjectURL(url);
   };
 
-  const loadAll = () => {
-    setLiveMode("all");
-    attachStream("all");
-  };
-  const backToMonth = () => {
-    setLiveMode("month");
-    attachStream("month");
-    // scroll back to the top of controls on mobile
-    setTimeout(() => datesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
-  };
   const resetFilters = () => {
     setStart(toDateInput(startOfMonth()));
     setEnd(toDateInput(endOfMonth()));
@@ -397,10 +462,7 @@ export default function Transactions({ showSnackbar }) {
     setOnlyDeleted(false);
     setOnlyEdited(false);
     setServicesFilter([]);
-    if (liveMode !== "month") {
-      setLiveMode("month");
-      attachStream("month");
-    }
+    attachStream("month");
   };
 
   /* ---- Reprint Handler (NEW) ---- */
@@ -692,6 +754,10 @@ export default function Transactions({ showSnackbar }) {
   }
 
   /* ---- VIEW ---- */
+  if (initLoading) {
+    return <AdminLoading message="Loading transactions..." />;
+  }
+
   return (
     <Box
       sx={{
@@ -743,24 +809,24 @@ export default function Transactions({ showSnackbar }) {
             fullWidth
           />
           <Stack direction="row" spacing={1}>
-            {liveMode === "all" ? (
+            {liveMode === "archive" || liveMode === "all" ? (
               <Button
                 startIcon={<RefreshIcon />}
                 variant="outlined"
-                onClick={backToMonth}
+                onClick={() => attachStream("month")} // Back to live
                 fullWidth
               >
-                Back to Month
+                Back to Live
               </Button>
             ) : (
               <Button
                 startIcon={<ClearAllIcon />}
                 variant="outlined"
                 color="warning"
-                onClick={loadAll}
+                onClick={() => attachStream("all")}
                 fullWidth
               >
-                All Transactions
+                Load Archive
               </Button>
             )}
           </Stack>
@@ -1129,11 +1195,11 @@ export default function Transactions({ showSnackbar }) {
                       startIcon={<ClearAllIcon />}
                       variant="outlined"
                       color="warning"
-                      onClick={loadAll}
+                      onClick={() => attachStream("all")}
                       fullWidth
                       size="small"
                     >
-                      All Transactions
+                      Load Archive
                     </Button>
                   )}
                 </Stack>
@@ -1632,4 +1698,5 @@ export default function Transactions({ showSnackbar }) {
       />
     </Box>
   );
-}
+};
+export default React.memo(Transactions);

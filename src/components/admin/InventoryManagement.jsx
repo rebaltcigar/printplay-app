@@ -131,7 +131,7 @@ export default function InventoryManagement({ showSnackbar }) {
 
             {/* KPI Cards (Optional Future) */}
             <Grid container spacing={2} sx={{ mb: 3 }}>
-                <Grid item xs={12} sm={4}>
+                <Grid size={{ xs: 12, sm: 4 }}>
                     <Card sx={{ p: 2 }}>
                         <Typography variant="caption" color="text.secondary">Total Inventory Value</Typography>
                         <Typography variant="h6" fontWeight="bold">

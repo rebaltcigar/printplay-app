@@ -40,6 +40,7 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import AddIcon from "@mui/icons-material/Add";
 import EditIcon from "@mui/icons-material/Edit";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow"; // Resume icon
+import AdminLoading from "./common/AdminLoading"; // NEW IMPORT
 import ShiftDetailView from "./ShiftDetailView";
 import { db } from "../firebase";
 import {
@@ -184,11 +185,12 @@ const aggregateShiftTransactions = (txList, serviceMeta, pcRental = 0) => {
 };
 
 /* -------------------- component -------------------- */
-export default function Shifts({ showSnackbar }) {
+const Shifts = ({ showSnackbar }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
 
   const [shifts, setShifts] = useState([]);
+  const [loading, setLoading] = useState(true); // NEW STATE
   const [services, setServices] = useState([]);
   const [userMap, setUserMap] = useState({});
   const [viewingShift, setViewingShift] = useState(null);
@@ -297,6 +299,7 @@ export default function Shifts({ showSnackbar }) {
   };
 
   useEffect(() => {
+    setLoading(true); // Start loading
     let qRef = query(collection(db, "shifts"), orderBy("startTime", "desc"));
     if (startDate) qRef = query(qRef, where("startTime", ">=", Timestamp.fromDate(new Date(startDate))));
     if (endDate) {
@@ -306,9 +309,13 @@ export default function Shifts({ showSnackbar }) {
     }
     const unsub = onSnapshot(
       qRef,
-      (snap) => setShifts(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+      (snap) => {
+        setShifts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setLoading(false); // Done loading
+      },
       (err) => {
         console.error("Error fetching shifts:", err);
+        setLoading(false); // Done (error)
         if (err.code === "failed-precondition") {
           showSnackbar?.("Firestore needs an index. Check console.", 'error');
         }
@@ -593,6 +600,10 @@ export default function Shifts({ showSnackbar }) {
 
   if (viewingShift) {
     return <ShiftDetailView shift={viewingShift} userMap={userMap} onBack={() => setViewingShift(null)} showSnackbar={showSnackbar} />;
+  }
+
+  if (loading) {
+    return <AdminLoading message="Loading shifts..." />;
   }
 
   return (
@@ -1112,4 +1123,5 @@ export default function Shifts({ showSnackbar }) {
       </Dialog>
     </Box>
   );
-}
+};
+export default React.memo(Shifts);
