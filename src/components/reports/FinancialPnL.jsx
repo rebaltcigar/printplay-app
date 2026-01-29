@@ -208,6 +208,10 @@ export default function FinancialPnL() {
                 <FormControl size="small" sx={{ minWidth: 150 }}>
                     <InputLabel>Period</InputLabel>
                     <Select value={preset} label="Period" onChange={(e) => setPreset(e.target.value)}>
+                        <MenuItem value="today">Today</MenuItem>
+                        <MenuItem value="yesterday">Yesterday</MenuItem>
+                        <MenuItem value="thisWeek">This Week</MenuItem>
+                        <MenuItem value="lastWeek">Last Week</MenuItem>
                         <MenuItem value="thisMonth">This Month</MenuItem>
                         <MenuItem value="lastMonth">Last Month</MenuItem>
                         <MenuItem value="thisYear">This Year</MenuItem>

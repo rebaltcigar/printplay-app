@@ -35,30 +35,33 @@ export function getRange(preset, monthYear /* Date|null */, allTimeStart /* Date
       start = now.startOf("day").subtract(6, "day");
       end = now.endOf("day");
       break;
+    case "yesterday":
+      start = now.subtract(1, "day").startOf("day");
+      end = now.subtract(1, "day").endOf("day");
+      break;
+    case "thisWeek":
+      start = now.startOf("week"); // Locale aware (usually Sunday start, use isoWeek for Monday)
+      end = now.endOf("week");
+      break;
+    case "lastWeek":
+      start = now.subtract(1, "week").startOf("week");
+      end = now.subtract(1, "week").endOf("week");
+      break;
     case "thisMonth":
       start = now.startOf("month");
       end = now.endOf("month");
       break;
-    case "monthYear": {
-      const d = dayjs(monthYear || now).tz(ZONE);
-      start = d.startOf("month");
-      end = d.endOf("month");
+    case "lastMonth":
+      start = now.subtract(1, "month").startOf("month");
+      end = now.subtract(1, "month").endOf("month");
       break;
-    }
     case "thisYear":
       start = now.startOf("year");
       end = now.endOf("year");
       break;
-    case "allTime": {
-      const s = allTimeStart ? dayjs(allTimeStart).tz(ZONE) : dayjs("1970-01-01").tz(ZONE);
-      start = s.startOf("day");
-      end = now.endOf("day");
-      break;
-    }
-    case "past12":
-      // Start of month, 11 months ago -> Total 12 months including current
-      start = now.subtract(11, "month").startOf("month");
-      end = now.endOf("month");
+    case "lastYear":
+      start = now.subtract(1, "year").startOf("year");
+      end = now.subtract(1, "year").endOf("year");
       break;
     default:
       start = now.startOf("month");

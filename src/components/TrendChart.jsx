@@ -35,8 +35,8 @@ export default function TrendChart({
           contentStyle={{ backgroundColor: '#111', border: '1px solid #333' }}
           formatter={(value, name) => {
             if (name === "sales") return [peso(value), "Gross Sales"];
-            if (name === "operatingProfit") return [peso(value), "Operating Profit"];
-            if (name === "netCashFlow") return [peso(value), "Net Cash Flow"];
+            if (name === "expenses") return [peso(value), "Operating Expenses"];
+            if (name === "capex") return [peso(value), "CAPEX"];
             return [peso(value), name];
           }}
         />
@@ -53,11 +53,11 @@ export default function TrendChart({
         {showExpenses && (
           <Line
             type="monotone"
-            dataKey="operatingProfit"
+            dataKey="opex"
             stroke="#d32f2f" // Red
             strokeWidth={2}
             dot={false}
-            name="operatingProfit"
+            name="expenses"
           />
         )}
         {includeCapitalInExpenses && showExpenses && (

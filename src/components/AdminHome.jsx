@@ -239,6 +239,13 @@ export default function AdminHome({ user, showSnackbar }) {
     let debtsCollected = 0;
     let debtsIssued = 0;
 
+    // Sum PC Rentals from Shifts
+    let pcRentalRevenue = 0;
+    shiftsScope.forEach(s => {
+      pcRentalRevenue += Number(s.pcRentalTotal || 0);
+    });
+
+    // Sum Transactions
     filteredTx.forEach((t) => {
       const amt = txAmount(t);
       const isExp =
@@ -261,19 +268,25 @@ export default function AdminHome({ user, showSnackbar }) {
           (t.notes || "").toLowerCase().includes("capex") ||
           t.financialCategory === 'CAPEX';
 
-        if (includeCapitalInExpenses || !isCap) {
+        // Fix: Widget specifically asked to exclude CAPEX.
+        // We will calculate "expenses" as Pure OpEx for the KPI card.
+        // We can create a separate "totalOutflow" if needed, but for "Operating Expenses" widget:
+        if (!isCap) {
           expenses += Math.abs(amt);
         }
       } else {
-        // Sales
+        // Sales from Transactions (Items, Services, etc.)
         sales += amt;
       }
     });
 
-    profit = sales - expenses;
+    // Total Gross Sales = Transaction Sales + PC Rental Revenue
+    sales += pcRentalRevenue;
+
+    profit = sales - expenses; // Net Profit (OpEx based)
 
     return { sales, expenses, profit, debtsIssued, debtsCollected };
-  }, [filteredTx, includeCapitalInExpenses]);
+  }, [filteredTx, shiftsScope]);
 
   // 3. TRENDS
   const trendData = useMemo(() => {
@@ -484,7 +497,7 @@ export default function AdminHome({ user, showSnackbar }) {
               {currency(kpi.expenses)}
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              {includeCapitalInExpenses ? "Inc. CAPEX" : "Excl. CAPEX"}
+              Operating Expenses Only (Excl. Assets)
             </Typography>
           </Card>
         </Box>
