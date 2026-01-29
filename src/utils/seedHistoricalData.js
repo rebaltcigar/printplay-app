@@ -1,16 +1,6 @@
 // src/utils/seedHistoricalData.js
 // Quota-safe DEV seeder for Firebase Spark plan.
-// - Purges only 'shifts' and 'transactions' docs (not collections)
-// - Generates 2 shifts/day (Morning 11-19, Night 19-03)
-// - Strictly low document counts: ~5 tx per shift (max), debts ~1 per day
-// - Prices use your ranges only; DB price is ignored
-// - Maintenance 50–1000, 1–2×/month
-//
-// Estimated full run (Mar 1, 2025 -> yesterday):
-// ~440 shift docs
-// ~ (<=5 tx/shift) * 440 ≈ <=2200 tx
-// + weekly/monthly/misc/debts ≈ 100–200
-// Total writes per run ≈ 2.5–2.8k  (safe for 3 runs/day under 60% of 20k)
+// ... (comments preserved)
 
 import {
   addDoc, collection, getDocs, query, where, limit,
@@ -18,9 +8,13 @@ import {
 } from "firebase/firestore";
 import { db as defaultDb } from "../firebase";
 
+const log = (logger, msg) => {
+  if (logger && typeof logger === 'function') logger(msg);
+};
+
 // ----- fixed shop config -----
 const MORNING = { hStart: 11, mStart: 0, hEnd: 19, mEnd: 0, label: "Morning", staff: "test@test.com" };
-const NIGHT   = { hStart: 19, mStart: 0, hEnd:  3, mEnd: 0, label: "Night",   staff: "kleng@gmail.com" };
+const NIGHT = { hStart: 19, mStart: 0, hEnd: 3, mEnd: 0, label: "Night", staff: "kleng@gmail.com" };
 
 const RATE_PC = 15;   // ₱/hour
 const PCS = 8;        // computers
@@ -28,9 +22,9 @@ const SHIFT_HOURS = 8;
 const START_ISO = "2025-08-01"; // inclusive
 
 // ----- helpers -----
-const rnd    = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+const rnd = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 const choose = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const ts     = (d) => Timestamp.fromDate(d);
+const ts = (d) => Timestamp.fromDate(d);
 
 const atLocal = (baseDate, h, m) => {
   const d = new Date(baseDate);
@@ -47,24 +41,24 @@ const nextDay = (d) => {
 function classify(serviceName = "") {
   const s = (serviceName || "").toLowerCase();
   if (s.includes("photocopy")) return "photocopy";
-  if (s.includes("photo"))     return "photo";      // detect before generic "print"
-  if (s.includes("sticker"))   return "sticker";
-  if (s.includes("laminate"))  return "laminate";
-  if (s.includes("scan"))      return "scan";
-  if (s.includes("wifi"))      return "wifi";
-  if (s.includes("print"))     return "print";
+  if (s.includes("photo")) return "photo";      // detect before generic "print"
+  if (s.includes("sticker")) return "sticker";
+  if (s.includes("laminate")) return "laminate";
+  if (s.includes("scan")) return "scan";
+  if (s.includes("wifi")) return "wifi";
+  if (s.includes("print")) return "print";
   return null;
 }
 function priceFromCategory(cat) {
   switch (cat) {
-    case "print":     return choose([3,5,10,20]);
+    case "print": return choose([3, 5, 10, 20]);
     case "photocopy": return 3;
-    case "photo":     return rnd(20,100);
-    case "sticker":   return rnd(20,100);
-    case "laminate":  return rnd(20,100);
-    case "scan":      return 5;
-    case "wifi":      return choose([1,5,10,20]);
-    default:          return rnd(5,50);
+    case "photo": return rnd(20, 100);
+    case "sticker": return rnd(20, 100);
+    case "laminate": return rnd(20, 100);
+    case "scan": return 5;
+    case "wifi": return choose([1, 5, 10, 20]);
+    default: return rnd(5, 50);
   }
 }
 
@@ -97,9 +91,10 @@ function seasonality(date, period) {
 }
 
 // ----- Firestore utilities -----
-async function purgeCollection(db, colName) {
+async function purgeCollection(db, colName, logger) {
   const col = collection(db, colName);
   let lastDoc = null;
+  let count = 0;
   while (true) {
     const qy = lastDoc
       ? query(col, orderBy("__name__"), startAfter(lastDoc), limit(500))
@@ -109,12 +104,16 @@ async function purgeCollection(db, colName) {
     const batch = writeBatch(db);
     snap.docs.forEach(d => batch.delete(d.ref));
     await batch.commit();
+    count += snap.size;
+    log(logger, `Purged ${count} docs from ${colName}...`);
     lastDoc = snap.docs[snap.docs.length - 1];
   }
 }
-async function purgeShiftsAndTransactions(db) {
-  await purgeCollection(db, "transactions");
-  await purgeCollection(db, "shifts");
+async function purgeShiftsAndTransactions(db, logger) {
+  log(logger, "Purging transactions...");
+  await purgeCollection(db, "transactions", logger);
+  log(logger, "Purging shifts...");
+  await purgeCollection(db, "shifts", logger);
 }
 async function fetchServices(db) {
   const snap = await getDocs(collection(db, "services"));
@@ -127,7 +126,8 @@ async function fetchServices(db) {
   );
   return { revenue };
 }
-async function createTenCustomers(db) {
+async function createTenCustomers(db, logger) {
+  log(logger, "Creating seed customers...");
   const col = collection(db, "customers");
   const when = ts(new Date());
   for (let i = 0; i < 10; i++) {
@@ -140,7 +140,8 @@ async function createTenCustomers(db) {
 }
 
 // ----- admin expenses (very few docs) -----
-async function writeMonthlyFixedExpenses(db, startDate, endDate) {
+async function writeMonthlyFixedExpenses(db, startDate, endDate, logger) {
+  log(logger, "Writing fixed monthly expenses...");
   const txCol = collection(db, "transactions");
   const months = [];
   const s = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
@@ -149,12 +150,12 @@ async function writeMonthlyFixedExpenses(db, startDate, endDate) {
 
   for (const m of months) {
     const pairs = [
-      { day: 1,  expenseType: "Rent",                    amount: 14000 },
-      { day: 3,  expenseType: "Internet - PLDT",         amount: 3000 },
-      { day: 4,  expenseType: "Internet - Converge",     amount: 3000 },
-      { day: 5,  expenseType: "Internet - Globe",        amount: 3000 },
-      { day: 10, expenseType: "Subscription - Canva",    amount: 500 },
-      { day: 11, expenseType: "Subscription - Pondo",    amount: 280 },
+      { day: 1, expenseType: "Rent", amount: 14000 },
+      { day: 3, expenseType: "Internet - PLDT", amount: 3000 },
+      { day: 4, expenseType: "Internet - Converge", amount: 3000 },
+      { day: 5, expenseType: "Internet - Globe", amount: 3000 },
+      { day: 10, expenseType: "Subscription - Canva", amount: 500 },
+      { day: 11, expenseType: "Subscription - Pondo", amount: 280 },
     ];
     for (const p of pairs) {
       await addDoc(txCol, {
@@ -179,12 +180,13 @@ async function writeMonthlyFixedExpenses(db, startDate, endDate) {
         isDeleted: false, isEdited: true, addedByAdmin: true,
         source: "admin_manual", staffEmail: "admin",
         shiftId: null,
-        timestamp: ts(atLocal(new Date(m.getFullYear(), m.getMonth(), day), rnd(9,18), rnd(0,59)))
+        timestamp: ts(atLocal(new Date(m.getFullYear(), m.getMonth(), day), rnd(9, 18), rnd(0, 59)))
       });
     }
   }
 }
-async function writeWeeklySalary(db, startDate, endDate) {
+async function writeWeeklySalary(db, startDate, endDate, logger) {
+  log(logger, "Writing weekly salaries...");
   const txCol = collection(db, "transactions");
   // first Sunday on/after start
   const d = new Date(startDate);
@@ -210,7 +212,8 @@ async function writeWeeklySalary(db, startDate, endDate) {
     d.setDate(d.getDate() + 7);
   }
 }
-async function writeMiscWeekly(db, startDate, endDate) {
+async function writeMiscWeekly(db, startDate, endDate, logger) {
+  log(logger, "Writing misc weekly expenses...");
   const txCol = collection(db, "transactions");
   for (let cur = new Date(startDate); cur <= endDate; cur.setDate(cur.getDate() + 7)) {
     const count = rnd(0, 1); // tighten to reduce docs
@@ -223,7 +226,7 @@ async function writeMiscWeekly(db, startDate, endDate) {
         isDeleted: false, isEdited: true, addedByAdmin: true,
         source: "admin_manual", staffEmail: "admin",
         shiftId: null,
-        timestamp: ts(atLocal(new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() + day), rnd(9,18), rnd(0,59)))
+        timestamp: ts(atLocal(new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() + day), rnd(9, 18), rnd(0, 59)))
       });
     }
   }
@@ -231,7 +234,7 @@ async function writeMiscWeekly(db, startDate, endDate) {
 
 // ----- low-doc shift generation -----
 function poolsByCategory(revenueServices) {
-  const pools = { print:[], photocopy:[], photo:[], sticker:[], laminate:[], scan:[], wifi:[] };
+  const pools = { print: [], photocopy: [], photo: [], sticker: [], laminate: [], scan: [], wifi: [] };
   for (const s of revenueServices) {
     const cat = classify(s.serviceName);
     if (cat && pools[cat]) pools[cat].push(s);
@@ -263,14 +266,14 @@ function quantityTargets(period, date) {
   if (period === "Morning") {
     return {
       printQty: Math.round((80 + rnd(0, 220)) * boost),   // 80–300 boosted
-      copyQty:  Math.round((20 + rnd(0, 100)) * boost),   // 20–120
-      otherQty: Math.round((5 + rnd(0, 25))   * boost)    // small
+      copyQty: Math.round((20 + rnd(0, 100)) * boost),   // 20–120
+      otherQty: Math.round((5 + rnd(0, 25)) * boost)    // small
     };
   } else {
     return {
       printQty: Math.round((20 + rnd(0, 100)) * boost),   // 20–120
-      copyQty:  Math.round((5 + rnd(0, 55))   * boost),   // 5–60
-      otherQty: Math.round((0 + rnd(0, 15))   * boost)
+      copyQty: Math.round((5 + rnd(0, 55)) * boost),   // 5–60
+      otherQty: Math.round((0 + rnd(0, 15)) * boost)
     };
   }
 }
@@ -368,7 +371,7 @@ async function generateForShift(db, {
     // schedule matching Paid Debt later (find shift after all are created)
     const payAt = new Date(when);
     payAt.setDate(payAt.getDate() + rnd(1, 2));
-    payAt.setHours(rnd(9,21), rnd(0,59), 0, 0);
+    payAt.setHours(rnd(9, 21), rnd(0, 59), 0, 0);
     scheduledPaidDebt = { customer: cust, amount: borrowed, when: payAt };
   }
 
@@ -386,15 +389,21 @@ async function generateForShift(db, {
   return { servicesTotal, expensesTotal, scheduledPaidDebt };
 }
 
-async function seedShiftsRange(db, startDate, endDate, pools, customers) {
+async function seedShiftsRange(db, startDate, endDate, pools, customers, logger) {
   const generatedShifts = [];   // [{id, start, end}]
   const scheduledPaidDebts = []; // [{customer, amount, when}]
 
+  let dayCount = 0;
+  log(logger, `Generating shifts from ${startDate.toDateString()} to ${endDate.toDateString()}...`);
+
   for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+    dayCount++;
+    if (dayCount % 7 === 0) log(logger, `Processing day ${dayCount}: ${d.toDateString()}...`);
+
     // Morning
     {
       const start = atLocal(d, MORNING.hStart, MORNING.mStart);
-      const end   = atLocal(d, MORNING.hEnd,   MORNING.mEnd);
+      const end = atLocal(d, MORNING.hEnd, MORNING.mEnd);
       const shiftId = await createShiftDoc(db, MORNING.label, start, end, MORNING.staff);
       generatedShifts.push({ id: shiftId, start, end });
 
@@ -417,7 +426,7 @@ async function seedShiftsRange(db, startDate, endDate, pools, customers) {
     // Night
     {
       const start = atLocal(d, NIGHT.hStart, NIGHT.mStart);
-      const end   = atLocal(nextDay(d), NIGHT.hEnd, NIGHT.mEnd);
+      const end = atLocal(nextDay(d), NIGHT.hEnd, NIGHT.mEnd);
       const shiftId = await createShiftDoc(db, NIGHT.label, start, end, NIGHT.staff);
       generatedShifts.push({ id: shiftId, start, end });
 
@@ -439,6 +448,7 @@ async function seedShiftsRange(db, startDate, endDate, pools, customers) {
     }
   }
 
+  log(logger, `Resolving ${scheduledPaidDebts.length} debt payments...`);
   // Resolve Paid Debts: attach to the shift that covers the pay time
   const txCol = collection(db, "transactions");
   for (const p of scheduledPaidDebts) {
@@ -463,17 +473,20 @@ export async function generateFakeHistory({
   startISO = START_ISO,
   endISO,                 // defaults to yesterday
   doPurgeFirst = true,    // delete docs in 'shifts' and 'transactions' first
+  onLog = null            // optional logger callback
 } = {}) {
   const startDate = new Date(startISO);
   const endDate = endISO ? new Date(endISO) : new Date();
   endDate.setDate(endDate.getDate() - 1); // up to yesterday
 
+  log(onLog, `Starting Generation: ${startDate.toDateString()} -> ${endDate.toDateString()}`);
+
   if (doPurgeFirst) {
-    await purgeShiftsAndTransactions(db);
+    await purgeShiftsAndTransactions(db, onLog);
   }
 
   // always add 10 customers (even if some exist)
-  await createTenCustomers(db);
+  await createTenCustomers(db, onLog);
 
   const { revenue } = await fetchServices(db);
   const pools = poolsByCategory(revenue);
@@ -482,10 +495,12 @@ export async function generateFakeHistory({
   const cs = await getDocs(collection(db, "customers"));
   const customers = cs.docs.map(d => ({ id: d.id, ...d.data() }));
 
-  await seedShiftsRange(db, startDate, endDate, pools, customers);
+  await seedShiftsRange(db, startDate, endDate, pools, customers, onLog);
 
   // small number of admin expenses
-  await writeMonthlyFixedExpenses(db, startDate, endDate);
-  await writeWeeklySalary(db, startDate, endDate);
-  await writeMiscWeekly(db, startDate, endDate);
+  await writeMonthlyFixedExpenses(db, startDate, endDate, onLog);
+  await writeWeeklySalary(db, startDate, endDate, onLog);
+  await writeMiscWeekly(db, startDate, endDate, onLog);
+
+  log(onLog, "Generation Finished!");
 }

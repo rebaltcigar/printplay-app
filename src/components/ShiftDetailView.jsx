@@ -919,7 +919,7 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
       </Box>
 
       <Typography variant="h5">
-        Shift Detail — {userMap[shift.staffEmail] || shift.staffEmail} —{" "}
+        Shift Detail — {shift.displayId || shift.id.slice(-6)} — {userMap[shift.staffEmail] || shift.staffEmail} —{" "}
         {shift.shiftPeriod} —{" "}
         {shift.startTime?.seconds
           ? new Date(shift.startTime.seconds * 1000).toLocaleDateString()

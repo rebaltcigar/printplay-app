@@ -5,20 +5,17 @@ import {
   Card,
   Typography,
   Stack,
-  LinearProgress,
   FormControl,
   InputLabel,
   Select,
   MenuItem,
-  TextField,
-  useMediaQuery,
+  useMediaQuery
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
-import { db, auth } from "../firebase";
+import { db } from "../firebase";
 import {
   collection,
   onSnapshot,
-  orderBy,
   query,
   where,
   doc,
@@ -26,21 +23,18 @@ import {
   deleteDoc,
   serverTimestamp,
   Timestamp,
+  orderBy,
   limit,
 } from "firebase/firestore";
 
 import {
   getRange,
   buildServiceMap,
-  classifyTx,
   txAmount,
   buildTrendSeries,
-  normalize as norm,
   fmtPeso,
-  saleMatchesService,
 } from "../utils/analytics";
 
-// ⬇️ THE NEW ONES – note the ./dashboard/... (not ../components/..)
 import TrendSection from "./dashboard/TrendSection";
 import ActiveShiftPanel from "./dashboard/ActiveShiftPanel";
 import StaffLeaderboardPanel from "./dashboard/StaffLeaderboardPanel";
@@ -78,7 +72,7 @@ export default function AdminHome({ user, showSnackbar }) {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
-  const [serviceFilter, setServiceFilter] = useState("All services");
+
   const [showSales, setShowSales] = useState(true);
   const [showExpenses, setShowExpenses] = useState(true);
   const [includeCapitalInExpenses, setIncludeCapitalInExpenses] =
@@ -111,9 +105,6 @@ export default function AdminHome({ user, showSnackbar }) {
   const [transactions, setTransactions] = useState([]);
   const [txLoading, setTxLoading] = useState(true);
 
-  const [debtTxAll, setDebtTxAll] = useState([]);
-  const [debtLoading, setDebtLoading] = useState(true);
-
   const [shiftsScope, setShiftsScope] = useState([]);
   const [shiftsLoading, setShiftsLoading] = useState(true);
 
@@ -123,12 +114,6 @@ export default function AdminHome({ user, showSnackbar }) {
 
   const [services, setServices] = useState([]);
   const serviceMap = useMemo(() => buildServiceMap(services), [services]);
-  const [serviceOptions, setServiceOptions] = useState([
-    "All services",
-    "Unknown",
-  ]);
-
-  const logoUrl = "/logo.png";
 
   /* earliest shift for all-time */
   useEffect(() => {
@@ -146,612 +131,420 @@ export default function AdminHome({ user, showSnackbar }) {
     return () => unsub();
   }, []);
 
-  /* scoped transactions (by date range) */
+  /* 1. TRANSACTIONS (range) */
   useEffect(() => {
+    if (!r.startUtc || !r.endUtc) return;
     setTxLoading(true);
-    const qRef = query(
+    const q = query(
       collection(db, "transactions"),
-      where("timestamp", ">=", r.startUtc),
-      where("timestamp", "<=", r.endUtc),
-      orderBy("timestamp", "desc")
+      where("timestamp", ">=", Timestamp.fromDate(r.startUtc)),
+      where("timestamp", "<=", Timestamp.fromDate(r.endUtc))
     );
     const unsub = onSnapshot(
-      qRef,
+      q,
       (snap) => {
-        setTransactions(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        const list = [];
+        snap.forEach((doc) => {
+          list.push({ id: doc.id, ...doc.data() });
+        });
+        setTransactions(list);
         setTxLoading(false);
       },
       (err) => {
-        console.error("Transactions listener error:", err);
-        if (showSnackbar) showSnackbar("Failed to load transactions.", 'error');
+        console.error("Tx load error", err);
         setTxLoading(false);
       }
     );
     return () => unsub();
   }, [r.startUtc, r.endUtc]);
 
-  /* services */
+  /* 2. SHIFTS (range) */
   useEffect(() => {
-    const qRef = query(collection(db, "services"), orderBy("sortOrder"));
-    const unsub = onSnapshot(qRef, (snap) => {
-      const list = snap.docs
-        .map((d) => d.data() || {})
-        .filter((v) => v.active === true && (v.serviceName || v.name))
-        .map((v) => ({
-          serviceName: v.serviceName || v.name,
-          category: v.category || "",
-          active: !!v.active,
-          sortOrder: v.sortOrder ?? 0,
-        }));
-      setServices(list);
-      const opts = ["All services", ...list.map((x) => x.serviceName), "Unknown"];
-      setServiceOptions(opts);
-      setServiceFilter((prev) => (opts.includes(prev) ? prev : "All services"));
+    if (!r.startUtc || !r.endUtc) return;
+    setShiftsLoading(true);
+    const q = query(
+      collection(db, "shifts"),
+      where("startTime", ">=", Timestamp.fromDate(r.startUtc)),
+      where("startTime", "<=", Timestamp.fromDate(r.endUtc))
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const list = [];
+      snap.forEach((doc) => {
+        list.push({ id: doc.id, ...doc.data() });
+      });
+      setShiftsScope(list);
+      setShiftsLoading(false);
+    });
+    return () => unsub();
+  }, [r.startUtc, r.endUtc]);
+
+  /* 3. CURRENT SHIFT STATUS */
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, "app_status", "current_shift"), (doc) => {
+      setCurrentShiftStatus(doc.exists() ? doc.data() : null);
     });
     return () => unsub();
   }, []);
 
-  /* shifts in range */
+  /* 4. ACTIVE SHIFT DETAILS */
   useEffect(() => {
-    setShiftsLoading(true);
-    const qRef = query(
-      collection(db, "shifts"),
-      where("startTime", ">=", Timestamp.fromDate(r.startUtc)),
-      where("startTime", "<=", Timestamp.fromDate(r.endUtc)),
-      orderBy("startTime", "asc")
-    );
-    const unsub = onSnapshot(
-      qRef,
-      (snap) => {
-        setShiftsScope(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setShiftsLoading(false);
-      },
-      (err) => {
-        console.error("Shifts listener error:", err);
-        if (showSnackbar) showSnackbar("Failed to load shifts.", 'error');
-        setShiftsLoading(false);
-      }
-    );
-    return () => unsub();
-  }, [r.startUtc, r.endUtc]);
-
-  /* all-time debt for KPI */
-  useEffect(() => {
-    setDebtLoading(true);
-    const qRef = query(
-      collection(db, "transactions"),
-      where("item", "in", ["New Debt", "Paid Debt"])
-    );
-    const unsub = onSnapshot(
-      qRef,
-      (snap) => {
-        setDebtTxAll(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setDebtLoading(false);
-      },
-      (err) => {
-        console.error("Debt listener error:", err);
-        if (showSnackbar) showSnackbar("Failed to load debt records.", 'error');
-        setDebtLoading(false);
-      }
-    );
-    return () => unsub();
-  }, []);
-
-  /* active shift status */
-  useEffect(() => {
-    const ref = doc(db, "app_status", "current_shift");
-    const unsub = onSnapshot(ref, (snap) =>
-      setCurrentShiftStatus(snap.exists() ? snap.data() : null)
-    );
-    return () => unsub();
-  }, []);
-
-  const activeShiftId = currentShiftStatus?.activeShiftId;
-
-  // 1) listen to active shift doc
-  useEffect(() => {
-    if (!activeShiftId) {
+    if (!currentShiftStatus?.activeShiftId) {
       setTheActiveShift(null);
-      return;
-    }
-    const shiftRef = doc(db, "shifts", activeShiftId);
-    const unsub = onSnapshot(
-      shiftRef,
-      (snap) =>
-        setTheActiveShift(snap.exists() ? { id: snap.id, ...snap.data() } : null),
-      () => setTheActiveShift(null)
-    );
-    return () => unsub();
-  }, [activeShiftId]);
-
-  // 2) listen to transactions for that shift
-  useEffect(() => {
-    if (!activeShiftId) {
       setActiveShiftTx([]);
       return;
     }
-    const qRef = query(
+    const unsubShift = onSnapshot(
+      doc(db, "shifts", currentShiftStatus.activeShiftId),
+      (s) => {
+        setTheActiveShift(s.exists() ? { id: s.id, ...s.data() } : null);
+      }
+    );
+    const qTx = query(
       collection(db, "transactions"),
-      where("shiftId", "==", activeShiftId),
-      orderBy("timestamp", "desc"),
-      limit(100)
+      where("shiftId", "==", currentShiftStatus.activeShiftId)
     );
-    const unsub = onSnapshot(
-      qRef,
-      (snap) => {
-        const txs = snap.docs
-          .map((d) => ({ id: d.id, ...d.data() }))
-          .filter((t) => t.isDeleted !== true);
-        setActiveShiftTx(txs);
-      },
-      () => setActiveShiftTx([])
-    );
+    const unsubTx = onSnapshot(qTx, (snap) => {
+      const list = [];
+      snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+      setActiveShiftTx(list);
+    });
+    return () => {
+      unsubShift();
+      unsubTx();
+    };
+  }, [currentShiftStatus?.activeShiftId]);
+
+  /* 5. SERVICES */
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "services"), (snap) => {
+      const list = [];
+      snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+      setServices(list);
+    });
     return () => unsub();
-  }, [activeShiftId]);
+  }, []);
 
-  /* ------------ derived ------------ */
-  const activeShifts = useMemo(
-    () => (theActiveShift ? [theActiveShift] : []),
-    [theActiveShift]
-  );
-  const isLoadingActiveShift = !!activeShiftId && !theActiveShift;
+  /* ============ COMPUTATIONS ============ */
 
-  const visibleTx = useMemo(
-    () => transactions.filter((t) => t.isDeleted !== true),
-    [transactions]
-  );
+  // 1. FILTER TRANSACTIONS
+  const filteredTx = useMemo(() => {
+    return transactions.filter((t) => !t.isDeleted);
+  }, [transactions]);
 
-  // KPI values (with capital toggle applied)
+  // 2. METRICS
   const kpi = useMemo(() => {
     let sales = 0;
     let expenses = 0;
-    let capital = 0;
+    let profit = 0;
+    let debtsCollected = 0;
+    let debtsIssued = 0;
 
-    for (const t of visibleTx) {
-      const cls = classifyTx(t, serviceMap);
-      if (!cls) continue;
+    filteredTx.forEach((t) => {
       const amt = txAmount(t);
+      const isExp =
+        t.category === "credit" ||
+        (t.amount < 0 && !t.serviceId) ||
+        t.expenseType ||
+        t.item === "Expenses";
 
-      if (cls === "expense") {
-        expenses += amt;
-        if (String(t.expenseType || "").toLowerCase().includes("capital")) {
-          capital += amt;
+      const isDebtNew = t.item === "New Debt";
+      const isDebtPaid = t.item === "Paid Debt";
+
+      if (isDebtNew) {
+        debtsIssued += amt;
+      } else if (isDebtPaid) {
+        debtsCollected += amt;
+      } else if (isExp) {
+        // check capital
+        const isCap =
+          (t.expenseType || "").toLowerCase().includes("asset") ||
+          (t.notes || "").toLowerCase().includes("capex") ||
+          t.financialCategory === 'CAPEX';
+
+        if (includeCapitalInExpenses || !isCap) {
+          expenses += Math.abs(amt);
         }
       } else {
-        if (saleMatchesService(t, serviceFilter, serviceMap)) {
-          sales += amt;
-        }
+        // Sales
+        sales += amt;
       }
-    }
-
-    const includePCRental =
-      !serviceFilter ||
-      serviceFilter === "All services" ||
-      norm(serviceFilter) === "pc rental";
-    if (includePCRental) {
-      sales += (shiftsScope || []).reduce(
-        (sum, s) => sum + Number(s?.pcRentalTotal || 0),
-        0
-      );
-    }
-
-    const effectiveExpenses = includeCapitalInExpenses
-      ? expenses
-      : Math.max(0, expenses - capital);
-
-    return {
-      sales,
-      expenses: effectiveExpenses,
-      net: sales - effectiveExpenses,
-    };
-  }, [
-    visibleTx,
-    serviceMap,
-    serviceFilter,
-    shiftsScope,
-    includeCapitalInExpenses,
-  ]);
-
-  const outstandingDebt = useMemo(() => {
-    const per = new Map();
-    debtTxAll.forEach((t) => {
-      if (t.isDeleted) return;
-      const id = t.customerId || "__unknown__";
-      const amt = Number(t.total || 0);
-      const prev = per.get(id) || 0;
-      const bal =
-        t.item === "New Debt"
-          ? prev + amt
-          : t.item === "Paid Debt"
-            ? prev - amt
-            : prev;
-      per.set(id, bal);
     });
-    return Array.from(per.values())
-      .filter((v) => v >= 1)
-      .reduce((a, b) => a + b, 0);
-  }, [debtTxAll]);
 
-  const trendSeries = useMemo(() => {
-    const gran =
-      preset === "thisYear"
-        ? "month"
-        : preset === "allTime" && allTimeMode === "yearly"
-          ? "year"
-          : preset === "allTime" && allTimeMode === "monthly"
-            ? "month"
-            : "day";
+    profit = sales - expenses;
 
-    const axis =
-      preset === "past7"
-        ? "date"
-        : preset === "thisMonth" || preset === "monthYear"
-          ? "number"
-          : gran === "month"
-            ? "month"
-            : "year";
+    return { sales, expenses, profit, debtsIssued, debtsCollected };
+  }, [filteredTx, includeCapitalInExpenses]);
+
+  // 3. TRENDS
+  const trendData = useMemo(() => {
+    let granularity = "day";
+    if (preset === "thisYear" || preset === "lastYear") {
+      granularity = "month";
+    } else if (preset === "allTime") {
+      granularity = allTimeMode === "yearly" ? "year" : "month";
+    }
 
     return buildTrendSeries({
-      transactions: visibleTx,
+      transactions: filteredTx,
       shifts: shiftsScope,
       startLocal: r.startLocal,
       endLocal: r.endLocal,
-      granularity: gran,
-      axis,
-      serviceFilter,
-      serviceMap,
+      granularity,
+      serviceMap
     });
-  }, [
-    visibleTx,
-    shiftsScope,
-    r.startLocal,
-    r.endLocal,
-    preset,
-    allTimeMode,
-    serviceFilter,
-    serviceMap,
-  ]);
+  }, [filteredTx, shiftsScope, r.startLocal, r.endLocal, preset, allTimeMode, serviceMap]);
 
-  /* ------------ actions ------------ */
-  const forceEndShift = async (shift) => {
-    if (!shift?.id) return;
+  // 4. LEADERBOARD ROWS
+  const leaderboardRows = useMemo(() => {
+    const map = {};
+    filteredTx.forEach(t => {
+      const amt = txAmount(t);
+      if (t.isDeleted || amt <= 0) return;
+      const isExp = t.category === "credit" || t.expenseType || t.item === "Expenses" || t.item === "Paid Debt";
+      if (isExp) return;
+
+      const user = t.staffEmail || "Unknown";
+      if (!map[user]) map[user] = 0;
+      map[user] += amt;
+    });
+    return Object.entries(map)
+      .map(([staff, sales]) => ({ staff, sales }))
+      .sort((a, b) => b.sales - a.sales);
+  }, [filteredTx]);
+
+  /* ============ ACTIONS ============ */
+  const handleForceEndShift = (shift) => {
+    const sid = shift?.id;
+    if (!sid) return;
     setConfirmDialog({
       open: true,
-      title: "Force End Shift",
-      message: `Force end shift for ${shift.staffEmail || "unknown"} now?`,
-      requireReason: false,
-      confirmColor: "primary",
-      onConfirm: async () => {
-        try {
-          const endedBy = auth.currentUser?.email || "admin";
-          await updateDoc(doc(db, "shifts", shift.id), {
-            endTime: Timestamp.fromDate(new Date()),
-            endedBy,
-            status: "ended",
-          });
-          await clearShiftLockIfMatches(shift.id, endedBy);
-          if (showSnackbar) showSnackbar("Shift ended successfully.", 'success');
-        } catch (e) {
-          console.error(e);
-          showSnackbar?.("Failed to end shift.", 'error');
-        }
-      }
-    });
-  };
-
-  const softDeleteTx = async (row) => {
-    setConfirmDialog({
-      open: true,
-      title: "Soft Delete Transaction",
-      message: `Delete transaction: ${row.item} (${fmtPeso(txAmount(row))})?`,
+      title: "Force End Shift?",
+      message:
+        "This will end the current active shift immediately. The system will calculate totals based on current data.",
       requireReason: true,
-      confirmColor: "warning",
-      onConfirm: async (reason) => {
-        try {
-          await updateDoc(doc(db, "transactions", row.id), {
-            isDeleted: true,
-            deletedAt: new Date(),
-            deletedBy: auth.currentUser?.email || "admin",
-            deleteReason: reason,
-            lastUpdatedAt: serverTimestamp(),
-          });
-          if (showSnackbar) showSnackbar("Transaction deleted (soft).", 'success');
-        } catch (e) {
-          console.error(e);
-          showSnackbar?.("Failed to delete transaction.", 'error');
-        }
-      }
-    });
-  };
-
-  const hardDeleteTx = async (row) => {
-    setConfirmDialog({
-      open: true,
-      title: "PERMANENT Delete",
-      message: "This cannot be undone. Permanently delete this transaction?",
-      requireReason: false,
+      confirmText: "End Shift",
       confirmColor: "error",
-      onConfirm: async () => {
-        try {
-          await deleteDoc(doc(db, "transactions", row.id));
-          if (showSnackbar) showSnackbar("Transaction permanently deleted.", 'success');
-        } catch (e) {
-          console.error(e);
-          showSnackbar?.("Hard delete failed.", 'error');
-        }
-      }
+      onConfirm: async (reason) => {
+        await updateDoc(doc(db, "shifts", sid), {
+          endTime: serverTimestamp(),
+          forcedEndBy: user.email,
+          forcedEndReason: reason,
+        });
+        await clearShiftLockIfMatches(sid, user.email);
+        showSnackbar("Shift forced ended", "warning");
+      },
     });
   };
 
-  /* ------------ UI ------------ */
+  const handleSoftDeleteTx = async (tx) => {
+    if (!tx?.id) return;
+    try {
+      const ref = doc(db, "transactions", tx.id);
+      await updateDoc(ref, {
+        isDeleted: true,
+        deletedAt: serverTimestamp(),
+        deletedBy: user.email,
+      });
+      showSnackbar("Transaction deleted (soft)", "success");
+    } catch (err) {
+      console.error(err);
+      showSnackbar("Failed to delete", "error");
+    }
+  };
+
+  const handleHardDeleteTx = async (tx) => {
+    if (!tx?.id) return;
+    if (!window.confirm("Are you sure you want to permanently delete this transaction? This cannot be undone.")) return;
+    try {
+      await deleteDoc(doc(db, "transactions", tx.id));
+      showSnackbar("Transaction permanently deleted", "success");
+    } catch (err) {
+      console.error(err);
+      showSnackbar("Failed to delete", "error");
+    }
+  };
+
+
+  /* ============ RENDER ============ */
   return (
     <Box
       sx={{
-        p: { xs: 1.5, sm: 2 },
+        height: "100%",
         display: "flex",
         flexDirection: "column",
-        gap: { xs: 1.5, md: 2.5 },
-        height: "100%",
-        minHeight: 0,
+        overflow: "hidden", // main scroll handling
+        bgcolor: "background.default",
       }}
     >
-      {/* header */}
+      {/* HEADER CONTROLS */}
       <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          gap: { xs: 1, sm: 2 },
-          flexWrap: "wrap",
-        }}
-      >
-        <img
-          src={logoUrl}
-          alt="logo"
-          style={{ height: 36 }}
-          onError={(e) => (e.currentTarget.style.display = "none")}
-        />
-        <Typography variant="h6" sx={{ fontWeight: 700 }}>
-          Admin Home
-        </Typography>
-        <Box sx={{ flexGrow: 1 }} />
-        <FormControl size="small" sx={{ minWidth: 160 }}>
-          <InputLabel>Time Range</InputLabel>
-          <Select
-            label="Time Range"
-            value={preset}
-            onChange={(e) => setPreset(e.target.value)}
-          >
-            <MenuItem value="past7">Past 7 Days</MenuItem>
-            <MenuItem value="thisMonth">This Month</MenuItem>
-            <MenuItem value="monthYear">Month–Year</MenuItem>
-            <MenuItem value="thisYear">This Year</MenuItem>
-            <MenuItem value="allTime">All Time</MenuItem>
-          </Select>
-        </FormControl>
-        {preset === "monthYear" && (
-          <Stack direction="row" spacing={1} alignItems="center">
-            <FormControl size="small" sx={{ minWidth: 110 }}>
-              <InputLabel>Month</InputLabel>
-              <Select
-                label="Month"
-                value={monthYear.getMonth()}
-                onChange={(e) =>
-                  setMonthYear(
-                    new Date(
-                      monthYear.getFullYear(),
-                      Number(e.target.value),
-                      1
-                    )
-                  )
-                }
-              >
-                {[
-                  "Jan",
-                  "Feb",
-                  "Mar",
-                  "Apr",
-                  "May",
-                  "Jun",
-                  "Jul",
-                  "Aug",
-                  "Sep",
-                  "Oct",
-                  "Nov",
-                  "Dec",
-                ].map((m, i) => (
-                  <MenuItem key={m} value={i}>
-                    {m}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <TextField
-              size="small"
-              label="Year"
-              type="number"
-              value={monthYear.getFullYear()}
-              onChange={(e) => {
-                const y = Number(e.target.value) || new Date().getFullYear();
-                setMonthYear(new Date(y, monthYear.getMonth(), 1));
-              }}
-              sx={{ width: 90 }}
-            />
-          </Stack>
-        )}
-        <FormControl size="small" sx={{ minWidth: 180 }}>
-          <InputLabel>Service</InputLabel>
-          <Select
-            label="Service"
-            value={serviceFilter}
-            onChange={(e) => setServiceFilter(e.target.value)}
-          >
-            {serviceOptions.map((opt) => (
-              <MenuItem key={opt} value={opt}>
-                {opt}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-      </Box>
-
-      {/* KPIs */}
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-          gap: { xs: 1.5, md: 2 },
-        }}
-      >
-        <KpiCard
-          title="Sales"
-          loading={txLoading || shiftsLoading}
-          value={currency(kpi.sales)}
-        />
-        <KpiCard
-          title={
-            includeCapitalInExpenses ? "Expenses" : "Expenses (no capital)"
-          }
-          loading={txLoading}
-          value={currency(kpi.expenses)}
-        />
-        <KpiCard
-          title="Net"
-          loading={txLoading || shiftsLoading}
-          value={currency(kpi.net)}
-          emphasize={kpi.net >= 0 ? "good" : "bad"}
-        />
-        <KpiCard
-          title="Outstanding Debt (All Time)"
-          loading={debtLoading}
-          value={currency(outstandingDebt)}
-        />
-      </Box>
-
-      {/* TREND CARD */}
-      <Card
         sx={{
           p: 2,
-          display: "flex",
-          flexDirection: "column",
-          gap: 1.25,
-          height: 340,
-          minHeight: 340,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          bgcolor: "background.paper",
         }}
       >
-        <TrendSection
-          preset={preset}
-          allTimeMode={allTimeMode}
-          setAllTimeMode={setAllTimeMode}
-          trendSeries={trendSeries}
-          showSales={showSales}
-          setShowSales={setShowSales}
-          showExpenses={showExpenses}
-          setShowExpenses={setShowExpenses}
-          includeCapitalInExpenses={includeCapitalInExpenses}
-          setIncludeCapitalInExpenses={setIncludeCapitalInExpenses}
-        />
-      </Card>
-
-      {/* MAIN GRID (desktop) */}
-      {isMobile ? (
-        <>
-          <ActiveShiftPanel
-            fixedHeight={340}
-            shiftsLoading={isLoadingActiveShift}
-            activeShifts={activeShifts}
-            activeShiftTx={activeShiftTx}
-            currency={currency}
-            forceEndShift={forceEndShift}
-            softDeleteTx={softDeleteTx}
-            hardDeleteTx={hardDeleteTx}
-          />
-          <StaffLeaderboardPanel
-            fixedHeight={340}
-            rows={buildStaffLeaderboard(
-              visibleTx,
-              serviceFilter,
-              serviceMap,
-              shiftsScope
-            )}
-          />
-          <Box
-            sx={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 2,
-            }}
-          >
-            <SalesBreakdownPanel
-              data={buildSalesBreakdown(
-                visibleTx,
-                serviceFilter,
-                serviceMap,
-                shiftsScope
-              )}
-            />
-            <ExpenseBreakdownPanel
-              data={buildExpenseBreakdown(visibleTx, serviceMap)}
-            />
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={2}
+          alignItems="center"
+          justifyContent="space-between"
+        >
+          <Box>
+            <Typography variant="h6" fontWeight="bold">
+              Dashboard
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Overview & Analytics
+            </Typography>
           </Box>
-        </>
-      ) : (
+
+          <Stack direction="row" spacing={2} alignItems="center">
+
+            <Box sx={{ flexGrow: 1 }} />
+
+            <FormControl size="small" sx={{ minWidth: 160 }}>
+              <InputLabel>Time Range</InputLabel>
+              <Select value={preset} onChange={(e) => setPreset(e.target.value)}>
+                <MenuItem value="today">Today</MenuItem>
+                <MenuItem value="yesterday">Yesterday</MenuItem>
+                <MenuItem value="thisWeek">This Week</MenuItem>
+                <MenuItem value="lastWeek">Last Week</MenuItem>
+                <MenuItem value="thisMonth">This Month</MenuItem>
+                <MenuItem value="lastMonth">Last Month</MenuItem>
+                <MenuItem value="thisYear">This Year</MenuItem>
+                <MenuItem value="lastYear">Last Year</MenuItem>
+                <MenuItem value="allTime">All Time</MenuItem>
+              </Select>
+            </FormControl>
+          </Stack>
+        </Stack>
+      </Box>
+
+      {/* SCROLLABLE CONTENT */}
+      <Box sx={{ flex: 1, overflowY: "auto", p: 2 }}>
+        {/* ROW 1: TOP CARDS */}
         <Box
           sx={{
             display: "grid",
-            gridTemplateColumns: "1fr 1fr",
+            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
             gap: 2,
-            alignItems: "stretch",
+            mb: 3,
           }}
         >
-          {/* top row - same fixed height */}
-          <ActiveShiftPanel
-            fixedHeight={340}
-            shiftsLoading={isLoadingActiveShift}
-            activeShifts={activeShifts}
-            activeShiftTx={activeShiftTx}
-            currency={currency}
-            forceEndShift={forceEndShift}
-            softDeleteTx={softDeleteTx}
-            hardDeleteTx={hardDeleteTx}
-          />
-          <StaffLeaderboardPanel
-            fixedHeight={340}
-            rows={buildStaffLeaderboard(
-              visibleTx,
-              serviceFilter,
-              serviceMap,
-              shiftsScope
-            )}
-          />
+          {/* NET PROFIT */}
+          <Card sx={{ p: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              Net Profit
+            </Typography>
+            <Typography
+              variant="h4"
+              sx={{
+                color: kpi.profit >= 0 ? "success.main" : "error.main",
+                fontWeight: "bold",
+                my: 1,
+              }}
+            >
+              {currency(kpi.profit)}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Sales - Expenses
+            </Typography>
+          </Card>
 
-          {/* bottom row - stretch both */}
-          <Box
-            sx={{
-              gridColumn: "1 / -1",
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 2,
-              alignItems: "stretch",
-              minHeight: 280,
-            }}
-          >
-            <SalesBreakdownPanel
-              data={buildSalesBreakdown(
-                visibleTx,
-                serviceFilter,
-                serviceMap,
-                shiftsScope
-              )}
+          {/* GROSS SALES */}
+          <Card sx={{ p: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              Gross Sales
+            </Typography>
+            <Typography
+              variant="h4"
+              sx={{ color: "primary.main", fontWeight: "bold", my: 1 }}
+            >
+              {currency(kpi.sales)}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {filteredTx.filter(t => {
+                const amt = txAmount(t);
+                return amt > 0 && !t.expenseType && t.item !== "Paid Debt";
+              }).length} transactions
+            </Typography>
+          </Card>
+
+          {/* EXPENSES */}
+          <Card sx={{ p: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              Operating Expenses
+            </Typography>
+            <Typography
+              variant="h4"
+              sx={{ color: "error.main", fontWeight: "bold", my: 1 }}
+            >
+              {currency(kpi.expenses)}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {includeCapitalInExpenses ? "Inc. CAPEX" : "Excl. CAPEX"}
+            </Typography>
+          </Card>
+        </Box>
+
+        {/* ROW 2: Trend Chart (Full Width) */}
+        <Box sx={{ mb: 3 }}>
+          <Card sx={{ p: 2, height: 450, display: "flex", flexDirection: "column" }}>
+            <TrendSection
+              preset={preset}
+              allTimeMode={allTimeMode}
+              setAllTimeMode={setAllTimeMode}
+              trendSeries={trendData}
+              showSales={showSales}
+              setShowSales={setShowSales}
+              showExpenses={showExpenses}
+              setShowExpenses={setShowExpenses}
+              includeCapitalInExpenses={includeCapitalInExpenses}
+              setIncludeCapitalInExpenses={setIncludeCapitalInExpenses}
             />
-            <ExpenseBreakdownPanel
-              data={buildExpenseBreakdown(visibleTx, serviceMap)}
+          </Card>
+        </Box>
+
+        {/* ROW 3: Active Shift & Leaderboard */}
+        <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mb: 3 }}>
+          <Box sx={{ flex: 1 }}>
+            {/* Always visible Active Shift Panel */}
+            <ActiveShiftPanel
+              shiftsLoading={false}
+              activeShifts={theActiveShift ? [theActiveShift] : []}
+              activeShiftTx={activeShiftTx}
+              currency={currency}
+              forceEndShift={handleForceEndShift}
+              softDeleteTx={handleSoftDeleteTx}
+              hardDeleteTx={handleHardDeleteTx}
+              fixedHeight={380}
             />
           </Box>
-        </Box>
-      )}
+          <Box sx={{ flex: 1 }}>
+            <StaffLeaderboardPanel
+              fixedHeight={380}
+              rows={leaderboardRows}
+            />
+          </Box>
+        </Stack>
+
+        {/* ROW 4: Breakdowns */}
+        <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mb: 5 }}>
+          <Box sx={{ flex: 1 }}>
+            <SalesBreakdownPanel transactions={filteredTx} />
+          </Box>
+          <Box sx={{ flex: 1 }}>
+            <ExpenseBreakdownPanel transactions={filteredTx} />
+          </Box>
+        </Stack>
+      </Box>
+
+      {/* Confirms */}
       <ConfirmationReasonDialog
         open={confirmDialog.open}
-        onClose={() => setConfirmDialog(p => ({ ...p, open: false }))}
+        onClose={() => setConfirmDialog((p) => ({ ...p, open: false }))}
         title={confirmDialog.title}
         message={confirmDialog.message}
         requireReason={confirmDialog.requireReason}
@@ -761,119 +554,4 @@ export default function AdminHome({ user, showSnackbar }) {
       />
     </Box>
   );
-}
-
-/* ------------ helpers for AdminHome ------------ */
-
-function KpiCard({ title, value, loading, emphasize }) {
-  return (
-    <Card sx={{ p: { xs: 1.25, sm: 2 }, height: "100%" }}>
-      <Typography variant="caption" sx={{ opacity: 0.7 }}>
-        {title}
-      </Typography>
-      <Typography
-        variant="h6"
-        sx={{
-          mt: 0.5,
-          fontWeight: 700,
-          color:
-            emphasize === "good"
-              ? "success.main"
-              : emphasize === "bad"
-                ? "error.main"
-                : "inherit",
-        }}
-      >
-        {value}
-      </Typography>
-      {loading && <LinearProgress sx={{ mt: 1 }} />}
-    </Card>
-  );
-}
-
-function buildStaffLeaderboard(
-  transactions,
-  serviceFilter,
-  serviceMap,
-  shiftsInRange
-) {
-  const salesByStaff = new Map();
-
-  (transactions || []).forEach((t) => {
-    const cls = classifyTx(t, serviceMap);
-    if (!cls || cls === "expense") return;
-    if (!saleMatchesService(t, serviceFilter, serviceMap)) return;
-    const staff = t.staffEmail || "—";
-    salesByStaff.set(staff, (salesByStaff.get(staff) || 0) + txAmount(t));
-  });
-
-  const includePCRental =
-    !serviceFilter ||
-    serviceFilter === "All services" ||
-    norm(serviceFilter) === "pc rental";
-  if (includePCRental) {
-    (shiftsInRange || []).forEach((sh) => {
-      const staff = sh.staffEmail || "—";
-      salesByStaff.set(
-        staff,
-        (salesByStaff.get(staff) || 0) + Number(sh.pcRentalTotal || 0)
-      );
-    });
-  }
-
-  return Array.from(salesByStaff.entries())
-    .map(([staff, sales]) => ({ staff, sales }))
-    .sort((a, b) => b.sales - a.sales);
-}
-
-function buildSalesBreakdown(
-  transactions,
-  serviceFilter,
-  serviceMap,
-  shiftsInRange
-) {
-  const map = new Map();
-
-  (transactions || []).forEach((t) => {
-    const cls = classifyTx(t, serviceMap);
-    if (!cls || cls === "expense") return;
-    if (!saleMatchesService(t, serviceFilter, serviceMap)) return;
-    const item = String(t.item || "");
-    map.set(item, (map.get(item) || 0) + txAmount(t));
-  });
-
-  const includePCRental =
-    !serviceFilter ||
-    serviceFilter === "All services" ||
-    norm(serviceFilter) === "pc rental";
-
-  if (includePCRental) {
-    const pc = (shiftsInRange || []).reduce(
-      (a, sh) => a + Number(sh.pcRentalTotal || 0),
-      0
-    );
-    if (pc) map.set("PC Rental", (map.get("PC Rental") || 0) + pc);
-  }
-
-  const list = Array.from(map.entries())
-    .map(([item, amount]) => ({ item, amount }))
-    .sort((a, b) => b.amount - a.amount);
-  const total = list.reduce((a, b) => a + b.amount, 0);
-  return { list, total };
-}
-
-function buildExpenseBreakdown(transactions, serviceMap) {
-  const map = new Map();
-  (transactions || []).forEach((t) => {
-    const cls = classifyTx(t, serviceMap);
-    if (cls !== "expense") return;
-    const type = t.expenseType || "Misc";
-    map.set(type, (map.get(type) || 0) + txAmount(t));
-  });
-
-  const list = Array.from(map.entries())
-    .map(([type, amount]) => ({ type, amount }))
-    .sort((a, b) => b.amount - a.amount);
-  const total = list.reduce((a, b) => a + b.amount, 0);
-  return { list, total };
 }

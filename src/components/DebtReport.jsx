@@ -100,7 +100,7 @@ export default function DebtManagement({ user, showSnackbar }) {
 
     const qTx = query(
       collection(db, "transactions"),
-      where("item", "in", ["New Debt", "Paid Debt"]),
+      // where("item", "in", ["New Debt", "Paid Debt"]), // REMOVED to allow capturing new invoiceStatus
       where("timestamp", ">=", start),
       where("timestamp", "<=", end),
       orderBy("timestamp", "desc")
@@ -109,8 +109,17 @@ export default function DebtManagement({ user, showSnackbar }) {
     const unsub = onSnapshot(
       qTx,
       (snap) => {
-        const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        setRows(data);
+        const fullList = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        // Client-side filter for Debt-relevant items
+        const debtItems = fullList.filter(t => {
+          // 1. Legacy
+          if (t.item === 'New Debt' || t.item === 'Paid Debt') return true;
+          // 2. New Accrual
+          if (t.invoiceStatus === 'UNPAID') return true;
+          // 3. Payments (Future proofing - if we add a 'Payment' category later)
+          return false;
+        });
+        setRows(debtItems);
         setLoading(false);
       },
       (err) => {
@@ -131,8 +140,16 @@ export default function DebtManagement({ user, showSnackbar }) {
       if (r.isDeleted) return;
       if (!r.customerId) return;
       const entry = map.get(r.customerId) || { name: r.customerName || "—", newDebt: 0, paid: 0 };
+
+      // Legacy
       if (r.item === "New Debt") entry.newDebt += Number(r.total || 0);
-      if (r.item === "Paid Debt") entry.paid += Number(r.total || 0);
+      else if (r.item === "Paid Debt") entry.paid += Number(r.total || 0);
+
+      // New Accrual (Unpaid Invoice)
+      else if (r.invoiceStatus === 'UNPAID') {
+        entry.newDebt += Number(r.total || 0);
+      }
+
       map.set(r.customerId, entry);
     });
     return Array.from(map.entries())

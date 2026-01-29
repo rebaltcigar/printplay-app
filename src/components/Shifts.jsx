@@ -58,6 +58,7 @@ import {
   setDoc,
   serverTimestamp,
 } from "firebase/firestore";
+import { generateDisplayId } from "../utils/idGenerator";
 
 // shared peso formatter (commas, no decimals; UI-only)
 import { fmtPeso } from "../utils/analytics";
@@ -496,7 +497,9 @@ export default function Shifts({ showSnackbar }) {
         showSnackbar?.("Please select a staff and provide a start time.", 'warning');
         return;
       }
+      const displayId = await generateDisplayId("shifts", "SHIFT");
       const payload = {
+        displayId,
         staffEmail: newStaffEmail.trim(),
         shiftPeriod: newShiftPeriod,
         startTime: toTimestamp(newStart),
@@ -815,6 +818,9 @@ export default function Shifts({ showSnackbar }) {
                         </Tooltip>
                       )}
                       {s.startTime ? new Date(s.startTime.seconds * 1000).toLocaleDateString() : "N/A"}
+                      <Typography variant="caption" display="block" color="text.secondary" sx={{ fontSize: "0.7rem" }}>
+                        {s.displayId || s.id.slice(-6)}
+                      </Typography>
                       <Box sx={{ display: { xs: "block", sm: "none" } }}>
                         <Chip size="small" label={s.shiftPeriod || "—"} sx={{ mt: 0.5, fontSize: 10 }} variant="outlined" />
                       </Box>
@@ -977,6 +983,9 @@ export default function Shifts({ showSnackbar }) {
                         </Tooltip>
                       )}
                       {s.startTime ? new Date(s.startTime.seconds * 1000).toLocaleDateString() : "N/A"}
+                      <Typography variant="caption" display="block" color="text.secondary" sx={{ fontSize: "0.7rem" }}>
+                        {s.displayId || s.id.slice(-6)}
+                      </Typography>
                     </TableCell>
                     <TableCell sx={{ pl: { xs: 1, sm: 2 }, whiteSpace: "nowrap" }}>{s.shiftPeriod}</TableCell>
                     <TableCell sx={{ maxWidth: 220 }}><Typography noWrap>{userMap[s.staffEmail] || s.staffEmail}</Typography></TableCell>

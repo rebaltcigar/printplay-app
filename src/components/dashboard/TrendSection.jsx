@@ -47,48 +47,6 @@ export default function TrendSection({
         </Typography>
         <Box sx={{ flexGrow: 1 }} />
         {/* toggles on the top right */}
-        <FormControlLabel
-          sx={{ mr: 1 }}
-          control={
-            <Checkbox
-              size="small"
-              checked={showSales}
-              onChange={(e) => setShowSales(e.target.checked)}
-            />
-          }
-          label="Sales"
-        />
-        <FormControlLabel
-          sx={{ mr: 1 }}
-          control={
-            <Checkbox
-              size="small"
-              checked={showExpenses}
-              onChange={(e) => {
-                const next = e.target.checked;
-                setShowExpenses(next);
-                if (!next) {
-                  setIncludeCapitalInExpenses(false);
-                }
-              }}
-            />
-          }
-          label="Expenses"
-        />
-        <FormControlLabel
-          sx={{ mr: 1 }}
-          control={
-            <Checkbox
-              size="small"
-              checked={includeCapitalInExpenses}
-              onChange={(e) =>
-                setIncludeCapitalInExpenses(e.target.checked)
-              }
-              disabled={!showExpenses}
-            />
-          }
-          label="Include capital"
-        />
         {preset === "allTime" && (
           <FormControl size="small" sx={{ minWidth: 120 }}>
             <InputLabel>View</InputLabel>
@@ -107,9 +65,9 @@ export default function TrendSection({
       <Box sx={{ flex: 1, minHeight: 0 }}>
         <TrendChart
           data={trendSeries}
-          showSales={showSales}
-          showExpenses={showExpenses}
-          includeCapitalInExpenses={includeCapitalInExpenses}
+          showSales={true}
+          showExpenses={true}
+          includeCapitalInExpenses={false}
         />
       </Box>
     </>

@@ -29,6 +29,7 @@ export const createOrderObject = (
             itemId: i.id,
             name: i.serviceName,
             price: i.price,
+            costPrice: i.costPrice || 0, // CAPTURE COST PRICE
             quantity: i.quantity || 1,
             subtotal: (i.price || 0) * (i.quantity || 1),
         })),

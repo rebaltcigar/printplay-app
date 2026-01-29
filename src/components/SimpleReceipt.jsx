@@ -182,7 +182,7 @@ export const SimpleReceipt = ({ order, staffName, settings }) => {
         <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
           <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>Payment Method:</Typography>
           <Typography variant="caption" sx={{ fontSize: '10px', fontWeight: 'bold', color: 'black' }}>
-            {order.paymentMethod}
+            {order.paymentMethod === 'Charge' ? 'Pay Later' : order.paymentMethod}
           </Typography>
         </Box>
 

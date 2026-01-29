@@ -4,7 +4,7 @@ import {
   Box, Button, Card, CardContent, Checkbox, Dialog, DialogActions, DialogContent,
   DialogTitle, FormControl, FormControlLabel, IconButton, InputLabel, MenuItem,
   Select, Stack, Table, TableBody, TableCell, TableContainer, TableHead,
-  TableRow, TextField, Typography, Tabs, Tab,
+  TableRow, TextField, Typography
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -12,19 +12,29 @@ import AddIcon from '@mui/icons-material/Add';
 import ReorderIcon from '@mui/icons-material/Reorder';
 import SaveIcon from '@mui/icons-material/Save';
 import {
-  collection, addDoc, updateDoc, deleteDoc, doc, query, onSnapshot, writeBatch
+  collection, addDoc, updateDoc, deleteDoc, doc, query, where, onSnapshot, writeBatch
 } from 'firebase/firestore';
-import { db } from '../firebase';
-import ConfirmationReasonDialog from './ConfirmationReasonDialog';
+import { db } from '../../firebase';
+import ConfirmationReasonDialog from '../ConfirmationReasonDialog';
 
-export default function ItemManagement({ showSnackbar }) {
+export default function ServiceCatalog({ showSnackbar }) {
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [view, setView] = useState('all');
+
+  // Form State
   const [form, setForm] = useState({
-    serviceName: '', price: '', active: true,
-    category: 'Debit', parentServiceId: null, adminOnly: false,
+    serviceName: '',
+    price: '',
+    active: true,
+    category: 'Debit', // Always Debit for Catalog
+    parentServiceId: null,
+    adminOnly: false,
+    type: 'service',
+    costPrice: '',
+    trackStock: false,
+    stockCount: 0,
+    lowStockThreshold: 5
   });
 
   const [editOrderMode, setEditOrderMode] = useState(false);
@@ -41,8 +51,9 @@ export default function ItemManagement({ showSnackbar }) {
     confirmColor: 'error'
   });
 
+  // Load ONLY Debit items (Services/Retail)
   useEffect(() => {
-    const q = query(collection(db, 'services'));
+    const q = query(collection(db, 'services'), where('category', '==', 'Debit'));
     const unsub = onSnapshot(q, snap => {
       setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
@@ -77,17 +88,12 @@ export default function ItemManagement({ showSnackbar }) {
     return result;
   }, [items, editOrderMode, orderedItems]);
 
-  const filteredItems = useMemo(() => {
-    if (view === 'all') return sortedAndGroupedItems;
-    const categoryToShow = view === 'services' ? 'Debit' : 'Credit';
-    return sortedAndGroupedItems.filter(item => item.category === categoryToShow);
-  }, [sortedAndGroupedItems, view]);
-
   const resetAndOpen = () => {
     setEditing(null);
     setForm({
       serviceName: '', price: '', active: true,
       category: 'Debit', parentServiceId: null, adminOnly: false,
+      type: 'service', costPrice: '', trackStock: false, stockCount: 0, lowStockThreshold: 5
     });
     setOpen(true);
   };
@@ -95,10 +101,17 @@ export default function ItemManagement({ showSnackbar }) {
   const startEdit = (item) => {
     setEditing(item);
     setForm({
-      serviceName: item.serviceName || '', price: Number(item.price || 0),
-      active: Boolean(item.active ?? true), category: item.category || 'Debit',
+      serviceName: item.serviceName || '',
+      price: Number(item.price || 0),
+      active: Boolean(item.active ?? true),
+      category: 'Debit',
       parentServiceId: item.parentServiceId || null,
       adminOnly: Boolean(item.adminOnly ?? false),
+      type: item.type || 'service',
+      costPrice: item.costPrice || '',
+      trackStock: Boolean(item.trackStock),
+      stockCount: item.stockCount || 0,
+      lowStockThreshold: item.lowStockThreshold || 5,
     });
     setOpen(true);
   };
@@ -108,8 +121,8 @@ export default function ItemManagement({ showSnackbar }) {
   const handleParentChange = (event) => {
     const parentId = event.target.value;
     if (parentId) {
-      const parent = itemMap.get(parentId);
-      setForm(prev => ({ ...prev, parentServiceId: parentId, category: parent.category }));
+      // const parent = itemMap.get(parentId); // No longer needed as all are Debit here
+      setForm(prev => ({ ...prev, parentServiceId: parentId }));
     } else {
       setForm(prev => ({ ...prev, parentServiceId: null }));
     }
@@ -119,10 +132,18 @@ export default function ItemManagement({ showSnackbar }) {
 
   const save = async () => {
     const payload = {
-      serviceName: String(form.serviceName).trim(), price: Number(form.price || 0),
-      active: Boolean(form.active), category: String(form.category),
+      serviceName: String(form.serviceName).trim(),
+      price: Number(form.price || 0),
+      active: Boolean(form.active),
+      category: 'Debit',
       parentServiceId: form.parentServiceId || null,
       adminOnly: Boolean(form.adminOnly),
+      // Fields
+      type: form.type,
+      costPrice: Number(form.costPrice || 0),
+      trackStock: Boolean(form.trackStock),
+      stockCount: Number(form.stockCount || 0),
+      lowStockThreshold: Number(form.lowStockThreshold || 0),
     };
     if (!payload.serviceName) {
       showSnackbar?.('Item name is required.', 'error');
@@ -145,7 +166,7 @@ export default function ItemManagement({ showSnackbar }) {
         await addDoc(collection(db, 'services'), payload);
       }
       close();
-      showSnackbar?.('Item saved successfully!', 'success');
+      showSnackbar?.('Catalog item saved!', 'success');
     } catch (e) {
       console.error('Save item failed:', e);
       showSnackbar?.('Failed to save item.', 'error');
@@ -238,7 +259,10 @@ export default function ItemManagement({ showSnackbar }) {
   return (
     <Box>
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
-        <Typography variant="h5">Services & Item Types</Typography>
+        <Box>
+          <Typography variant="h5">Service & Product Catalog</Typography>
+          <Typography variant="body2" color="text.secondary">Manage items available for sale in POS.</Typography>
+        </Box>
         <Stack direction="row" spacing={1}>
           {editOrderMode ? (
             <>
@@ -254,14 +278,6 @@ export default function ItemManagement({ showSnackbar }) {
         </Stack>
       </Stack>
 
-      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
-        <Tabs value={view} onChange={(e, newValue) => setView(newValue)} indicatorColor={editOrderMode ? 'secondary' : 'primary'}>
-          <Tab label="All" value="all" disabled={editOrderMode} />
-          <Tab label="Services" value="services" disabled={editOrderMode} />
-          <Tab label="Expenses" value="expenses" disabled={editOrderMode} />
-        </Tabs>
-      </Box>
-
       <Card>
         <CardContent>
           <TableContainer>
@@ -271,17 +287,18 @@ export default function ItemManagement({ showSnackbar }) {
                   <TableRow>
                     {editOrderMode && <TableCell sx={{ width: 40 }} />}
                     <TableCell>Name</TableCell>
-                    <TableCell sx={{ width: '15%' }}>Price</TableCell>
-                    <TableCell sx={{ width: '20%' }}>Category</TableCell>
-                    <TableCell align="center" sx={{ width: '10%' }}>Admin</TableCell>
-                    <TableCell align="center" sx={{ width: '10%' }}>Active</TableCell>
-                    <TableCell align="center" sx={{ width: '15%' }}>{editOrderMode ? 'Sort' : 'Actions'}</TableCell>
+                    <TableCell sx={{ width: '12%' }}>Type</TableCell>
+                    <TableCell sx={{ width: '12%' }}>Price</TableCell>
+                    {/* Cost/Stock is arguably less important here if we use Inventory Tab, but good for quick view */}
+                    <TableCell sx={{ width: '10%' }}>Stock</TableCell>
+                    <TableCell align="center" sx={{ width: '8%' }}>Active</TableCell>
+                    <TableCell align="center" sx={{ width: '12%' }}>{editOrderMode ? 'Sort' : 'Actions'}</TableCell>
                   </TableRow>
                 </TableHead>
                 <Droppable droppableId="items">
                   {(provided) => (
                     <TableBody ref={provided.innerRef} {...provided.droppableProps}>
-                      {filteredItems.map((item, index) => (
+                      {sortedAndGroupedItems.map((item, index) => (
                         <Draggable key={item.id} draggableId={item.id} index={index} isDragDisabled={!editOrderMode}>
                           {(provided, snapshot) => (
                             <TableRow
@@ -293,9 +310,24 @@ export default function ItemManagement({ showSnackbar }) {
                             >
                               {editOrderMode && <TableCell><ReorderIcon sx={{ cursor: 'grab', opacity: 0.5 }} /></TableCell>}
                               <TableCell sx={{ pl: item.parentServiceId ? 4 : 2, fontWeight: item.parentServiceId ? 400 : 600 }}>{item.serviceName}</TableCell>
+                              <TableCell>
+                                <span style={{
+                                  textTransform: 'uppercase', fontSize: '0.75rem',
+                                  padding: '2px 6px', borderRadius: 4,
+                                  background: item.type === 'retail' ? '#e8f5e9' : '#e3f2fd',
+                                  color: item.type === 'retail' ? '#2e7d32' : '#1565c0'
+                                }}>
+                                  {item.type || 'service'}
+                                </span>
+                              </TableCell>
                               <TableCell>{item.price > 0 ? Number(item.price).toFixed(2) : '—'}</TableCell>
-                              <TableCell>{item.category}</TableCell>
-                              <TableCell align="center" sx={{ fontWeight: 'bold' }}>{item.adminOnly ? '✓' : ''}</TableCell>
+                              <TableCell>
+                                {item.trackStock ? (
+                                  <span style={{ color: item.stockCount <= (item.lowStockThreshold || 0) ? 'red' : 'inherit', fontWeight: 'bold' }}>
+                                    {item.stockCount}
+                                  </span>
+                                ) : <span style={{ opacity: 0.5 }}>—</span>}
+                              </TableCell>
                               <TableCell align="center" sx={{ fontWeight: 'bold' }}>{item.active ? '✓' : ''}</TableCell>
                               <TableCell align="center">
                                 {editOrderMode ? <Typography variant="caption">{item.sortOrder}</Typography> : (
@@ -324,33 +356,55 @@ export default function ItemManagement({ showSnackbar }) {
         <DialogContent dividers>
           <Stack spacing={2} sx={{ pt: 1 }}>
             <FormControl fullWidth>
-              <InputLabel>Parent Item (Optional)</InputLabel>
-              <Select value={form.parentServiceId || ''} label="Parent Item (Optional)" onChange={handleParentChange}>
-                <MenuItem value=""><em>None (This is a top-level item)</em></MenuItem>
+              <InputLabel>Parent Item (For grouping)</InputLabel>
+              <Select value={form.parentServiceId || ''} label="Parent Item (For grouping)" onChange={handleParentChange}>
+                <MenuItem value=""><em>None (Top Level)</em></MenuItem>
                 {items.filter(i => !i.parentServiceId).map(p => <MenuItem key={p.id} value={p.id}>{p.serviceName}</MenuItem>)}
               </Select>
             </FormControl>
 
             <TextField label="Item Name" value={form.serviceName} onChange={(e) => onChange('serviceName', e.target.value)} fullWidth autoFocus />
+
+            <Stack direction="row" spacing={2}>
+              <TextField label="Price (Retail)" type="number" fullWidth value={form.price} onChange={(e) => onChange('price', e.target.value)} />
+              {/* Cost Price is hidden here, manage it in Inventory */}
+            </Stack>
+
             <FormControl fullWidth>
-              <InputLabel>Category</InputLabel>
-              <Select value={form.category} label="Category" onChange={(e) => onChange('category', e.target.value)} disabled={!!form.parentServiceId}>
-                <MenuItem value="Debit">Debit (Service)</MenuItem>
-                <MenuItem value="Credit">Credit (Expense)</MenuItem>
+              <InputLabel>Type</InputLabel>
+              <Select value={form.type} label="Type" onChange={(e) => onChange('type', e.target.value)}>
+                <MenuItem value="service">Service (Labor/Time)</MenuItem>
+                <MenuItem value="retail">Retail (Physical Good)</MenuItem>
               </Select>
             </FormControl>
 
-            <TextField label="Price" type="number" value={form.price} onChange={(e) => onChange('price', e.target.value)} />
+            {form.type === 'retail' && (
+              <Card variant="outlined" sx={{ p: 2, bgcolor: '#f9f9f9' }}>
+                <Typography variant="subtitle2" gutterBottom>Quick Inventory Setup</Typography>
+                <Typography variant="caption" display="block" mb={1} color="text.secondary">
+                  Use Inventory Tab for full management (Restocking, Audits).
+                </Typography>
+                <FormControlLabel control={<Checkbox checked={form.trackStock} onChange={(e) => onChange('trackStock', e.target.checked)} />} label="Track Stock Levels" />
 
-            <FormControlLabel control={<Checkbox checked={form.active} onChange={(e) => onChange('active', e.target.checked)} />} label="Active" />
-            <FormControlLabel control={<Checkbox checked={form.adminOnly} onChange={(e) => onChange('adminOnly', e.target.checked)} />} label="Admin Only (staff cannot see this item)" />
+                {form.trackStock && (
+                  <Stack direction="row" spacing={2} sx={{ mt: 1 }}>
+                    <TextField label="Initial Stock" type="number" fullWidth size="small" value={form.stockCount} onChange={(e) => onChange('stockCount', e.target.value)} />
+                    <TextField label="Low Stock Alert" type="number" fullWidth size="small" value={form.lowStockThreshold} onChange={(e) => onChange('lowStockThreshold', e.target.value)} />
+                  </Stack>
+                )}
+              </Card>
+            )}
+
+            <FormControlLabel control={<Checkbox checked={form.active} onChange={(e) => onChange('active', e.target.checked)} />} label="Active (Show in POS)" />
+            <FormControlLabel control={<Checkbox checked={form.adminOnly} onChange={(e) => onChange('adminOnly', e.target.checked)} />} label="Admin Allowed Only" />
           </Stack>
         </DialogContent>
         <DialogActions>
           <Button onClick={close}>Cancel</Button>
-          <Button variant="contained" onClick={save}>Save</Button>
+          <Button variant="contained" onClick={save}>Save Catalog Item</Button>
         </DialogActions>
       </Dialog>
+
       {/* Confirmation Dialog */}
       <ConfirmationReasonDialog
         open={confirmDialog.open}

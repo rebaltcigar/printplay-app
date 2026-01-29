@@ -14,7 +14,7 @@ import ReceiptIcon from '@mui/icons-material/Receipt';
 import MoneyOffIcon from '@mui/icons-material/MoneyOff'; // For expenses
 
 import { db, auth } from '../firebase';
-import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, getDoc } from 'firebase/firestore';
+import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, getDoc, writeBatch, increment } from 'firebase/firestore';
 import { generateOrderNumber, createOrderObject } from '../utils/orderService';
 import CustomerDialog from './CustomerDialog';
 import CheckoutDialog from './CheckoutDialog';
@@ -145,11 +145,21 @@ export default function POSView({ showSnackbar }) {
             // 2. Save Order to Firestore
             const orderRef = await addDoc(collection(db, 'orders'), fullOrder);
 
-            // 3. Fan-out to Transactions (Legacy Support)
-            // We create individual transaction records for each item so Shifts/Reports still work
+            // 3. Process Transactions & Inventory
+            const batch = writeBatch(db);
+
+            // 3a. Add Order Record
+            // We can't batch addDoc with auto-ID easily if we need the ID, 
+            // but we already did addDoc above. We'll proceed with other updates.
+
             for (const item of currentOrder.items) {
-                await addDoc(collection(db, 'transactions'), {
+                // Creates individual transaction record
+                // We use addDoc here usually, but since we want to batch everything with inventory updates...
+                // actually, we can't batch addDoc easily. Firestore SDK 'batch.set(doc(collection...))' works.
+                const txRef = doc(collection(db, 'transactions'));
+                batch.set(txRef, {
                     item: item.serviceName,
+                    serviceId: item.id, // Linked Service ID
                     price: item.price,
                     quantity: item.quantity,
                     total: item.price * item.quantity,
@@ -158,9 +168,26 @@ export default function POSView({ showSnackbar }) {
                     customerName: currentOrder.customer?.fullName || 'Walk-in',
                     orderId: orderRef.id,
                     orderNumber: orderNum,
-                    category: item.category || 'Debit'
+                    category: item.category || 'Debit',
+                    // NEW: Inventory & Profit Tracking
+                    unitCost: Number(item.costPrice || 0),
+                    financialCategory: 'Revenue', // Explicitly mark as Revenue
+                    // If it's a rental or service, cost might be 0, which is fine.
                 });
+
+                // 3b. Decrement Stock if applicable
+                if (item.trackStock && item.type === 'retail') {
+                    const itemRef = doc(db, 'services', item.id);
+                    // Calculates new stock. Note: concurrency handling ideally requires transactions, 
+                    // but for this scale, batch decrement is acceptable or we use increment(-quantity).
+                    // We will use the safe atomic increment.
+                    batch.update(itemRef, {
+                        stockCount: increment(-item.quantity)
+                    });
+                }
             }
+
+            await batch.commit();
 
             // 4. Close & Print
             setCheckoutOpen(false);
@@ -204,6 +231,7 @@ export default function POSView({ showSnackbar }) {
                 timestamp: serverTimestamp(),
                 staffEmail: expenseForm.staffEmail || user?.email,
                 category: 'Credit',
+                financialCategory: 'OPEX', // Default to OPEX for quick expenses
                 notes: "Quick Expense via POS"
             });
 

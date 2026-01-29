@@ -55,6 +55,11 @@ export function getRange(preset, monthYear /* Date|null */, allTimeStart /* Date
       end = now.endOf("day");
       break;
     }
+    case "past12":
+      // Start of month, 11 months ago -> Total 12 months including current
+      start = now.subtract(11, "month").startOf("month");
+      end = now.endOf("month");
+      break;
     default:
       start = now.startOf("month");
       end = now.endOf("month");
@@ -180,11 +185,11 @@ export function buildTrendSeries({
     granularity === "day"
       ? generateDailyKeys(startLocal, endLocal)
       : granularity === "month"
-      ? generateMonthlyKeys(startLocal, endLocal)
-      : generateYearlyKeys(startLocal, endLocal);
+        ? generateMonthlyKeys(startLocal, endLocal)
+        : generateYearlyKeys(startLocal, endLocal);
 
   // seed
-  keys.forEach((k) => buckets.set(k, { sales: 0, expenses: 0, capital: 0 }));
+  keys.forEach((k) => buckets.set(k, { sales: 0, cogs: 0, opex: 0, capex: 0 }));
 
   // 2) transactions
   (transactions || []).forEach((t) => {
@@ -199,14 +204,33 @@ export function buildTrendSeries({
     const bucket = buckets.get(key);
     if (!bucket) return;
 
+    const amt = txAmount(t);
+
+    // 1. Explicit Financial Category
+    if (t.financialCategory) {
+      if (t.financialCategory === 'Revenue') {
+        add(bucket, "sales", amt);
+        // COGS from unitCost
+        if (t.unitCost) {
+          const cost = Number(t.unitCost) * Number(t.quantity || 1);
+          add(bucket, "cogs", cost);
+        }
+      }
+      else if (t.financialCategory === 'COGS') add(bucket, "cogs", amt);
+      else if (t.financialCategory === 'OPEX') add(bucket, "opex", amt);
+      else if (t.financialCategory === 'CAPEX') add(bucket, "capex", amt);
+      return;
+    }
+
+    // 2. Legacy Fallback
     const cls = classifyTx(t, serviceMap);
     if (!cls) return;
 
-    const amt = txAmount(t);
     if (cls === "expense") {
-      add(bucket, "expenses", amt);
       if (isCapitalExpense(t)) {
-        add(bucket, "capital", amt);
+        add(bucket, "capex", amt);
+      } else {
+        add(bucket, "opex", amt);
       }
     } else {
       // sales + unknown sales respect service filter
@@ -244,8 +268,8 @@ export function buildTrendSeries({
       granularity === "day"
         ? dayjs.tz(k, "YYYY-MM-DD", ZONE)
         : granularity === "month"
-        ? dayjs.tz(k, "YYYY-MM", ZONE)
-        : dayjs.tz(k, "YYYY", ZONE);
+          ? dayjs.tz(k, "YYYY-MM", ZONE)
+          : dayjs.tz(k, "YYYY", ZONE);
 
     let x = k;
     if (granularity === "day") {
@@ -257,14 +281,22 @@ export function buildTrendSeries({
       x = d.format("YYYY");
     }
 
-    const bucket = buckets.get(k) || { sales: 0, expenses: 0, capital: 0 };
+    const bucket = buckets.get(k) || { sales: 0, cogs: 0, opex: 0, capex: 0 };
+    // Derived Calculations
+    const grossProfit = bucket.sales - bucket.cogs;
+    const operatingProfit = grossProfit - bucket.opex;
+    const netCashFlow = operatingProfit - bucket.capex;
+
     out.push({
       x,
       key: k,
       sales: bucket.sales,
-      expenses: bucket.expenses, // **includes capital**
-      capital: bucket.capital, // <= NEW
-      net: bucket.sales - bucket.expenses,
+      cogs: bucket.cogs,
+      opex: bucket.opex,
+      capex: bucket.capex,
+      grossProfit,
+      operatingProfit,
+      netCashFlow
     });
   }
 

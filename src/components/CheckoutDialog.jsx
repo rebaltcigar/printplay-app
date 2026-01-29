@@ -6,8 +6,9 @@ import {
 } from '@mui/material';
 import PaymentsIcon from '@mui/icons-material/Payments';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
+import HistoryIcon from '@mui/icons-material/History';
 
-export default function CheckoutDialog({ open, onClose, total, onConfirm }) {
+export default function CheckoutDialog({ open, onClose, total, onConfirm, customer }) {
     const [method, setMethod] = useState('Cash');
     const [tendered, setTendered] = useState('');
     const [gcashRef, setGcashRef] = useState('');
@@ -30,7 +31,16 @@ export default function CheckoutDialog({ open, onClose, total, onConfirm }) {
     const isGcashRefValid = /^\d{13}$/.test(gcashRef.trim());
     const isGcashPhoneValid = /^\d{11}$/.test(gcashPhone.trim());
     const isGcashValid = isGcashRefValid && isGcashPhoneValid;
-    const canConfirm = method === 'Cash' ? isCashValid : isGcashValid;
+
+    // Must have a valid customer ID (not walk-in/null) to allow Charge
+    const isChargeAllowed = customer && customer.id;
+
+    // Only allow Confirm if method is valid
+    const canConfirm =
+        method === 'Cash' ? isCashValid :
+            method === 'GCash' ? isGcashValid :
+                method === 'Charge' ? isChargeAllowed :
+                    false;
 
     const handleConfirm = (shouldPrint = false) => {
         if (!canConfirm) return;
@@ -63,7 +73,16 @@ export default function CheckoutDialog({ open, onClose, total, onConfirm }) {
                     <ToggleButtonGroup value={method} exclusive onChange={(e, m) => m && setMethod(m)} fullWidth color="primary">
                         <ToggleButton value="Cash"><PaymentsIcon sx={{ mr: 1 }} /> Cash</ToggleButton>
                         <ToggleButton value="GCash"><PhoneAndroidIcon sx={{ mr: 1 }} /> GCash</ToggleButton>
+                        <ToggleButton value="Charge" disabled={!isChargeAllowed}>
+                            <HistoryIcon sx={{ mr: 1 }} /> Charge (Pay Later)
+                        </ToggleButton>
                     </ToggleButtonGroup>
+
+                    {method === 'Charge' && (
+                        <Alert severity="warning">
+                            This will be recorded as "Unpaid" (Accounts Receivable).
+                        </Alert>
+                    )}
 
                     {method === 'Cash' && (
                         <Box>

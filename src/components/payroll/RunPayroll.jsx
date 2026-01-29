@@ -61,8 +61,10 @@ import {
   toLocaleDateStringPHT,
   toYMD_PHT_fromTS,
   todayYMD_PHT,
+
   tsFromYMD,
 } from "../../utils/payrollHelpers";
+import { generateDisplayId } from "../../utils/idGenerator";
 
 export default function RunPayroll({
   user,
@@ -763,7 +765,9 @@ export default function RunPayroll({
     startBusy("Creating new payroll run doc...");
 
     try {
+      const displayId = await generateDisplayId("payrollRuns", "PAY");
       const run = {
+        displayId,
         periodStart: tsFromYMD(periodStart, false),
         periodEnd: tsFromYMD(periodEnd, true),
         status: "draft",

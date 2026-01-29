@@ -274,8 +274,8 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
       // Combine for Legacy Dropdown
       const comboList = [
         ...serviceList,
-        { id: 'nd', serviceName: 'New Debt' },
-        { id: 'pd', serviceName: 'Paid Debt' }
+        // { id: 'nd', serviceName: 'New Debt' }, // DEPRECATED: Use 'Charge' at checkout
+        { id: 'pd', serviceName: 'Paid Debt' } // Keep 'Paid Debt' for accepting payments for now
       ];
 
       const uniqueCats = [...new Set(serviceList.map(i => i.category || 'Other'))].sort();
@@ -484,10 +484,12 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
     }
 
     // B. ADD TO CART (Standard Services)
+    const svc = services.find(s => s.serviceName === item);
     const cartItem = {
       id: Date.now(),
       serviceName: item,
       price: priceNum,
+      costPrice: svc?.costPrice || 0, // CAPTURE COST
       quantity: qtyNum,
     };
 
@@ -576,10 +578,12 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
   const handleCheckout = async (paymentData, shouldPrint = false) => {
     setIsLoading(true); // START LOADING
     try {
+      const isUnpaid = paymentData.paymentMethod === 'Charge' || paymentData.paymentMethod === 'Pay Later'; // Detect Debt
       const orderNum = await generateOrderNumber();
       const fullOrder = {
         orderNumber: orderNum,
         shiftId: activeShiftId,
+        invoiceStatus: isUnpaid ? 'UNPAID' : 'PAID', // ADD STATUS
         ...createOrderObject(
           currentOrder.items,
           currentTotal,
@@ -599,6 +603,7 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
         batch.set(txRef, {
           item: item.serviceName,
           price: Number(item.price),
+          costPrice: Number(item.costPrice || 0), // SAVE COST
           quantity: Number(item.quantity),
           total: Number(item.price) * Number(item.quantity),
           timestamp: serverTimestamp(),
@@ -607,8 +612,10 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
           customerId: currentOrder.customer?.id || null,
           shiftId: activeShiftId,
           orderNumber: orderNum,
-          category: 'Revenue',
+          category: 'Revenue', // Always Revenue (Accrual)
+          financialCategory: 'Revenue', // Explicit
           paymentMethod: paymentData.paymentMethod,
+          invoiceStatus: isUnpaid ? 'UNPAID' : 'PAID', // ADD STATUS
           isDeleted: false
         });
       });
@@ -1390,6 +1397,7 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
         onClose={() => setOpenCheckout(false)}
         total={currentTotal}
         onConfirm={currentOrder.isExisting ? actuallyUpdateOrder : handleCheckout}
+        customer={currentOrder.customer}
       />
       <StaffDebtLookupDialog open={openDebtDialog} onClose={() => setOpenDebtDialog(false)} />
 

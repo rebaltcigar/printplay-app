@@ -97,6 +97,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
   /** ===================== FORM STATE (LEFT) ===================== */
   const [formDate, setFormDate] = useState(toDateOnlyString(new Date()));
   const [formType, setFormType] = useState("");
+  const [financialCategory, setFinancialCategory] = useState("OPEX"); // NEW: OPEX, COGS, CAPEX
   const [formStaffId, setFormStaffId] = useState("");
   const [formStaffName, setFormStaffName] = useState("");
   const [formStaffEmail, setFormStaffEmail] = useState("");
@@ -327,6 +328,16 @@ export default function ExpenseManagement({ user, showSnackbar }) {
       setFormPrice("");
       setFormQuantity("");
     }
+
+    // Auto-suggest Financial Category
+    const t = selectedType.toLowerCase();
+    if (t.includes('salary') || t.includes('rent') || t.includes('utilities') || t.includes('maintenance')) {
+      setFinancialCategory('OPEX');
+    } else if (t.includes('asset') || t.includes('equipment') || t.includes('renovation')) {
+      setFinancialCategory('CAPEX');
+    } else if (t.includes('stock') || t.includes('inventory')) {
+      setFinancialCategory('COGS');
+    }
   };
 
   const handleExportCSV = () => {
@@ -397,7 +408,9 @@ export default function ExpenseManagement({ user, showSnackbar }) {
       total,
       notes: formNotes || "",
       shiftId: null, // Default for admin-added expenses
+      startShiftId: null, // Legacy field
       source: "admin_manual",
+      financialCategory: financialCategory || "OPEX", // NEW FIELD
       timestamp: transactionDate,
       staffEmail: user?.email || "admin",
       isDeleted: false,
@@ -417,7 +430,10 @@ export default function ExpenseManagement({ user, showSnackbar }) {
       // 3. Add the complete document
       await addDoc(collection(db, "transactions"), expenseDoc);
 
+      await addDoc(collection(db, "transactions"), expenseDoc);
+
       setFormType("");
+      setFinancialCategory("OPEX");
       setFormStaffId("");
       setFormStaffName("");
       setFormStaffEmail("");
@@ -444,6 +460,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
     setCurrentlyEditing(row);
     setFormDate(row._dateOnly);
     setFormType(row.expenseType || "");
+    setFinancialCategory(row.financialCategory || "OPEX");
     setFormStaffId(row.expenseStaffId || "");
     setFormStaffName(row.expenseStaffName || "");
     setFormStaffEmail(row.expenseStaffEmail || "");
@@ -494,6 +511,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
         _formData: {
           formDate,
           formType,
+          financialCategory,
           formStaffId,
           formQuantity,
           formPrice,
@@ -513,7 +531,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
       return;
     }
 
-    const { formDate, formType, formStaffId, formQuantity, formPrice, formNotes } =
+    const { formDate, formType, financialCategory, formStaffId, formQuantity, formPrice, formNotes } =
       row._formData;
 
     const qty = Number(formQuantity || 0);
@@ -653,30 +671,42 @@ export default function ExpenseManagement({ user, showSnackbar }) {
             </MenuItem>
           ))}
         </Select>
+
       </FormControl>
 
-      {(formType === "Salary" || formType === "Salary Advance") && (
-        <FormControl fullWidth required size={fieldSize}>
-          <InputLabel>Staff</InputLabel>
-          <Select
-            label="Staff"
-            value={formStaffId}
-            onChange={(e) => setFormStaffId(e.target.value)}
-          >
-            {staffOptions.length === 0 ? (
-              <MenuItem value="" disabled>
-                No staff available
-              </MenuItem>
-            ) : (
-              staffOptions.map((s) => (
-                <MenuItem key={s.id} value={s.id}>
-                  {s.fullName}
+      <FormControl fullWidth required size={fieldSize}>
+        <InputLabel>Financial Category</InputLabel>
+        <Select label="Financial Category" value={financialCategory} onChange={(e) => setFinancialCategory(e.target.value)}>
+          <MenuItem value="OPEX">OPEX (Operating Expense)</MenuItem>
+          <MenuItem value="COGS">COGS (Cost of Goods)</MenuItem>
+          <MenuItem value="CAPEX">CAPEX (Capital Asset/Equipment)</MenuItem>
+        </Select>
+      </FormControl>
+
+      {
+        (formType === "Salary" || formType === "Salary Advance") && (
+          <FormControl fullWidth required size={fieldSize}>
+            <InputLabel>Staff</InputLabel>
+            <Select
+              label="Staff"
+              value={formStaffId}
+              onChange={(e) => setFormStaffId(e.target.value)}
+            >
+              {staffOptions.length === 0 ? (
+                <MenuItem value="" disabled>
+                  No staff available
                 </MenuItem>
-              ))
-            )}
-          </Select>
-        </FormControl>
-      )}
+              ) : (
+                staffOptions.map((s) => (
+                  <MenuItem key={s.id} value={s.id}>
+                    {s.fullName}
+                  </MenuItem>
+                ))
+              )}
+            </Select>
+          </FormControl>
+        )
+      }
 
       <TextField
         type="number"
@@ -723,7 +753,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
           </Button>
         )}
       </Stack>
-    </Stack>
+    </Stack >
   );
 
   /** ===================== RENDER ===================== */

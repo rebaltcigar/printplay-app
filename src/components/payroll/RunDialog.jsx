@@ -636,7 +636,7 @@ export default function RunDialog({
                                               variant="caption"
                                               sx={{ opacity: 0.7 }}
                                             >
-                                              {r.id.slice(-6)}
+                                              {r.displayId || r.id.slice(-6)}
                                             </Typography>
                                           </TableCell>
                                         </TableRow>
