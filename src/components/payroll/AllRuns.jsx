@@ -43,8 +43,9 @@ import {
   toHours,
   toLocaleDateStringPHT,
 } from "../../utils/payrollHelpers";
+import ConfirmationReasonDialog from "../ConfirmationReasonDialog";
 
-export default function AllRuns({ onOpenRunInModal, onOpenPaystubs }) {
+export default function AllRuns({ onOpenRunInModal, onOpenPaystubs, showSnackbar }) {
   const [runs, setRuns] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -54,6 +55,14 @@ export default function AllRuns({ onOpenRunInModal, onOpenPaystubs }) {
     "posted",
     "voided",
   ]);
+
+  const [confirmDialog, setConfirmDialog] = useState({
+    open: false,
+    title: "",
+    message: "",
+    onConfirm: null,
+    requireReason: false,
+  });
 
   // load runs
   useEffect(() => {
@@ -83,52 +92,56 @@ export default function AllRuns({ onOpenRunInModal, onOpenPaystubs }) {
   // delete / void
   const onDelete = async (r) => {
     if (r.status === "posted") {
-      // void flow
-      if (
-        !window.confirm(
-          "This run is posted. Voiding will mark salary transactions voided and the run as voided. Continue?"
-        )
-      )
-        return;
-      const txSnap = await getDocs(
-        query(
-          collection(db, "transactions"),
-          where("payrollRunId", "==", r.id),
-          where("voided", "==", false)
-        )
-      );
-      const batch = writeBatch(db);
-      txSnap.docs.forEach((t) => batch.update(t.ref, { voided: true }));
-      batch.update(doc(db, "payrollRuns", r.id), {
-        status: "voided",
-        updatedAt: serverTimestamp(),
+      setConfirmDialog({
+        open: true,
+        title: "Void Payroll Run",
+        message: "This run is posted. Voiding will mark salary transactions voided and the run as voided. Continue?",
+        requireReason: false,
+        confirmColor: "primary",
+        onConfirm: async () => {
+          const txSnap = await getDocs(
+            query(
+              collection(db, "transactions"),
+              where("payrollRunId", "==", r.id),
+              where("voided", "==", false)
+            )
+          );
+          const batch = writeBatch(db);
+          txSnap.docs.forEach((t) => batch.update(t.ref, { voided: true }));
+          batch.update(doc(db, "payrollRuns", r.id), {
+            status: "voided",
+            updatedAt: serverTimestamp(),
+          });
+          await batch.commit();
+          showSnackbar?.("Run voided.", 'success');
+        }
       });
-      await batch.commit();
-      alert("Run voided.");
     } else {
-      // hard delete
-      if (
-        !window.confirm(
-          "Delete this run? This will remove the run and its lines/overrides/paystubs."
-        )
-      )
-        return;
-      const linesSnap = await getDocs(
-        collection(db, "payrollRuns", r.id, "lines")
-      );
-      for (const l of linesSnap.docs) {
-        const overSnap = await getDocs(
-          collection(db, "payrollRuns", r.id, "lines", l.id, "shifts")
-        );
-        overSnap.forEach((o) => deleteDoc(o.ref));
-        await deleteDoc(l.ref);
-      }
-      const stubsSnap = await getDocs(
-        collection(db, "payrollRuns", r.id, "paystubs")
-      );
-      stubsSnap.forEach((s) => deleteDoc(s.ref));
-      await deleteDoc(doc(db, "payrollRuns", r.id));
-      alert("Run deleted.");
+      setConfirmDialog({
+        open: true,
+        title: "Delete Payroll Run",
+        message: "Delete this run? This will remove the run and its lines/overrides/paystubs.",
+        requireReason: false,
+        confirmColor: "error",
+        onConfirm: async () => {
+          const linesSnap = await getDocs(
+            collection(db, "payrollRuns", r.id, "lines")
+          );
+          for (const l of linesSnap.docs) {
+            const overSnap = await getDocs(
+              collection(db, "payrollRuns", r.id, "lines", l.id, "shifts")
+            );
+            overSnap.forEach((o) => deleteDoc(o.ref));
+            await deleteDoc(l.ref);
+          }
+          const stubsSnap = await getDocs(
+            collection(db, "payrollRuns", r.id, "paystubs")
+          );
+          stubsSnap.forEach((s) => deleteDoc(s.ref));
+          await deleteDoc(doc(db, "payrollRuns", r.id));
+          showSnackbar?.("Run deleted.", 'success');
+        }
+      });
     }
   };
 
@@ -257,6 +270,16 @@ export default function AllRuns({ onOpenRunInModal, onOpenPaystubs }) {
           </TableBody>
         </Table>
       </TableContainer>
+      <ConfirmationReasonDialog
+        open={confirmDialog.open}
+        onClose={() => setConfirmDialog(p => ({ ...p, open: false }))}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        requireReason={confirmDialog.requireReason}
+        onConfirm={confirmDialog.onConfirm}
+        confirmText={confirmDialog.confirmText}
+        confirmColor={confirmDialog.confirmColor}
+      />
     </Card>
   );
 }

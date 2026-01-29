@@ -71,6 +71,7 @@ export default function RunPayroll({
   onOpenedFromHistory,
   onOpenPaystubs,
   requestOpenDialogRef,
+  showSnackbar,
 }) {
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
@@ -100,8 +101,6 @@ export default function RunPayroll({
     shifts: [],
   });
 
-  const openFeedback = (title, message) =>
-    setFeedback({ open: true, title, message });
   const closeFeedback = () =>
     setFeedback((p) => ({ ...p, open: false, message: "" }));
 
@@ -134,7 +133,8 @@ export default function RunPayroll({
   //
   const generatePreview = async (decision = null) => {
     if (!periodStart || !periodEnd) {
-      openFeedback("Select period", "Pick a start and end date first.");
+      if (showSnackbar) showSnackbar("Pick a start and end date first.", 'warning');
+      else openFeedback("Select period", "Pick a start and end date first.");
       return;
     }
 
@@ -171,7 +171,8 @@ export default function RunPayroll({
       });
 
       if (shiftsToProcess.length === 0) {
-        openFeedback("No shifts", "No eligible shifts found in this period.");
+        if (showSnackbar) showSnackbar("No eligible shifts found in this period.", 'info');
+        else openFeedback("No shifts", "No eligible shifts found in this period.");
         stopBusy();
         return;
       }
@@ -183,20 +184,20 @@ export default function RunPayroll({
 
       shiftsToProcess.forEach((s) => {
         //
-        if (!s.startTime) return; 
+        if (!s.startTime) return;
 
         const email = s.staffEmail || "unknown";
-        
+
         //
         const isOngoing = !s.endTime;
         const effectiveEnd = isOngoing ? Timestamp.now() : s.endTime;
-        
+
         // If it's ongoing, we set an overrideEnd immediately so the calc works
         const overrideEnd = isOngoing ? effectiveEnd : null;
 
         const minutes = minutesBetweenTS(s.startTime, effectiveEnd);
         const shortage = shortageForShift(s);
-        
+
         const row = {
           id: s.id,
           start: s.startTime,
@@ -218,7 +219,7 @@ export default function RunPayroll({
           expenseDate: null,
         };
         shiftsById.set(s.id, row);
-        
+
         const bucket =
           byStaff.get(email) || {
             staffUid: s.staffUid || null,
@@ -317,8 +318,8 @@ export default function RunPayroll({
           info.staffEmail ||
           (info.staffUid
             ? Array.from(usersByEmail.values()).find(
-                (u) => u.uid === info.staffUid
-              )?.email
+              (u) => u.uid === info.staffUid
+            )?.email
             : null);
         const bucketKey = emailKey || info.staffEmail || null;
         if (bucketKey && byStaff.has(bucketKey)) {
@@ -367,8 +368,8 @@ export default function RunPayroll({
           0
         );
         const otherDeductions = Number(extraAdvanceTotal.toFixed(2));
-        
-        const totalAdditions = 0; 
+
+        const totalAdditions = 0;
 
         const net = Number(
           (gross + totalAdditions - advancesFromShifts - shortages - otherDeductions).toFixed(2)
@@ -400,7 +401,8 @@ export default function RunPayroll({
       setDialogOpen(true);
     } catch (err) {
       console.error(err);
-      openFeedback(
+      if (showSnackbar) showSnackbar("Failed to generate payroll preview.", 'error');
+      else openFeedback(
         "Generate failed",
         "Failed to generate payroll preview. Check console for details."
       );
@@ -423,7 +425,8 @@ export default function RunPayroll({
       const runRef = doc(db, "payrollRuns", id);
       const runDoc = await getDoc(runRef);
       if (!runDoc.exists()) {
-        openFeedback("Not found", "That payroll run does not exist anymore.");
+        if (showSnackbar) showSnackbar("That payroll run does not exist anymore.", 'error');
+        else openFeedback("Not found", "That payroll run does not exist anymore.");
         return;
       }
       const run = runDoc.data() || {};
@@ -461,21 +464,21 @@ export default function RunPayroll({
           if (!sDoc.exists()) continue;
           const s = sDoc.data() || {};
           const ov = overrides.get(sid) || {};
-          
+
           //
           const isOngoing = !s.endTime;
-          
+
           const start = ov.overrideStart || s.startTime;
           //
-          const end = ov.overrideEnd || s.endTime || (isOngoing ? Timestamp.now() : null); 
-          
+          const end = ov.overrideEnd || s.endTime || (isOngoing ? Timestamp.now() : null);
+
           const minutesOriginal = minutesBetweenTS(s.startTime, s.endTime || Timestamp.now());
           const minutesUsed = ov.excluded
             ? 0
             : ov.minutesUsed != null
-            ? ov.minutesUsed
-            : minutesBetweenTS(start, end);
-          
+              ? ov.minutesUsed
+              : minutesBetweenTS(start, end);
+
           const row = {
             id: sid,
             start: s.startTime,
@@ -604,7 +607,8 @@ export default function RunPayroll({
       setPreview(out.sort((a, b) => a.staffName.localeCompare(b.staffName)));
     } catch (err) {
       console.error(err);
-      openFeedback("Load failed", "Failed to load that payroll run.");
+      if (showSnackbar) showSnackbar("Failed to load that payroll run.", 'error');
+      else openFeedback("Load failed", "Failed to load that payroll run.");
     } finally {
       stopBusy();
     }
@@ -626,7 +630,8 @@ export default function RunPayroll({
   /** ----------------- save edits ----------------- */
   const saveEditsToRun = async (id = runId, { withLoader = true } = {}) => {
     if (!id) {
-      openFeedback("Nothing to save", "No payroll run selected.");
+      if (showSnackbar) showSnackbar("No payroll run selected.", 'warning');
+      else openFeedback("Nothing to save", "No payroll run selected.");
       return;
     }
 
@@ -741,11 +746,13 @@ export default function RunPayroll({
       await batch.commit();
 
       if (withLoader) {
-        openFeedback("Saved", "Payroll changes were saved.");
+        if (showSnackbar) showSnackbar("Payroll changes were saved.", 'success');
+        else openFeedback("Saved", "Payroll changes were saved.");
       }
     } catch (err) {
       console.error(err);
-      openFeedback("Save failed", "Failed to save payroll run.");
+      if (showSnackbar) showSnackbar("Failed to save payroll run.", 'error');
+      else openFeedback("Save failed", "Failed to save payroll run.");
     } finally {
       if (withLoader) stopBusy();
     }
@@ -801,7 +808,8 @@ export default function RunPayroll({
       return runRef.id;
     } catch (err) {
       console.error(err);
-      openFeedback("Create failed", "Failed to create payroll run.");
+      if (showSnackbar) showSnackbar("Failed to create payroll run.", 'error');
+      else openFeedback("Create failed", "Failed to create payroll run.");
       return null;
     } finally {
       stopBusy();
@@ -813,7 +821,8 @@ export default function RunPayroll({
     if (id) {
       setDialogContext("existing");
       setDialogOpen(true);
-      openFeedback("Run created", "New payroll run has been created.");
+      if (showSnackbar) showSnackbar("New payroll run has been created.", 'success');
+      else openFeedback("Run created", "New payroll run has been created.");
     }
   };
 
@@ -827,7 +836,8 @@ export default function RunPayroll({
   /** ----------------- finalize run (post tx + paystubs) ----------------- */
   const finalizeRun = async (id = runId) => {
     if (!id) {
-      openFeedback("No run", "There is no payroll run to finalize.");
+      if (showSnackbar) showSnackbar("There is no payroll run to finalize.", 'warning');
+      else openFeedback("No run", "There is no payroll run to finalize.");
       return;
     }
 
@@ -913,8 +923,8 @@ export default function RunPayroll({
 
           const start = ov.overrideStart || s.startTime;
           //
-          const end = ov.overrideEnd || s.endTime; 
-          
+          const end = ov.overrideEnd || s.endTime;
+
           const minutesUsed =
             ov.minutesUsed != null
               ? ov.minutesUsed
@@ -1018,8 +1028,8 @@ export default function RunPayroll({
           ? l.adjustments.filter((a) => a?.type === "manual-addition")
           : [];
         const additionTotal = manualAdditions.reduce(
-            (s, a) => s + Number(a.amount || 0),
-            0
+          (s, a) => s + Number(a.amount || 0),
+          0
         );
 
         // We no longer read 'extra-advance' from adjustments.
@@ -1094,7 +1104,7 @@ export default function RunPayroll({
             amount: Number(a.amount || 0),
           })
         );
-        
+
         // NEW: Populate Addition Items
         m.manualAdditions.forEach((a) =>
           additionItems.push({
@@ -1112,7 +1122,7 @@ export default function RunPayroll({
             amount: Number(a.amount || 0),
           })
         );
-        
+
         // Calculate cross-staff total from the correct (re-calculated) source.
         const crossStaffTotal = (m.crossDeductions || []).reduce(
           (s, a) => s + Number(a.amount || 0),
@@ -1154,11 +1164,11 @@ export default function RunPayroll({
         txBatch.set(doc(collection(runRef, "paystubs")), paystubData);
 
         // --- POST TRANSACTIONS ---
-        
+
         // 1. Post Pay Additions (Bonuses) - Always dated on Pay Date usually
         // These are Expenses for the business.
         if (m.additionTotal > 0) {
-           txBatch.set(doc(collection(db, "transactions")), {
+          txBatch.set(doc(collection(db, "transactions")), {
             item: "Expenses",
             expenseType: "Salary",
             expenseStaffId: m.staffUid,
@@ -1176,7 +1186,7 @@ export default function RunPayroll({
             staffEmail: auth.currentUser?.email || "admin",
             isDeleted: false,
             isEdited: false,
-           });
+          });
         }
 
         if (expenseModeToUse === "per-shift") {
@@ -1188,10 +1198,10 @@ export default function RunPayroll({
             const shiftDeductions = deductionItems
               .filter((d) => d.id === s.id)
               .reduce((sum, d) => sum + Number(d.amount || 0), 0);
-            
+
             // Note: Additions are not usually per-shift, so we don't include them in per-shift calculation here
             // We just posted them separately above.
-            
+
             const shiftNet = Number((shiftGross - shiftDeductions).toFixed(2));
             if (shiftGross === 0 && shiftDeductions === 0) return;
 
@@ -1313,7 +1323,8 @@ export default function RunPayroll({
       setDialogContext("existing");
       setDialogOpen(true);
       stopBusy();
-      openFeedback(
+      if (showSnackbar) showSnackbar("Run finalized, transactions posted, and paystubs created.", 'success');
+      else openFeedback(
         "Payroll complete",
         "Run was finalized, transactions were posted, and paystubs were created."
       );
@@ -1321,7 +1332,8 @@ export default function RunPayroll({
     } catch (err) {
       console.error(err);
       stopBusy();
-      openFeedback("Finalize failed", "Failed to finalize payroll run.");
+      if (showSnackbar) showSnackbar("Failed to finalize payroll run.", 'error');
+      else openFeedback("Finalize failed", "Failed to finalize payroll run.");
     }
   };
 
@@ -1343,7 +1355,7 @@ export default function RunPayroll({
       preview.reduce((s, l) => s + Number(l.gross || 0), 0).toFixed(2)
     );
     const adds = Number(
-        preview.reduce((s, l) => s + Number(l.totalAdditions || 0), 0).toFixed(2)
+      preview.reduce((s, l) => s + Number(l.totalAdditions || 0), 0).toFixed(2)
     );
     const adv = Number(
       preview.reduce((s, l) => s + Number(l.advances || 0), 0).toFixed(2)
@@ -1549,6 +1561,7 @@ export default function RunPayroll({
           onSaveRun={() => saveEditsToRun()}
           onFinalize={() => setConfirmFinalizeOpen(true)}
           showPaystubs={() => onOpenPaystubs && onOpenPaystubs(runId)}
+          showSnackbar={showSnackbar}
         />
       </Card>
 
@@ -1585,7 +1598,7 @@ export default function RunPayroll({
           </Button>
         </DialogActions>
       </Dialog>
-      
+
       {/* */}
       <Dialog
         open={ongoingPrompt.open}
@@ -1594,15 +1607,15 @@ export default function RunPayroll({
         <DialogTitle>Ongoing Shifts Detected</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            Found {ongoingPrompt.shifts.length} shift(s) that have started but not ended yet 
+            Found {ongoingPrompt.shifts.length} shift(s) that have started but not ended yet
             within this period.
             <br /><br />
-            Do you want to include them in this payroll calculation (using "now" as the presumed end time), 
+            Do you want to include them in this payroll calculation (using "now" as the presumed end time),
             or skip them?
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button 
+          <Button
             onClick={() => {
               setOngoingPrompt({ open: false, shifts: [] });
               generatePreview("exclude");
@@ -1610,8 +1623,8 @@ export default function RunPayroll({
           >
             Skip Ongoing
           </Button>
-          <Button 
-            variant="contained" 
+          <Button
+            variant="contained"
             onClick={() => {
               setOngoingPrompt({ open: false, shifts: [] });
               generatePreview("include");
@@ -1622,21 +1635,7 @@ export default function RunPayroll({
         </DialogActions>
       </Dialog>
 
-      {/* feedback dialog */}
-      <Dialog
-        open={feedback.open}
-        onClose={closeFeedback}
-        maxWidth="xs"
-        fullWidth
-      >
-        <DialogTitle>{feedback.title || "Notice"}</DialogTitle>
-        <DialogContent>
-          <Typography>{feedback.message}</Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={closeFeedback}>OK</Button>
-        </DialogActions>
-      </Dialog>
+      {/* global loader */}
 
       {/* global loader */}
       <Backdrop

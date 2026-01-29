@@ -46,6 +46,7 @@ import ActiveShiftPanel from "./dashboard/ActiveShiftPanel";
 import StaffLeaderboardPanel from "./dashboard/StaffLeaderboardPanel";
 import SalesBreakdownPanel from "./dashboard/SalesBreakdownPanel";
 import ExpenseBreakdownPanel from "./dashboard/ExpenseBreakdownPanel";
+import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 
 /* small helper */
 const currency = (n) => fmtPeso(n);
@@ -67,7 +68,7 @@ async function clearShiftLockIfMatches(shiftId, endedByEmail) {
   }
 }
 
-export default function AdminHome() {
+export default function AdminHome({ user, showSnackbar }) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
 
@@ -83,6 +84,14 @@ export default function AdminHome() {
   const [includeCapitalInExpenses, setIncludeCapitalInExpenses] =
     useState(true);
   const [allTimeMode, setAllTimeMode] = useState("monthly");
+
+  const [confirmDialog, setConfirmDialog] = useState({
+    open: false,
+    title: "",
+    message: "",
+    onConfirm: null,
+    requireReason: false,
+  });
 
   const [earliestShiftStart, setEarliestShiftStart] = useState(null);
 
@@ -152,7 +161,11 @@ export default function AdminHome() {
         setTransactions(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
         setTxLoading(false);
       },
-      () => setTxLoading(false)
+      (err) => {
+        console.error("Transactions listener error:", err);
+        if (showSnackbar) showSnackbar("Failed to load transactions.", 'error');
+        setTxLoading(false);
+      }
     );
     return () => unsub();
   }, [r.startUtc, r.endUtc]);
@@ -193,7 +206,11 @@ export default function AdminHome() {
         setShiftsScope(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
         setShiftsLoading(false);
       },
-      () => setShiftsLoading(false)
+      (err) => {
+        console.error("Shifts listener error:", err);
+        if (showSnackbar) showSnackbar("Failed to load shifts.", 'error');
+        setShiftsLoading(false);
+      }
     );
     return () => unsub();
   }, [r.startUtc, r.endUtc]);
@@ -211,7 +228,11 @@ export default function AdminHome() {
         setDebtTxAll(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
         setDebtLoading(false);
       },
-      () => setDebtLoading(false)
+      (err) => {
+        console.error("Debt listener error:", err);
+        if (showSnackbar) showSnackbar("Failed to load debt records.", 'error');
+        setDebtLoading(false);
+      }
     );
     return () => unsub();
   }, []);
@@ -342,8 +363,8 @@ export default function AdminHome() {
         t.item === "New Debt"
           ? prev + amt
           : t.item === "Paid Debt"
-          ? prev - amt
-          : prev;
+            ? prev - amt
+            : prev;
       per.set(id, bal);
     });
     return Array.from(per.values())
@@ -356,19 +377,19 @@ export default function AdminHome() {
       preset === "thisYear"
         ? "month"
         : preset === "allTime" && allTimeMode === "yearly"
-        ? "year"
-        : preset === "allTime" && allTimeMode === "monthly"
-        ? "month"
-        : "day";
+          ? "year"
+          : preset === "allTime" && allTimeMode === "monthly"
+            ? "month"
+            : "day";
 
     const axis =
       preset === "past7"
         ? "date"
         : preset === "thisMonth" || preset === "monthYear"
-        ? "number"
-        : gran === "month"
-        ? "month"
-        : "year";
+          ? "number"
+          : gran === "month"
+            ? "month"
+            : "year";
 
     return buildTrendSeries({
       transactions: visibleTx,
@@ -394,51 +415,72 @@ export default function AdminHome() {
   /* ------------ actions ------------ */
   const forceEndShift = async (shift) => {
     if (!shift?.id) return;
-    if (!window.confirm("Force end this shift now?")) return;
-    try {
-      const endedBy = auth.currentUser?.email || "admin";
-      await updateDoc(doc(db, "shifts", shift.id), {
-        endTime: Timestamp.fromDate(new Date()),
-        endedBy,
-        status: "ended",
-      });
-      await clearShiftLockIfMatches(shift.id, endedBy);
-    } catch (e) {
-      console.error(e);
-      alert("Failed to end shift.");
-    }
+    setConfirmDialog({
+      open: true,
+      title: "Force End Shift",
+      message: `Force end shift for ${shift.staffEmail || "unknown"} now?`,
+      requireReason: false,
+      confirmColor: "primary",
+      onConfirm: async () => {
+        try {
+          const endedBy = auth.currentUser?.email || "admin";
+          await updateDoc(doc(db, "shifts", shift.id), {
+            endTime: Timestamp.fromDate(new Date()),
+            endedBy,
+            status: "ended",
+          });
+          await clearShiftLockIfMatches(shift.id, endedBy);
+          if (showSnackbar) showSnackbar("Shift ended successfully.", 'success');
+        } catch (e) {
+          console.error(e);
+          showSnackbar?.("Failed to end shift.", 'error');
+        }
+      }
+    });
   };
 
   const softDeleteTx = async (row) => {
-    const reason = window.prompt("Reason for deleting this transaction?");
-    if (!reason) return;
-    try {
-      await updateDoc(doc(db, "transactions", row.id), {
-        isDeleted: true,
-        deletedAt: new Date(),
-        deletedBy: auth.currentUser?.email || "admin",
-        deleteReason: reason,
-        lastUpdatedAt: serverTimestamp(),
-      });
-    } catch (e) {
-      console.error(e);
-      alert("Failed to delete transaction.");
-    }
+    setConfirmDialog({
+      open: true,
+      title: "Soft Delete Transaction",
+      message: `Delete transaction: ${row.item} (${fmtPeso(txAmount(row))})?`,
+      requireReason: true,
+      confirmColor: "warning",
+      onConfirm: async (reason) => {
+        try {
+          await updateDoc(doc(db, "transactions", row.id), {
+            isDeleted: true,
+            deletedAt: new Date(),
+            deletedBy: auth.currentUser?.email || "admin",
+            deleteReason: reason,
+            lastUpdatedAt: serverTimestamp(),
+          });
+          if (showSnackbar) showSnackbar("Transaction deleted (soft).", 'success');
+        } catch (e) {
+          console.error(e);
+          showSnackbar?.("Failed to delete transaction.", 'error');
+        }
+      }
+    });
   };
 
   const hardDeleteTx = async (row) => {
-    if (
-      !window.confirm(
-        "PERMANENTLY delete this transaction? This cannot be undone."
-      )
-    )
-      return;
-    try {
-      await deleteDoc(doc(db, "transactions", row.id));
-    } catch (e) {
-      console.error(e);
-      alert("Hard delete failed.");
-    }
+    setConfirmDialog({
+      open: true,
+      title: "PERMANENT Delete",
+      message: "This cannot be undone. Permanently delete this transaction?",
+      requireReason: false,
+      confirmColor: "error",
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, "transactions", row.id));
+          if (showSnackbar) showSnackbar("Transaction permanently deleted.", 'success');
+        } catch (e) {
+          console.error(e);
+          showSnackbar?.("Hard delete failed.", 'error');
+        }
+      }
+    });
   };
 
   /* ------------ UI ------------ */
@@ -707,6 +749,16 @@ export default function AdminHome() {
           </Box>
         </Box>
       )}
+      <ConfirmationReasonDialog
+        open={confirmDialog.open}
+        onClose={() => setConfirmDialog(p => ({ ...p, open: false }))}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        requireReason={confirmDialog.requireReason}
+        onConfirm={confirmDialog.onConfirm}
+        confirmText={confirmDialog.confirmText}
+        confirmColor={confirmDialog.confirmColor}
+      />
     </Box>
   );
 }
@@ -728,8 +780,8 @@ function KpiCard({ title, value, loading, emphasize }) {
             emphasize === "good"
               ? "success.main"
               : emphasize === "bad"
-              ? "error.main"
-              : "inherit",
+                ? "error.main"
+                : "inherit",
         }}
       >
         {value}

@@ -3,81 +3,182 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ---------- helpers ----------
+    /* ---------- Helpers ---------- */
     function isSignedIn() {
       return request.auth != null;
     }
 
-    function isAdmin() {
-      return isSignedIn() &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin';
+    // SAFER me() function: Checks for existence before getting data.
+    function me() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data
+        : null;
     }
 
-    // ---------- public doc needed at login ----------
-    // The login screen needs to read this BEFORE auth.
-    match /app_status/current_shift {
-      // Allow anyone to read the current shift status.
-      allow read: if true;
+    // SAFER role checks: Handle the case where me() returns null.
+    function isAdmin() {
+      let userData = me();
+      return isSignedIn() && userData != null && userData.role == 'superadmin';
+    }
+    function isStaff() {
+      let userData = me();
+      return isSignedIn() && userData != null && userData.role == 'staff';
+    }
 
-      // Writes only by signed-in users who either:
-      //  - are superadmin, OR
-      //  - set/clear a lock for themselves (staffEmail == their email)
+    /* Transaction validation helpers */
+    function isSalaryTxn(data) {
+      return data.item == 'Expenses' && data.expenseType == 'Salary';
+    }
+    // Fixed capitalization to match Transactions.jsx logic ("Salary Advance")
+    function isSalaryAdvanceTxn(data) {
+      return data.item == 'Expenses' && (data.expenseType == 'Salary Advance' || data.expenseType == 'Salary advance');
+    }
+
+    /* ---------- App Status ---------- */
+    match /app_status/current_shift {
+      // Allow public read so login screen can check for active shifts before auth
+      allow read: if true;
       allow write: if isSignedIn() && (
         isAdmin() ||
         (request.resource.data.staffEmail == request.auth.token.email)
       );
     }
 
-    // ---------- users ----------
-    match /users/{uid} {
-      // Let signed-in users read user docs (for role checks, staff lists, etc.)
-      allow read: if isSignedIn();
-
-      // A user can write their own doc; admins can write any.
-      allow write: if isSignedIn() && (
-        uid == request.auth.uid || isAdmin()
-      );
-    }
-
-    // ---------- shifts ----------
-    match /shifts/{shiftId} {
-      // Staff and admins can read shifts
-      allow read: if isSignedIn();
-
-      // Staff can create a shift for themselves
-      allow create: if isSignedIn() &&
-        request.resource.data.staffEmail == request.auth.token.email;
-
-      // Staff can update their own shift; admins can update any
-      allow update: if isSignedIn() && (
-        resource.data.staffEmail == request.auth.token.email || isAdmin()
-      );
-    }
-
-    // ---------- transactions ----------
-    match /transactions/{txId} {
-      // App shows transactions only to signed-in users
-      allow read: if isSignedIn();
-
-      // Staff and admins create/update (soft-delete, edits)
-      allow create, update: if isSignedIn();
-    }
-
-    // ---------- services ----------
-    match /services/{id} {
-      allow read: if isSignedIn();
+    /* ---------- Settings (FIXED) ---------- */
+    match /settings/{id} {
+      // Allow public read for general configuration (Logo, Store Name, etc.)
+      // to prevent Dashboard/POS from failing if auth isn't fully synced yet.
+      allow read: if true;
       allow write: if isAdmin();
     }
 
-    // ---------- customers ----------
-    match /customers/{id} {
-      // Staff search & add customers during a shift
+    /* ---------- Users ---------- */
+    match /users/{uid} {
+      allow read: if isSignedIn();
+
+      // superadmin can write any user doc
+      allow create, delete: if isAdmin();
+
+      // updates:
+      // 1. Admin can update anything.
+      // 2. User can update their own doc (except critical role/payroll).
+      // 3. Any Staff can update 'isClockedIn' status (for shared terminal).
+      allow update: if isAdmin() || 
+        (
+          uid == request.auth.uid &&
+          !request.resource.data.diff(resource.data).changedKeys().hasAny(['role','payroll'])
+        ) ||
+        (
+          isStaff() && 
+          request.resource.data.diff(resource.data).changedKeys().hasOnly(['isClockedIn'])
+        );
+    }
+
+    /* ---------- Payroll Logs (Time Clock) ---------- */
+    match /payroll_logs/{logId} {
+      allow create, read: if isSignedIn();
+      allow update, delete: if isAdmin(); 
+    }
+
+    /* ---------- Shifts ---------- */
+    match /shifts/{shiftId} {
+      allow get, list: if isSignedIn();
+      allow create: if isAdmin() || (isStaff() && request.resource.data.staffEmail == request.auth.token.email);
+      allow update: if isAdmin() ||
+        (
+          isStaff() &&
+          resource.data.staffEmail == request.auth.token.email &&
+          request.resource.data.diff(resource.data).changedKeys().hasOnly([
+            'pcRentalTotal','servicesTotal','expensesTotal','systemTotal','endTime'
+          ])
+        );
+      allow delete: if isAdmin();
+    }
+
+    /* ---------- Transactions ---------- */
+    match /transactions/{txId} {
+      allow get, list: if isSignedIn();
+
+      // CREATE / UPDATE logic:
+      // - Admin: Full write access (with payroll shape check).
+      // - Staff: Write access except for Salary expenses. Salary advances require a shiftId.
+      
+      allow create, update: if
+        ( // Admin Block
+          isAdmin() &&
+          (
+            !isSalaryTxn(request.resource.data) ||
+            (
+              isSalaryTxn(request.resource.data) &&
+              request.resource.data.payrollRunId is string &&
+              request.resource.data.voided is bool
+            )
+          )
+        )
+        || // OR
+        ( // Staff Block
+          ( 
+            isStaff() &&
+            !isSalaryTxn(request.resource.data)
+          )
+          && 
+          ( 
+            !isSalaryAdvanceTxn(request.resource.data) ||
+            (request.resource.data.shiftId is string)
+          )
+        );
+
+      allow delete: if isAdmin();
+
+      match /editHistory/{histId} {
+        allow read: if isSignedIn();
+        allow create: if isAdmin() || isStaff();
+      }
+    }
+
+    /* ---------- Drawer Logs ---------- */
+    match /drawer_logs/{logId} {
+      allow create: if isSignedIn(); 
+      allow read: if isAdmin();      
+      allow update, delete: if false;
+    }
+
+    /* ---------- Services & POS Items ---------- */
+    match /services/{id} {
       allow read, write: if isSignedIn();
     }
 
-    // ---------- expenses ----------
+    /* ---------- Customers ---------- */
+    match /customers/{id} {
+      allow read, write: if isSignedIn();
+    }
+
+    /* ---------- Payroll & Scheduling ---------- */
+    match /payPeriods/{id} {
+      allow read, write: if isAdmin();
+    }
+    match /paySchedules/{id} {
+      allow read, write: if isAdmin();
+    }
+    match /payrollRuns/{runId} {
+      allow read, write: if isAdmin();
+      match /lines/{lineId} {
+        allow read, write: if isAdmin();
+        match /shifts/{sid} { allow read, write: if isAdmin(); }
+      }
+      match /paystubs/{stubId} { allow read, write: if isAdmin(); }
+    }
+
+    /* ---------- Expenses (Legacy) ---------- */
     match /expenses/{id} {
-      // Staff logs expenses; admins manage/report
+      allow read, write: if isSignedIn();
+    }
+
+    /* ---------- POS Orders & Counters ---------- */
+    match /orders/{orderId} {
+      allow read, write: if isSignedIn();
+    }
+    match /counters/{counterId} {
       allow read, write: if isSignedIn();
     }
   }

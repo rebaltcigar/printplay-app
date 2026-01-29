@@ -17,11 +17,16 @@ import {
   useMediaQuery,
   Button,
   CircularProgress,
+  Snackbar, // ADDED
+  Alert,    // ADDED
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import MenuIcon from "@mui/icons-material/Menu";
 import LogoutIcon from "@mui/icons-material/Logout";
 import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
+import SettingsIcon from "@mui/icons-material/Settings"; // ADDED
+import SettingsDialog from './SettingsDialog'; // ADDED
+import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 
 import { auth, db } from "../firebase";
 import { signOut } from "firebase/auth";
@@ -55,6 +60,20 @@ export default function AdminDashboard({ user }) {
   const [tab, setTab] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [seeding, setSeeding] = useState(false);
+  const [openSettings, setOpenSettings] = useState(false);
+
+  const [confirmDialog, setConfirmDialog] = useState({
+    open: false,
+    title: "",
+    message: "",
+    onConfirm: null,
+    requireReason: false,
+  });
+
+  // --- SNACKBAR STATE ---
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const handleCloseSnackbar = () => setSnackbar(prev => ({ ...prev, open: false }));
+  const showSnackbar = (msg, sev = 'success') => setSnackbar({ open: true, message: msg, severity: sev });
 
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
@@ -88,25 +107,30 @@ export default function AdminDashboard({ user }) {
   };
 
   const handleSeed = async () => {
-    const really = window.confirm(
-      "⚠️ This will DELETE all docs in 'shifts' and 'transactions' and then generate historical data from Mar 1, 2025 to yesterday.\n\nAre you absolutely sure?"
-    );
-    if (!really) return;
-
-    try {
-      setSeeding(true);
-      await generateFakeHistory({
-        db,
-        startISO: "2025-03-01",
-        doPurgeFirst: true,
-      });
-      alert("Seeding complete! 🎉 (You can remove this button now.)");
-    } catch (err) {
-      console.error(err);
-      alert("Seeding failed. Check the console for details.");
-    } finally {
-      setSeeding(false);
-    }
+    setConfirmDialog({
+      open: true,
+      title: "⚠️ Dangerous Action: SEED DATA",
+      message: "This will DELETE all docs in 'shifts' and 'transactions' and generate historical data from Mar 1, 2025 to yesterday. Are you absolutely sure?",
+      requireReason: false,
+      confirmText: "WIPE & SEED",
+      confirmColor: "error",
+      onConfirm: async () => {
+        try {
+          setSeeding(true);
+          await generateFakeHistory({
+            db,
+            startISO: "2025-03-01",
+            doPurgeFirst: true,
+          });
+          showSnackbar("Seeding complete! 🎉", 'success');
+        } catch (err) {
+          console.error(err);
+          showSnackbar("Seeding failed. Check the console.", 'error');
+        } finally {
+          setSeeding(false);
+        }
+      }
+    });
   };
 
   return (
@@ -170,11 +194,18 @@ export default function AdminDashboard({ user }) {
           )}
 
           {!isMobile && (
-            <Tooltip title="Logout">
-              <IconButton color="inherit" onClick={handleLogout} aria-label="logout">
-                <LogoutIcon />
-              </IconButton>
-            </Tooltip>
+            <>
+              <Tooltip title="Settings">
+                <IconButton color="inherit" onClick={() => setOpenSettings(true)} aria-label="settings">
+                  <SettingsIcon />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title="Logout">
+                <IconButton color="inherit" onClick={handleLogout} aria-label="logout">
+                  <LogoutIcon />
+                </IconButton>
+              </Tooltip>
+            </>
           )}
         </Toolbar>
 
@@ -234,51 +265,75 @@ export default function AdminDashboard({ user }) {
       <Box sx={{ flex: 1, minHeight: 0 }}>
         <TabPanel value={tab} index={0}>
           <Box sx={{ height: "100%", display: "flex", flexDirection: "column", width: "100%" }}>
-            <AdminHome />
+            <AdminHome user={user} showSnackbar={showSnackbar} />
           </Box>
         </TabPanel>
 
         <TabPanel value={tab} index={1}>
           <Box sx={{ height: "100%", width: "100%" }}>
-            <Shifts />
+            <Shifts showSnackbar={showSnackbar} />
           </Box>
         </TabPanel>
 
         <TabPanel value={tab} index={2}>
           <Box sx={{ height: "100%", width: "100%" }}>
-            <Transactions />
+            <Transactions showSnackbar={showSnackbar} />
           </Box>
         </TabPanel>
 
         <TabPanel value={tab} index={3}>
           <Box sx={{ height: "100%", width: "100%" }}>
-            <ExpenseManagement />
+            <ExpenseManagement showSnackbar={showSnackbar} />
           </Box>
         </TabPanel>
 
         <TabPanel value={tab} index={4}>
           <Box sx={{ height: "100%", width: "100%" }}>
-            <DebtReport />
+            <DebtReport showSnackbar={showSnackbar} />
           </Box>
         </TabPanel>
 
         <TabPanel value={tab} index={5}>
           <Box sx={{ height: "100%", width: "100%" }}>
-            <ItemManagement /> {/* <-- 3. MODIFIED COMPONENT */}
+            <ItemManagement showSnackbar={showSnackbar} />
           </Box>
         </TabPanel>
 
         <TabPanel value={tab} index={6}>
           <Box sx={{ height: "100%", width: "100%" }}>
-            <UserManagement />
+            <UserManagement showSnackbar={showSnackbar} />
           </Box>
         </TabPanel>
-                <TabPanel value={tab} index={7}>
+        <TabPanel value={tab} index={7}>
           <Box sx={{ height: "100%", width: "100%" }}>
-            <Payroll />
+            <Payroll showSnackbar={showSnackbar} />
           </Box>
         </TabPanel>
       </Box>
+      <SettingsDialog
+        open={openSettings}
+        onClose={() => setOpenSettings(false)}
+        onSettingsUpdated={() => { }}
+        showSnackbar={showSnackbar}
+      />
+
+      {/* GLOBAL SNACKBAR */}
+      <Snackbar open={snackbar.open} autoHideDuration={3000} onClose={handleCloseSnackbar} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+        <Alert onClose={handleCloseSnackbar} severity={snackbar.severity} sx={{ width: '100%' }} variant="filled">
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
+
+      <ConfirmationReasonDialog
+        open={confirmDialog.open}
+        onClose={() => setConfirmDialog(p => ({ ...p, open: false }))}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        requireReason={confirmDialog.requireReason}
+        onConfirm={confirmDialog.onConfirm}
+        confirmText={confirmDialog.confirmText}
+        confirmColor={confirmDialog.confirmColor}
+      />
     </Box>
   );
 }

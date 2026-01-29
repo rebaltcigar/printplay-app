@@ -16,6 +16,7 @@ import {
   where, limit, addDoc, updateDoc, doc, serverTimestamp
 } from "firebase/firestore";
 import { db } from "../firebase";
+import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 
 function formatPeso(n) {
   const val = Number(n || 0);
@@ -33,7 +34,7 @@ function formatPeso(n) {
  * - selectToken: number
  * - user: { email }
  */
-export default function AdminDebtLookupDialog({ open, onClose, presetCustomer, selectToken, user }) {
+export default function AdminDebtLookupDialog({ open, onClose, presetCustomer, selectToken, user, showSnackbar }) {
   // search + results
   const [search, setSearch] = useState("");
   const [results, setResults] = useState([]);
@@ -52,6 +53,14 @@ export default function AdminDebtLookupDialog({ open, onClose, presetCustomer, s
   const [formAmount, setFormAmount] = useState("");
   const [formNotes, setFormNotes] = useState("");
   const [formDate, setFormDate] = useState(toDateOnlyString(new Date()));
+
+  const [confirmDialog, setConfirmDialog] = useState({
+    open: false,
+    title: "",
+    message: "",
+    onConfirm: null,
+    requireReason: false,
+  });
 
   const activeCustomer = useMemo(
     () => selectedCustomer || presetCustomer || null,
@@ -167,15 +176,21 @@ export default function AdminDebtLookupDialog({ open, onClose, presetCustomer, s
     const dt = row.timestamp?.seconds
       ? new Date(row.timestamp.seconds * 1000)
       : row.timestamp instanceof Date
-      ? row.timestamp
-      : new Date();
+        ? row.timestamp
+        : new Date();
     setFormDate(toDateOnlyString(dt));
   };
 
   const addOrSave = async () => {
-    if (!activeCustomer?.id) return alert("Select a customer first.");
+    if (!activeCustomer?.id) {
+      showSnackbar?.("Select a customer first.", 'warning');
+      return;
+    }
     const amt = Number(formAmount || 0);
-    if (amt <= 0) return alert("Enter a valid amount.");
+    if (amt <= 0) {
+      showSnackbar?.("Enter a valid amount.", 'warning');
+      return;
+    }
 
     const ts = new Date(formDate);
     ts.setHours(0, 0, 0, 0);
@@ -203,39 +218,57 @@ export default function AdminDebtLookupDialog({ open, onClose, presetCustomer, s
           addedByAdmin: true,
           createdAt: serverTimestamp(),
         });
+        resetForm();
       } else {
-        const reason = window.prompt("Reason for this edit?");
-        if (!reason) return;
-        await updateDoc(doc(db, "transactions", editId), {
-          ...payload,
-          isEdited: true,
-          editedBy: user?.email || "admin",
-          editReason: reason,
-          lastUpdatedAt: serverTimestamp(),
+        setConfirmDialog({
+          open: true,
+          title: "Edit Debt Transaction",
+          message: `Save changes to this ${formType.toLowerCase()} entry?`,
+          requireReason: true,
+          onConfirm: async (reason) => {
+            try {
+              await updateDoc(doc(db, "transactions", editId), {
+                ...payload,
+                isEdited: true,
+                editedBy: user?.email || "admin",
+                editReason: reason,
+                lastUpdatedAt: serverTimestamp(),
+              });
+              resetForm();
+            } catch (e) {
+              console.error("Save debt tx failed", e);
+              showSnackbar?.("Failed to save.", 'error');
+            }
+          }
         });
       }
-      resetForm();
     } catch (e) {
       console.error("Save debt tx failed", e);
-      alert("Failed to save.");
+      showSnackbar?.("Failed to save.", 'error');
     }
   };
 
   const softDelete = async (row) => {
-    const reason = window.prompt("Reason for deleting this entry?");
-    if (!reason) return;
-    try {
-      await updateDoc(doc(db, "transactions", row.id), {
-        isDeleted: true,
-        deletedAt: serverTimestamp(),
-        deletedBy: user?.email || "admin",
-        deleteReason: reason,
-      });
-      if (mode === "edit" && editId === row.id) resetForm();
-    } catch (e) {
-      console.error("Delete debt tx failed", e);
-      alert("Failed to delete.");
-    }
+    setConfirmDialog({
+      open: true,
+      title: "Delete Entry",
+      message: `Soft delete this ${row.item.toLowerCase()}?`,
+      requireReason: true,
+      onConfirm: async (reason) => {
+        try {
+          await updateDoc(doc(db, "transactions", row.id), {
+            isDeleted: true,
+            deletedAt: serverTimestamp(),
+            deletedBy: user?.email || "admin",
+            deleteReason: reason,
+          });
+          if (mode === "edit" && editId === row.id) resetForm();
+        } catch (e) {
+          console.error("Delete debt tx failed", e);
+          showSnackbar?.("Failed to delete.", 'error');
+        }
+      }
+    });
   };
 
   const handleClose = () => {
@@ -400,6 +433,17 @@ export default function AdminDebtLookupDialog({ open, onClose, presetCustomer, s
       <DialogActions>
         <Button onClick={handleClose}>Close</Button>
       </DialogActions>
+
+      <ConfirmationReasonDialog
+        open={confirmDialog.open}
+        onClose={() => setConfirmDialog(p => ({ ...p, open: false }))}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        requireReason={confirmDialog.requireReason}
+        onConfirm={confirmDialog.onConfirm}
+        confirmText={confirmDialog.confirmText}
+        confirmColor={confirmDialog.confirmColor}
+      />
     </Dialog>
   );
 }

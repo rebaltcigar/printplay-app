@@ -150,7 +150,7 @@ export default function App() {
     const userSnap = await getDoc(userRef);
     if (!userSnap.exists() || userSnap.data()?.role !== "staff") {
       // Not a staff account => sign out and throw role error
-      await signOut(auth).catch(() => {});
+      await signOut(auth).catch(() => { });
       const e = new Error("Admin used for staff");
       e.code = "role/invalid-staff";
       throw e;
@@ -187,7 +187,7 @@ export default function App() {
     const userSnap = await getDoc(userRef);
 
     if (!userSnap.exists() || userSnap.data()?.role !== "superadmin") {
-      await signOut(auth).catch(() => {});
+      await signOut(auth).catch(() => { });
       const e = new Error("Staff used for admin");
       e.code = "role/invalid-admin";
       throw e;
@@ -224,6 +224,7 @@ export default function App() {
       return (
         <Dashboard
           user={currentUser}
+          userRole={userRole} // <--- ADDED THIS PROP
           activeShiftId={activeShiftId}
           shiftPeriod={activeShiftPeriod}
         />

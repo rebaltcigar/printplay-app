@@ -33,6 +33,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase";
 import AdminDebtLookupDialog from "../components/AdminDebtLookupDialog";
+import ConfirmationReasonDialog from "../components/ConfirmationReasonDialog";
 
 function toDateOnlyString(d) {
   const dt = new Date(d);
@@ -67,7 +68,7 @@ function monthEnd(date) {
  * Props:
  * - user: { email }
  */
-export default function DebtManagement({ user }) {
+export default function DebtManagement({ user, showSnackbar }) {
   // Default: current month
   const [startDate, setStartDate] = useState(toDateOnlyString(monthStart(new Date())));
   const [endDate, setEndDate] = useState(toDateOnlyString(monthEnd(new Date())));
@@ -78,6 +79,14 @@ export default function DebtManagement({ user }) {
   const [dlgOpen, setDlgOpen] = useState(false);
   const [presetCustomer, setPresetCustomer] = useState(null);
   const [selectToken, setSelectToken] = useState(0);
+
+  const [confirmDialog, setConfirmDialog] = useState({
+    open: false,
+    title: "",
+    message: "",
+    onConfirm: null,
+    requireReason: false,
+  });
 
   // Stream all debt transactions in date range (include deleted to show status)
   useEffect(() => {
@@ -147,30 +156,45 @@ export default function DebtManagement({ user }) {
 
   // --- Row actions: SOFT/HARD delete ---
   const softDelete = async (row) => {
-    const reason = window.prompt("Reason for deleting this debt transaction?");
-    if (!reason) return;
-    try {
-      await updateDoc(doc(db, "transactions", row.id), {
-        isDeleted: true,
-        deletedAt: new Date(),
-        deletedBy: user?.email || "admin",
-        deleteReason: reason,
-      });
-    } catch (e) {
-      console.error(e);
-      alert("Failed to soft delete.");
-    }
+    setConfirmDialog({
+      open: true,
+      title: "Delete Debt Transaction",
+      message: `Soft delete debt for ${row.customerName || "unknown"} (₱${Number(row.total || 0).toLocaleString()})?`,
+      requireReason: true,
+      onConfirm: async (reason) => {
+        try {
+          await updateDoc(doc(db, "transactions", row.id), {
+            isDeleted: true,
+            deletedAt: new Date(),
+            deletedBy: user?.email || "admin",
+            deleteReason: reason,
+          });
+          if (showSnackbar) showSnackbar("Debt transaction deleted (soft).", 'success');
+        } catch (e) {
+          console.error(e);
+          showSnackbar?.("Failed to soft delete debt.", 'error');
+        }
+      }
+    });
   };
 
   const hardDelete = async (row) => {
-    const ok = window.confirm("PERMANENTLY delete this debt transaction? This cannot be undone.");
-    if (!ok) return;
-    try {
-      await deleteDoc(doc(db, "transactions", row.id));
-    } catch (e) {
-      console.error(e);
-      alert("Hard delete failed. (Do you have permission?)");
-    }
+    setConfirmDialog({
+      open: true,
+      title: "PERMANENT Delete",
+      message: "PERMANENTLY delete this debt transaction? This cannot be undone.",
+      requireReason: false,
+      confirmColor: "error",
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, "transactions", row.id));
+          if (showSnackbar) showSnackbar("Debt transaction permanently deleted.", 'success');
+        } catch (e) {
+          console.error(e);
+          showSnackbar?.("Hard delete failed.", 'error');
+        }
+      }
+    });
   };
 
   // Build tbody rows as a single array (prevents stray text/whitespace nodes)
@@ -187,8 +211,8 @@ export default function DebtManagement({ user }) {
         r.timestamp?.seconds
           ? new Date(r.timestamp.seconds * 1000)
           : r.timestamp instanceof Date
-          ? r.timestamp
-          : null;
+            ? r.timestamp
+            : null;
       return (
         <TableRow
           key={r.id}
@@ -366,6 +390,18 @@ export default function DebtManagement({ user }) {
         presetCustomer={presetCustomer}
         selectToken={selectToken}
         user={user}
+        showSnackbar={showSnackbar}
+      />
+
+      <ConfirmationReasonDialog
+        open={confirmDialog.open}
+        onClose={() => setConfirmDialog(p => ({ ...p, open: false }))}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        requireReason={confirmDialog.requireReason}
+        onConfirm={confirmDialog.onConfirm}
+        confirmText={confirmDialog.confirmText}
+        confirmColor={confirmDialog.confirmColor}
       />
     </Box>
   );

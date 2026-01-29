@@ -18,7 +18,7 @@ import {
  * - onSelectCustomer: (customerDoc) => void
  * - user: Firebase user (for createdBy)
  */
-export default function CustomerDialog({ open, onClose, onSelectCustomer, user }) {
+export default function CustomerDialog({ open, onClose, onSelectCustomer, user, showSnackbar }) {
   const [search, setSearch] = useState('');
   const [username, setUsername] = useState('');
   const [fullName, setFullName] = useState('');
@@ -83,11 +83,11 @@ export default function CustomerDialog({ open, onClose, onSelectCustomer, user }
         merged.sort((a, b) => {
           const aHit =
             (a.username || '').startsWith(lowerSearch) ||
-            nameVariants.some(nv => (a.fullName || '').startsWith(nv))
+              nameVariants.some(nv => (a.fullName || '').startsWith(nv))
               ? 0 : 1;
           const bHit =
             (b.username || '').startsWith(lowerSearch) ||
-            nameVariants.some(nv => (b.fullName || '').startsWith(nv))
+              nameVariants.some(nv => (b.fullName || '').startsWith(nv))
               ? 0 : 1;
           if (aHit !== bHit) return aHit - bHit;
           return (a.username || '').localeCompare(b.username || '');
@@ -117,11 +117,11 @@ export default function CustomerDialog({ open, onClose, onSelectCustomer, user }
       const f = fullName.trim();
 
       if (!u || !f) {
-        alert('Please fill in both Username and Full Name.');
+        showSnackbar?.('Please fill in both Username and Full Name.', 'warning');
         return;
       }
       if (/\s/.test(u)) {
-        alert('Username must not contain spaces.');
+        showSnackbar?.('Username must not contain spaces.', 'warning');
         return;
       }
 
@@ -129,7 +129,7 @@ export default function CustomerDialog({ open, onClose, onSelectCustomer, user }
       const dupQ = query(collection(db, 'customers'), where('username', '==', u));
       const dupSnap = await getDocs(dupQ);
       if (!dupSnap.empty) {
-        alert('That username is already taken. Please choose another.');
+        showSnackbar?.('That username is already taken. Please choose another.', 'warning');
         return;
       }
 
@@ -143,7 +143,7 @@ export default function CustomerDialog({ open, onClose, onSelectCustomer, user }
       onSelectCustomer?.({ id: docRef.id, username: u, fullName: f });
     } catch (e) {
       console.error('Error adding new customer:', e);
-      alert('Failed to add new customer.');
+      showSnackbar?.('Failed to add new customer.', 'error');
     }
   };
 
@@ -175,8 +175,8 @@ export default function CustomerDialog({ open, onClose, onSelectCustomer, user }
         {/* --- SEARCH SECTION --- */}
         <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
           <Typography variant="subtitle2" sx={{ mb: 3, opacity: 0.85 }}>
-  Search
-</Typography>
+            Search
+          </Typography>
 
           <TextField
             value={search}
@@ -213,20 +213,20 @@ export default function CustomerDialog({ open, onClose, onSelectCustomer, user }
         {/* --- ADD NEW CUSTOMER SECTION --- */}
         <Paper variant="outlined" sx={{ p: 2 }}>
           <Typography variant="subtitle2" sx={{ mb: 3, opacity: 0.85 }}>
-  Add New Customer
-</Typography>
+            Add New Customer
+          </Typography>
 
           <TextField
-  label="Username (unique, no spaces) *"
-  value={username}
-  onChange={(e) => setUsername(e.target.value)}
-  fullWidth
-  size="small"
-  error={Boolean(usernameError)}
-  helperText={usernameError}
-  inputProps={{ autoCapitalize: 'none' }}
-  sx={{ mb: 3 }}   // was 2 — more space now
-/>
+            label="Username (unique, no spaces) *"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            fullWidth
+            size="small"
+            error={Boolean(usernameError)}
+            helperText={usernameError}
+            inputProps={{ autoCapitalize: 'none' }}
+            sx={{ mb: 3 }}   // was 2 — more space now
+          />
 
 
           <TextField

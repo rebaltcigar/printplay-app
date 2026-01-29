@@ -6,7 +6,7 @@ import AllRuns from "../components/payroll/AllRuns";
 import PayRates from "../components/payroll/PayRates";
 import PaystubDialog from "../components/Paystub"; // same as your old import
 
-export default function Payroll({ user }) {
+export default function Payroll({ user, showSnackbar }) {
   const [tab, setTab] = useState(0);
   const [openRunId, setOpenRunId] = useState("");
   const [openDialogAfterLoad, setOpenDialogAfterLoad] = useState(false);
@@ -43,15 +43,17 @@ export default function Payroll({ user }) {
             onOpenedFromHistory={() => setOpenDialogAfterLoad(false)}
             onOpenPaystubs={(runId) => setStubRunId(runId)}
             requestOpenDialogRef={requestOpenDialogRef}
+            showSnackbar={showSnackbar}
           />
         )}
         {tab === 1 && (
           <AllRuns
             onOpenRunInModal={openRunInModalFromHistory}
             onOpenPaystubs={(runId) => setStubRunId(runId)}
+            showSnackbar={showSnackbar}
           />
         )}
-        {tab === 2 && <PayRates />}
+        {tab === 2 && <PayRates showSnackbar={showSnackbar} />}
       </Box>
 
       <PaystubDialog

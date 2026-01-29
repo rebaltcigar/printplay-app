@@ -22,7 +22,7 @@ import { db } from "../firebase";
  * - If you need to add a user: create it in Firebase Auth, then add a matching
  *   Firestore doc at users/{uid} with fields { fullName, email, role }.
  */
-export default function UserManagement() {
+export default function UserManagement({ showSnackbar }) {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -36,6 +36,7 @@ export default function UserManagement() {
         setUsers(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       } catch (err) {
         console.warn("Failed to load users:", err);
+        if (showSnackbar) showSnackbar("Failed to load users.", 'error');
       } finally {
         if (!cancelled) setLoading(false);
       }

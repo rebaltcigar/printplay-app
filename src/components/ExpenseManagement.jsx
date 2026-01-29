@@ -51,6 +51,7 @@ import {
   deleteDoc,
 } from "firebase/firestore";
 import { db } from "../firebase";
+import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 
 const EXPENSE_TYPES_ALL = [
   "Supplies",
@@ -92,7 +93,7 @@ function toCurrency(n) {
   })}`;
 }
 
-export default function ExpenseManagement({ user }) {
+export default function ExpenseManagement({ user, showSnackbar }) {
   /** ===================== FORM STATE (LEFT) ===================== */
   const [formDate, setFormDate] = useState(toDateOnlyString(new Date()));
   const [formType, setFormType] = useState("");
@@ -145,15 +146,6 @@ export default function ExpenseManagement({ user }) {
     setBusyMsg("");
   };
 
-  // info dialog (replaces alert)
-  const [infoDialog, setInfoDialog] = useState({
-    open: false,
-    title: "",
-    message: "",
-  });
-  const showInfo = (title, message) => setInfoDialog({ open: true, title, message });
-  const closeInfo = () => setInfoDialog((p) => ({ ...p, open: false }));
-
   // reason dialogs
   const [editReasonDialog, setEditReasonDialog] = useState({
     open: false,
@@ -168,6 +160,14 @@ export default function ExpenseManagement({ user }) {
   const [permDeleteDialog, setPermDeleteDialog] = useState({
     open: false,
     row: null,
+  });
+
+  const [confirmDialog, setConfirmDialog] = useState({
+    open: false,
+    title: "",
+    message: "",
+    onConfirm: null,
+    requireReason: false,
   });
 
   /** ===================== LOAD CREDIT SERVICES ===================== */
@@ -424,12 +424,12 @@ export default function ExpenseManagement({ user }) {
       setFormQuantity("");
       setFormPrice("");
       setFormNotes("");
-      showInfo("Saved", "Expense has been added.");
+      if (showSnackbar) showSnackbar("Expense has been added.", 'success');
+      else showInfo("Saved", "Expense has been added.");
     } catch (err) {
       console.error("Failed to add expense", err);
-      // Log the exact data that failed
-      console.log("Failing add data:", expenseDoc);
-      showInfo("Error", `Failed to add expense. ${err.message}`);
+      if (showSnackbar) showSnackbar(`Failed to add expense: ${err.message}`, 'error');
+      else showInfo("Error", `Failed to add expense. ${err.message}`);
     } finally {
       stopBusy();
     }
@@ -508,7 +508,8 @@ export default function ExpenseManagement({ user }) {
     const row = dlg.row;
     const reason = dlg.reason?.trim();
     if (!row || !reason) {
-      showInfo("Reason required", "Please enter a reason for this edit.");
+      if (showSnackbar) showSnackbar("Please enter a reason for this edit.", 'warning');
+      else showInfo("Reason required", "Please enter a reason for this edit.");
       return;
     }
 
@@ -561,82 +562,67 @@ export default function ExpenseManagement({ user }) {
 
     try {
       startBusy("Saving changes...");
-
-      // 3. Use the new updateData object
       await updateDoc(doc(db, "transactions", row.id), updateData);
-
       setEditReasonDialog({ open: false, reason: "", row: null });
       cancelEdit();
-      showInfo("Updated", "Expense has been updated.");
+      if (showSnackbar) showSnackbar("Expense has been updated.", 'success');
     } catch (err) {
       console.error("Failed to update expense", err);
-      // Log the exact data that failed
-      console.log("Failing update data:", updateData);
-      showInfo("Error", `Failed to update expense. ${err.message}`);
+      if (showSnackbar) showSnackbar(`Failed to update expense: ${err.message}`, 'error');
     } finally {
       stopBusy();
     }
   };
-
 
   /** ===================== CRUD: SOFT DELETE ===================== */
   const handleSoftDelete = (row) => {
-    setDeleteReasonDialog({
+    setConfirmDialog({
       open: true,
-      reason: "",
-      row,
+      title: "Delete Expense?",
+      message: `Soft delete expense: ${row.expenseType} (${toCurrency(row.total)})?`,
+      requireReason: true,
+      confirmColor: "warning",
+      onConfirm: async (reason) => {
+        try {
+          startBusy("Deleting (soft)...");
+          await updateDoc(doc(db, "transactions", row.id), {
+            isDeleted: true,
+            deletedReason: reason,
+            deletedBy: user?.email || "admin",
+            deletedAt: serverTimestamp(),
+          });
+          if (showSnackbar) showSnackbar("Expense has been marked as deleted.", 'success');
+        } catch (err) {
+          console.error("Failed to soft delete expense:", err);
+          if (showSnackbar) showSnackbar("Failed to delete expense.", 'error');
+        } finally {
+          stopBusy();
+        }
+      }
     });
-  };
-
-  const actuallySoftDelete = async () => {
-    const dlg = deleteReasonDialog;
-    const row = dlg.row;
-    const reason = dlg.reason?.trim();
-    if (!row || !reason) {
-      showInfo("Reason required", "Please enter a reason for deleting this expense.");
-      return;
-    }
-
-    try {
-      startBusy("Deleting (soft)...");
-      await updateDoc(doc(db, "transactions", row.id), {
-        isDeleted: true,
-        deletedReason: reason,
-        deletedBy: user?.email || "admin",
-        deletedAt: serverTimestamp(),
-      });
-      setDeleteReasonDialog({ open: false, reason: "", row: null });
-      showInfo("Deleted", "Expense has been marked as deleted.");
-    } catch (err) {
-      console.error("Failed to soft delete expense:", err);
-      showInfo("Error", "Failed to delete expense. Please try again.");
-    } finally {
-      stopBusy();
-    }
   };
 
   /** ===================== CRUD: PERMANENT DELETE ===================== */
   const handlePermanentDelete = (row) => {
-    setPermDeleteDialog({ open: true, row });
-  };
-
-  const actuallyPermanentDelete = async () => {
-    const row = permDeleteDialog.row;
-    if (!row) {
-      setPermDeleteDialog({ open: false, row: null });
-      return;
-    }
-    try {
-      startBusy("Permanently deleting...");
-      await deleteDoc(doc(db, "transactions", row.id));
-      setPermDeleteDialog({ open: false, row: null });
-      showInfo("Deleted", "Expense has been permanently deleted.");
-    } catch (err) {
-      console.error("Failed to permanently delete expense:", err);
-      showInfo("Error", "Failed to permanently delete expense. Please try again.");
-    } finally {
-      stopBusy();
-    }
+    setConfirmDialog({
+      open: true,
+      title: "PERMANENTLY Delete?",
+      message: `This will permanently remove the expense: ${row.expenseType} (${toCurrency(row.total)}). This action cannot be undone.`,
+      requireReason: false,
+      confirmColor: "error",
+      onConfirm: async () => {
+        try {
+          startBusy("Permanently deleting...");
+          await deleteDoc(doc(db, "transactions", row.id));
+          if (showSnackbar) showSnackbar("Expense has been permanently deleted.", 'success');
+        } catch (err) {
+          console.error("Failed to permanently delete expense:", err);
+          if (showSnackbar) showSnackbar("Failed to permanently delete expense.", 'error');
+        } finally {
+          stopBusy();
+        }
+      }
+    });
   };
 
   /** ===================== FORM CONTENT (REUSED) ===================== */
@@ -1217,19 +1203,6 @@ export default function ExpenseManagement({ user }) {
         </Paper>
       </Box>
 
-      {/* ================== DIALOGS ================== */}
-
-      {/* info dialog */}
-      <Dialog open={infoDialog.open} onClose={closeInfo} maxWidth="xs" fullWidth>
-        <DialogTitle>{infoDialog.title || "Notice"}</DialogTitle>
-        <DialogContent>
-          <Typography>{infoDialog.message}</Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={closeInfo}>OK</Button>
-        </DialogActions>
-      </Dialog>
-
       {/* edit reason dialog */}
       <Dialog
         open={editReasonDialog.open}
@@ -1265,67 +1238,6 @@ export default function ExpenseManagement({ user }) {
         </DialogActions>
       </Dialog>
 
-      {/* soft delete reason dialog */}
-      <Dialog
-        open={deleteReasonDialog.open}
-        onClose={() => setDeleteReasonDialog({ open: false, reason: "", row: null })}
-        maxWidth="xs"
-        fullWidth
-      >
-        <DialogTitle>Delete this expense?</DialogTitle>
-        <DialogContent sx={{ pt: 1 }}>
-          <Typography variant="body2" sx={{ mb: 1 }}>
-            This will mark the expense as deleted, but you can still see it if you switch
-            to &quot;Deleted&quot; filter. Add a reason:
-          </Typography>
-          <TextField
-            autoFocus
-            multiline
-            minRows={2}
-            fullWidth
-            value={deleteReasonDialog.reason}
-            onChange={(e) =>
-              setDeleteReasonDialog((p) => ({ ...p, reason: e.target.value }))
-            }
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button
-            onClick={() =>
-              setDeleteReasonDialog({ open: false, reason: "", row: null })
-            }
-          >
-            Cancel
-          </Button>
-          <Button variant="contained" color="warning" onClick={actuallySoftDelete}>
-            Delete
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* permanent delete confirm */}
-      <Dialog
-        open={permDeleteDialog.open}
-        onClose={() => setPermDeleteDialog({ open: false, row: null })}
-        maxWidth="xs"
-        fullWidth
-      >
-        <DialogTitle>Delete permanently?</DialogTitle>
-        <DialogContent>
-          <Typography>
-            This will permanently remove the expense and cannot be undone.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setPermDeleteDialog({ open: false, row: null })}>
-            Cancel
-          </Button>
-          <Button variant="contained" color="error" onClick={actuallyPermanentDelete}>
-            Delete forever
-          </Button>
-        </DialogActions>
-      </Dialog>
-
       {/* ================== GLOBAL LOADER ================== */}
       <Backdrop
         open={busy}
@@ -1341,6 +1253,17 @@ export default function ExpenseManagement({ user }) {
           {busyMsg || "Working... please wait"}
         </Typography>
       </Backdrop>
-    </Box>
+
+      <ConfirmationReasonDialog
+        open={confirmDialog.open}
+        onClose={() => setConfirmDialog(p => ({ ...p, open: false }))}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        requireReason={confirmDialog.requireReason}
+        onConfirm={confirmDialog.onConfirm}
+        confirmText={confirmDialog.confirmText}
+        confirmColor={confirmDialog.confirmColor}
+      />
+    </Box >
   );
 }

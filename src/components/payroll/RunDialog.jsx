@@ -65,9 +65,10 @@ export default function RunDialog({
   onSaveRun,
   onFinalize,
   showPaystubs,
+  showSnackbar,
 }) {
   const [expanded, setExpanded] = useState({});
-  
+
   // Refactored to generic "itemEdit" to handle both additions and deductions
   const [itemEdit, setItemEdit] = useState({
     open: false,
@@ -87,7 +88,7 @@ export default function RunDialog({
     const included = line.shiftRows.filter((r) => !r.excluded);
     const minutes = included.reduce((m, r) => m + Number(r.minutes || r.minutesUsed || 0), 0);
     const gross = calcGross(minutes, line.rate);
-    
+
     // Deductions
     const advances = included.reduce((s, r) => s + Number(r.advance || 0), 0);
     const shortages = included.reduce((s, r) => s + Number(r.shortage || 0), 0);
@@ -112,15 +113,15 @@ export default function RunDialog({
     const net = Number(
       (gross + totalAdditions - advances - shortages - otherDeductions).toFixed(2)
     );
-    
-    return { 
-      minutes, 
-      gross, 
-      advances, 
-      shortages, 
-      otherDeductions, 
-      totalAdditions, 
-      net 
+
+    return {
+      minutes,
+      gross,
+      advances,
+      shortages,
+      otherDeductions,
+      totalAdditions,
+      net
     };
   };
 
@@ -141,15 +142,15 @@ export default function RunDialog({
           const start = next.overrideStart?.seconds
             ? next.overrideStart
             : next.overrideStart
-            ? Timestamp.fromDate(new Date(next.overrideStart))
-            : next.start;
+              ? Timestamp.fromDate(new Date(next.overrideStart))
+              : next.start;
 
           //
           const end = next.overrideEnd?.seconds
             ? next.overrideEnd
             : next.overrideEnd
-            ? Timestamp.fromDate(new Date(next.overrideEnd))
-            : next.end || next.overrideEnd; // critical change for ongoing support
+              ? Timestamp.fromDate(new Date(next.overrideEnd))
+              : next.end || next.overrideEnd; // critical change for ongoing support
 
           next.minutesUsed = next.excluded ? 0 : minutesBetweenTS(start, end);
           next.shortage = shortageForShift({
@@ -229,11 +230,11 @@ export default function RunDialog({
     setPreview((prev) =>
       prev.map((l) => {
         if (l.id !== lineId) return l;
-        
+
         // Decide which array to update based on type
         const field = type === "addition" ? "customAdditions" : "customDeductions";
         const list = Array.isArray(l[field]) ? [...l[field]] : [];
-        
+
         const idPrefix = type === "addition" ? "manual-add" : "manual-ded";
 
         if (index >= 0 && index < list.length) {
@@ -245,7 +246,7 @@ export default function RunDialog({
             amount: nAmount,
           });
         }
-        
+
         // Reconstruct line with new list
         const updatedLine = { ...l, [field]: list };
         const totals = recalcLine(updatedLine);
@@ -264,7 +265,7 @@ export default function RunDialog({
         const list = Array.isArray(l[field])
           ? l[field].filter((_, i) => i !== index)
           : [];
-          
+
         const updatedLine = { ...l, [field]: list };
         const totals = recalcLine(updatedLine);
         return { ...updatedLine, ...totals };
@@ -424,7 +425,7 @@ export default function RunDialog({
                           // We need to re-trigger calculations manually here or inside setLine.
                           // The easiest way with current structure:
                           setPreview(prev => prev.map(line => {
-                            if(line.id !== l.id) return line;
+                            if (line.id !== l.id) return line;
                             const newLine = { ...line, rate };
                             return { ...newLine, ...recalcLine(newLine) };
                           }));
@@ -476,10 +477,10 @@ export default function RunDialog({
                                   const startForISO = r.overrideStart || r.start;
                                   //
                                   const endForISO = r.overrideEnd || r.end;
-                                  
+
                                   const startISO = toLocalISO_PHT_fromTS(startForISO);
                                   const endISO = toLocalISO_PHT_fromTS(endForISO);
-                                  
+
                                   const label = `${inferShiftName(
                                     r.start,
                                     r.title,
@@ -489,8 +490,8 @@ export default function RunDialog({
                                   const expenseDateYMD = isPerStaffMode
                                     ? payDate
                                     : r.expenseDate?.seconds
-                                    ? toYMD_PHT_fromTS(r.expenseDate)
-                                    : payDate || todayYMD_PHT();
+                                      ? toYMD_PHT_fromTS(r.expenseDate)
+                                      : payDate || todayYMD_PHT();
 
                                   return (
                                     <TableRow key={r.id}>
@@ -499,12 +500,12 @@ export default function RunDialog({
                                           {label}
                                           {/* */}
                                           {r.isOngoing && (
-                                            <Chip 
-                                              label="Ongoing" 
-                                              size="small" 
-                                              color="warning" 
-                                              variant="outlined" 
-                                              sx={{ ml: 1, height: 20, fontSize: 10 }} 
+                                            <Chip
+                                              label="Ongoing"
+                                              size="small"
+                                              color="warning"
+                                              variant="outlined"
+                                              sx={{ ml: 1, height: 20, fontSize: 10 }}
                                             />
                                           )}
                                         </Typography>
@@ -666,7 +667,7 @@ export default function RunDialog({
                               + Add Pay
                             </Button>
                           </Stack>
-                          
+
                           <Table size="small" sx={{ mb: 2 }}>
                             <TableHead>
                               <TableRow>

@@ -183,7 +183,7 @@ const aggregateShiftTransactions = (txList, serviceMeta, pcRental = 0) => {
 };
 
 /* -------------------- component -------------------- */
-export default function Shifts() {
+export default function Shifts({ showSnackbar }) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
 
@@ -291,7 +291,7 @@ export default function Shifts() {
       );
     } catch (e) {
       console.error("Resume shift failed:", e);
-      alert(`Failed to resume shift: ${e.message || e.code || e}`);
+      showSnackbar?.(`Failed to resume shift: ${e.message || e.code || e}`, 'error');
     }
   };
 
@@ -309,7 +309,7 @@ export default function Shifts() {
       (err) => {
         console.error("Error fetching shifts:", err);
         if (err.code === "failed-precondition") {
-          alert("Firestore needs an index for this query. Check the dev console for an auto-generated link.");
+          showSnackbar?.("Firestore needs an index. Check console.", 'error');
         }
       }
     );
@@ -493,7 +493,7 @@ export default function Shifts() {
   const handleAddShift = async () => {
     try {
       if (!newStaffEmail || !newStart) {
-        alert("Please select a staff and provide a start time.");
+        showSnackbar?.("Please select a staff and provide a start time.", 'warning');
         return;
       }
       const payload = {
@@ -512,9 +512,10 @@ export default function Shifts() {
       setNewEnd("");
       setNewShiftPeriod(SHIFT_PERIODS[0]);
       setViewingShift(newShiftForView);
+      setViewingShift(newShiftForView);
     } catch (e) {
       console.error("Add shift failed:", e);
-      alert(`Failed to add shift: ${e.message || e.code || e}`);
+      showSnackbar?.(`Failed to add shift: ${e.message || e.code || e}`, 'error');
     }
   };
 
@@ -543,9 +544,10 @@ export default function Shifts() {
       await updateDoc(doc(db, "shifts", editShift.id), payload);
       setEditOpen(false);
       setEditShift(null);
+      setEditShift(null);
     } catch (e) {
       console.error("Edit shift failed:", e);
-      alert(`Failed to save changes: ${e.message || e.code || e}`);
+      showSnackbar?.(`Failed to save changes: ${e.message || e.code || e}`, 'error');
     }
   };
 
@@ -579,14 +581,15 @@ export default function Shifts() {
       await deleteDoc(doc(db, "shifts", shiftToDelete.id));
       setDeleteOpen(false);
       setShiftToDelete(null);
+      setShiftToDelete(null);
     } catch (e) {
       console.error("Delete shift failed:", e);
-      alert(`Failed to delete shift: ${e.message || e.code || e}`);
+      showSnackbar?.(`Failed to delete shift: ${e.message || e.code || e}`, 'error');
     }
   };
 
   if (viewingShift) {
-    return <ShiftDetailView shift={viewingShift} userMap={userMap} onBack={() => setViewingShift(null)} />;
+    return <ShiftDetailView shift={viewingShift} userMap={userMap} onBack={() => setViewingShift(null)} showSnackbar={showSnackbar} />;
   }
 
   return (

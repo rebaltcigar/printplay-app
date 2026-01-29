@@ -30,6 +30,7 @@ import {
   Collapse,
   useMediaQuery,
   useTheme,
+  Chip, // Added for Order # display
 } from "@mui/material";
 import DownloadIcon from "@mui/icons-material/Download";
 import ClearAllIcon from "@mui/icons-material/ClearAll";
@@ -39,6 +40,7 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import PrintIcon from "@mui/icons-material/Print"; // Added for reprint icon
 import {
   collection,
   onSnapshot,
@@ -50,8 +52,11 @@ import {
   serverTimestamp,
   writeBatch,
   deleteDoc,
+  getDoc, // Added for fetching full order details
 } from "firebase/firestore";
 import { db, auth } from "../firebase";
+import { SimpleReceipt } from "./SimpleReceipt";
+import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 
 /* ---------- helpers ---------- */
 const startOfMonth = (d = new Date()) =>
@@ -102,7 +107,7 @@ const identifierText = (tx) => {
 const currency = (n) => `₱${Number(n || 0).toFixed(2)}`;
 
 /* ---------- component ---------- */
-export default function Transactions() {
+export default function Transactions({ showSnackbar }) {
   // Filters
   const [start, setStart] = useState(toDateInput(startOfMonth()));
   const [end, setEnd] = useState(toDateInput(endOfMonth()));
@@ -144,6 +149,20 @@ export default function Transactions() {
   // Bulk date dialog
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkDT, setBulkDT] = useState(toDatetimeLocal(new Date()));
+
+  // Printing State
+  const [reprintOrder, setReprintOrder] = useState(null);
+
+  // Confirmation Dialog State
+  const [confirmDialog, setConfirmDialog] = useState({
+    open: false,
+    title: '',
+    message: '',
+    requireReason: true,
+    onConfirm: () => { },
+    confirmText: 'Confirm',
+    confirmColor: 'error'
+  });
 
   // --- Mobile state (collapsibles) ---
   const theme = useTheme();
@@ -229,7 +248,7 @@ export default function Transactions() {
     if (unsubRef.current) {
       try {
         unsubRef.current();
-      } catch {}
+      } catch { }
       unsubRef.current = null;
     }
 
@@ -384,37 +403,81 @@ export default function Transactions() {
     }
   };
 
-  /* ---- Delete (soft, single) ---- */
-  const softDelete = async (row) => {
-    const reason = window.prompt("Reason for deleting this transaction?");
-    if (!reason) return;
+  /* ---- Reprint Handler (NEW) ---- */
+  const handleReprint = async (row) => {
+    if (!row.orderId) {
+      showSnackbar?.("Transaction is not part of a POS Order (legacy or manual).", 'warning');
+      return;
+    }
+
     try {
-      await updateDoc(doc(db, "transactions", row.id), {
-        isDeleted: true,
-        deletedAt: new Date(),
-        deletedBy: auth.currentUser?.email || "admin",
-        deleteReason: reason,
-      });
-      setSelectedIds((prev) => prev.filter((id) => id !== row.id));
+      const orderRef = doc(db, 'orders', row.orderId);
+      const snap = await getDoc(orderRef);
+      if (snap.exists()) {
+        const orderData = { id: snap.id, ...snap.data() };
+        setReprintOrder(orderData);
+
+        // Allow React to render the receipt, then print
+        setTimeout(() => {
+          window.print();
+          setReprintOrder(null);
+        }, 500);
+      } else {
+        showSnackbar?.("Order record not found (deleted?).", 'error');
+      }
     } catch (e) {
-      console.error(e);
-      alert("Failed to delete transaction.");
+      console.error("Reprint error:", e);
+      showSnackbar?.("Failed to load order for printing.", 'error');
     }
   };
 
+  /* ---- Delete (soft, single) ---- */
+  const softDelete = (row) => {
+    setConfirmDialog({
+      open: true,
+      title: "Delete Transaction",
+      message: `Are you sure you want to delete this transaction for ${currency(row.total)}?`,
+      requireReason: true,
+      confirmText: "Delete",
+      confirmColor: "error",
+      onConfirm: async (reason) => {
+        try {
+          await updateDoc(doc(db, "transactions", row.id), {
+            isDeleted: true,
+            deletedAt: new Date(),
+            deletedBy: auth.currentUser?.email || "admin",
+            deleteReason: reason,
+          });
+          setSelectedIds((prev) => prev.filter((id) => id !== row.id));
+          showSnackbar?.("Transaction deleted.", 'success');
+        } catch (e) {
+          console.error(e);
+          showSnackbar?.("Failed to delete transaction.", 'error');
+        }
+      }
+    });
+  };
+
   /* ---- HARD DELETE (single) ---- */
-  const hardDelete = async (row) => {
-    const ok = window.confirm(
-      "PERMANENTLY delete this transaction? This cannot be undone."
-    );
-    if (!ok) return;
-    try {
-      await deleteDoc(doc(db, "transactions", row.id));
-      setSelectedIds((prev) => prev.filter((id) => id !== row.id));
-    } catch (e) {
-      console.error(e);
-      alert("Hard delete failed. (Do you have permission?)");
-    }
+  const hardDelete = (row) => {
+    setConfirmDialog({
+      open: true,
+      title: "PERMANENT Delete",
+      message: "This will PERMANENTLY delete this transaction from the database. This cannot be undone.",
+      requireReason: false,
+      confirmText: "Permanently Delete",
+      confirmColor: "error",
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, "transactions", row.id));
+          setSelectedIds((prev) => prev.filter((id) => id !== row.id));
+          showSnackbar?.("Transaction permanently deleted.", 'success');
+        } catch (e) {
+          console.error(e);
+          showSnackbar?.("Hard delete failed. Permission issue?", 'error');
+        }
+      }
+    });
   };
 
   /* ---- Selection helpers ---- */
@@ -433,8 +496,8 @@ export default function Transactions() {
         r?.timestamp?.seconds
           ? new Date(r.timestamp.seconds * 1000)
           : r?.timestamp instanceof Date
-          ? r.timestamp
-          : new Date();
+            ? r.timestamp
+            : new Date();
       setBulkDT(toDatetimeLocal(d));
     } else {
       setBulkDT(toDatetimeLocal(new Date()));
@@ -444,80 +507,96 @@ export default function Transactions() {
 
   const saveBulkDate = async () => {
     if (!selectedIds.length) return;
-    const reason =
-      window.prompt(
-        "Reason for changing the date/time for the selected entries?"
-      ) || "(bulk date edit)";
-    const when = fromDatetimeLocal(bulkDT);
-    try {
-      const batch = writeBatch(db);
-      selectedIds.forEach((id) => {
-        batch.update(doc(db, "transactions", id), {
-          timestamp: when,
-          isEdited: true,
-          editedBy: auth.currentUser?.email || "admin",
-          editReason: reason,
-          lastUpdatedAt: serverTimestamp(),
-        });
-      });
-      await batch.commit();
-      setBulkOpen(false);
-      clearSelection();
-    } catch (e) {
-      console.error(e);
-      alert("Failed to update dates.");
-    }
+
+    setConfirmDialog({
+      open: true,
+      title: "Bulk Date Edit",
+      message: `Change date/time for ${selectedIds.length} transaction(s) to ${fmtDateTime(fromDatetimeLocal(bulkDT))}?`,
+      requireReason: true,
+      confirmText: "Update Dates",
+      confirmColor: "primary",
+      onConfirm: async (reason) => {
+        const when = fromDatetimeLocal(bulkDT);
+        try {
+          const batch = writeBatch(db);
+          selectedIds.forEach((id) => {
+            batch.update(doc(db, "transactions", id), {
+              timestamp: when,
+              isEdited: true,
+              editedBy: auth.currentUser?.email || "admin",
+              editReason: reason,
+              lastUpdatedAt: serverTimestamp(),
+            });
+          });
+          await batch.commit();
+          setBulkOpen(false);
+          clearSelection();
+          showSnackbar?.(`${selectedIds.length} transaction(s) updated.`, 'success');
+        } catch (e) {
+          console.error(e);
+          showSnackbar?.("Failed to update dates.", 'error');
+        }
+      }
+    });
   };
 
   /* ---- Bulk SOFT delete ---- */
-  async function bulkSoftDelete() {
+  function bulkSoftDelete() {
     if (!selectedIds.length) return;
-    const reason = window.prompt(
-      `Reason for deleting ${selectedIds.length} transaction(s)?`
-    );
-    if (!reason) return;
-    if (
-      !window.confirm(
-        `Soft delete ${selectedIds.length} selected transaction(s)?`
-      )
-    )
-      return;
 
-    try {
-      const batch = writeBatch(db);
-      selectedIds.forEach((id) => {
-        batch.update(doc(db, "transactions", id), {
-          isDeleted: true,
-          deletedAt: new Date(),
-          deletedBy: auth.currentUser?.email || "admin",
-          deleteReason: reason,
-        });
-      });
-      await batch.commit();
-      setSelectedIds([]);
-    } catch (e) {
-      console.error(e);
-      alert("Failed to delete selected transactions.");
-    }
+    setConfirmDialog({
+      open: true,
+      title: "Bulk Delete",
+      message: `Are you sure you want to delete ${selectedIds.length} transaction(s)?`,
+      requireReason: true,
+      confirmText: "Delete Transactions",
+      confirmColor: "error",
+      onConfirm: async (reason) => {
+        try {
+          const batch = writeBatch(db);
+          selectedIds.forEach((id) => {
+            batch.update(doc(db, "transactions", id), {
+              isDeleted: true,
+              deletedAt: new Date(),
+              deletedBy: auth.currentUser?.email || "admin",
+              deleteReason: reason,
+            });
+          });
+          await batch.commit();
+          setSelectedIds([]);
+          showSnackbar?.(`${selectedIds.length} transaction(s) deleted.`, 'success');
+        } catch (e) {
+          console.error(e);
+          showSnackbar?.("Failed to delete selected transactions.", 'error');
+        }
+      }
+    });
   }
 
   /* ---- Bulk HARD delete ---- */
-  async function bulkHardDelete() {
+  function bulkHardDelete() {
     if (!selectedIds.length) return;
-    const ok = window.confirm(
-      `PERMANENTLY delete ${selectedIds.length} transaction(s)? This cannot be undone.`
-    );
-    if (!ok) return;
 
-    try {
-      const batch = writeBatch(db);
-      selectedIds.forEach((id) => batch.delete(doc(db, "transactions", id)));
-      await batch.commit();
-      setSelectedIds([]);
-    } catch (e) {
-      console.error(e);
-      alert("Hard delete failed. (Do you have permission?)");
-    }
+    setConfirmDialog({
+      open: true,
+      title: "PERMANENT Bulk Delete",
+      message: `PERMANENTLY delete ${selectedIds.length} transaction(s)? This action IS IRREVERSIBLE.`,
+      requireReason: false,
+      confirmText: "Permanently Delete All",
+      confirmColor: "error",
+      onConfirm: async () => {
+        try {
+          const batch = writeBatch(db);
+          selectedIds.forEach((id) => batch.delete(doc(db, "transactions", id)));
+          await batch.commit();
+          setSelectedIds([]);
+          showSnackbar?.(`${selectedIds.length} transaction(s) permanently deleted.`, 'success');
+        } catch (e) {
+          console.error(e);
+          showSnackbar?.("Hard delete failed. Permission issue?", 'error');
+        }
+      }
+    });
   }
 
   /* ---- Edit dialog helpers (single row) ---- */
@@ -547,7 +626,7 @@ export default function Transactions() {
     if (!editing) return;
     if (editItem === "Expenses") {
       if (!editExpenseType) {
-        alert("Select an expense type.");
+        showSnackbar?.("Select an expense type.", 'warning');
         return;
       }
       if (
@@ -555,7 +634,7 @@ export default function Transactions() {
         !editExpenseStaffId &&
         !editExpenseStaffName
       ) {
-        alert("Choose a staff for Salary or Salary Advance.");
+        showSnackbar?.("Choose a staff for Salary or Salary Advance.", 'warning');
         return;
       }
     }
@@ -585,34 +664,30 @@ export default function Transactions() {
       timestamp: newTimestamp,
       isEdited: true,
       editedBy: auth.currentUser?.email || "admin",
-      editReason:
-        window.prompt("Reason for this edit?") || "(edited in Transactions view)",
-      lastUpdatedAt: serverTimestamp(),
     };
-
-    if (editItem === "Expenses") {
-      update.expenseType = editExpenseType || null;
-      const chosen = staffSelectOptions.find((s) => s.id === editExpenseStaffId);
-      if (chosen) {
-        update.expenseStaffId = chosen.id;
-        update.expenseStaffName = chosen.name;
-        update.expenseStaffEmail = chosen.email;
-      } else if (editExpenseStaffName) {
-        update.expenseStaffName = editExpenseStaffName;
-      }
-    } else {
-      update.expenseType = null;
-      update.expenseStaffId = null;
-      update.expenseStaffName = null;
-      update.expenseStaffEmail = null;
-    }
-
     try {
-      await updateDoc(doc(db, "transactions", editing.id), update);
-      closeEdit();
+      setConfirmDialog({
+        open: true,
+        title: "Edit Transaction",
+        message: "Please provide a reason for this edit.",
+        requireReason: true,
+        confirmText: "Save Changes",
+        confirmColor: "primary",
+        onConfirm: async (reason) => {
+          update.editReason = reason;
+          try {
+            await updateDoc(doc(db, "transactions", editing.id), update);
+            closeEdit();
+            showSnackbar?.("Transaction updated.", 'success');
+          } catch (e) {
+            console.error(e);
+            showSnackbar?.("Failed to save edit.", 'error');
+          }
+        }
+      });
     } catch (e) {
       console.error(e);
-      alert("Failed to save edit.");
+      showSnackbar?.("Failed to initiate edit.", 'error');
     }
   }
 
@@ -629,6 +704,9 @@ export default function Transactions() {
         alignItems: "stretch",
       }}
     >
+      {/* Hidden Receipt Component for Re-printing */}
+      <SimpleReceipt order={reprintOrder} />
+
       {/* LEFT: Filters / Controls (WEB) */}
       <Card
         sx={{
@@ -873,13 +951,14 @@ export default function Transactions() {
                 <TableCell>Last Updated</TableCell>
                 <TableCell>Source</TableCell>
                 <TableCell align="center">Admin Added</TableCell>
+                <TableCell align="center">Order #</TableCell>
                 <TableCell align="right">Controls</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {rows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={20}>No transactions for the current filters.</TableCell>
+                  <TableCell colSpan={21}>No transactions for the current filters.</TableCell>
                 </TableRow>
               ) : (
                 rows.map((r) => (
@@ -936,6 +1015,19 @@ export default function Transactions() {
                     <TableCell>{fmtDateTime(r.lastUpdatedAt)}</TableCell>
                     <TableCell>{r.source || ""}</TableCell>
                     <TableCell align="center">{r.addedByAdmin ? "Yes" : "No"}</TableCell>
+                    {/* NEW COLUMN: Order # */}
+                    <TableCell align="center">
+                      {r.orderNumber ? (
+                        <Chip
+                          label={r.orderNumber}
+                          size="small"
+                          variant="outlined"
+                          onClick={() => handleReprint(r)}
+                          icon={<PrintIcon fontSize="small" />}
+                          clickable
+                        />
+                      ) : "—"}
+                    </TableCell>
                     <TableCell align="right">
                       <Tooltip title="Edit">
                         <IconButton size="small" onClick={() => openEdit(r)}>
@@ -1527,6 +1619,17 @@ export default function Transactions() {
           </Button>
         </DialogActions>
       </Dialog>
+      {/* Confirmation Dialog */}
+      <ConfirmationReasonDialog
+        open={confirmDialog.open}
+        onClose={() => setConfirmDialog(prev => ({ ...prev, open: false }))}
+        onConfirm={confirmDialog.onConfirm}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        requireReason={confirmDialog.requireReason}
+        confirmText={confirmDialog.confirmText}
+        confirmColor={confirmDialog.confirmColor}
+      />
     </Box>
   );
 }

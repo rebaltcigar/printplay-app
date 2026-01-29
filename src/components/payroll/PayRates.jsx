@@ -26,7 +26,7 @@ import {
 } from "firebase/firestore";
 import { peso, resolveHourlyRate } from "../../utils/payrollHelpers";
 
-export default function PayRates() {
+export default function PayRates({ showSnackbar }) {
   const [rows, setRows] = useState([]);
   const [edit, setEdit] = useState({});
 
@@ -46,9 +46,12 @@ export default function PayRates() {
 
   const saveRate = async (uid) => {
     const e = edit[uid] || {};
-    const rate = Number(e.rate || 0);
+    const nAmount = Number(e.rate || 0);
     const when = e.effectiveFrom;
-    if (!when) return alert("Pick effective date");
+    if (!when) {
+      showSnackbar?.("Pick effective date", 'warning');
+      return;
+    }
     const user = rows.find((r) => r.id === uid);
     const prev = user?.payroll?.rateHistory || [];
     const nextHist = [

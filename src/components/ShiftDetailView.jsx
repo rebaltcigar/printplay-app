@@ -60,6 +60,7 @@ import {
 
 
 import CustomerDialog from "./CustomerDialog";
+import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 import logo from "/icon.ico";
 
 // UI-only peso formatter (commas, 2 decimals). Does NOT touch what we store.
@@ -85,7 +86,7 @@ const toDatetimeLocal = (d) => {
 };
 const fromDatetimeLocal = (s) => new Date(s);
 
-export default function ShiftDetailView({ shift, userMap, onBack }) {
+export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }) {
   // ----- form state (left) -----
   const [item, setItem] = useState("");
   const [expenseType, setExpenseType] = useState("");
@@ -116,8 +117,8 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     shift?.startTime?.seconds
       ? new Date(shift.startTime.seconds * 1000)
       : shift?.startTime instanceof Date
-      ? shift.startTime
-      : new Date();
+        ? shift.startTime
+        : new Date();
   const [bulkDateTime, setBulkDateTime] = useState(toDatetimeLocal(shiftStart));
 
   // ----- reconciliation -----
@@ -137,6 +138,17 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
   const [txControlsOpen, setTxControlsOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [reconOpen, setReconOpen] = useState(false);
+
+  // Confirmation Dialog State
+  const [confirmDialog, setConfirmDialog] = useState({
+    open: false,
+    title: '',
+    message: '',
+    requireReason: true,
+    onConfirm: () => { },
+    confirmText: 'Confirm',
+    confirmColor: 'error'
+  });
 
   // Refs to scroll to
   const txControlsRef = useRef(null);
@@ -303,18 +315,24 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     e?.preventDefault?.();
 
     if (!quantity || price === "") {
-      return alert("Please enter both a quantity and a price.");
+      showSnackbar?.("Please enter both a quantity and a price.", 'warning');
+      return;
     }
     if (Number(quantity) <= 0) {
-      return alert("Quantity must be a positive number.");
+      showSnackbar?.("Quantity must be a positive number.", 'warning');
+      return;
     }
     if (item === "Expenses") {
-      if (!expenseType) return alert("Please select an expense type.");
+      if (!expenseType) {
+        showSnackbar?.("Please select an expense type.", 'warning');
+        return;
+      }
       if (
         (expenseType === "Salary" || expenseType === "Salary Advance") &&
         !expenseStaffId
       ) {
-        return alert("Please select a staff for Salary or Salary Advance.");
+        showSnackbar?.("Please select a staff for Salary or Salary Advance.", 'warning');
+        return;
       }
     }
     if (
@@ -322,7 +340,8 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
       !selectedCustomer &&
       !currentlyEditing
     ) {
-      return alert("Please select a customer for this transaction.");
+      showSnackbar?.("Please select a customer for this transaction.", 'warning');
+      return;
     }
 
     const data = {
@@ -341,22 +360,38 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
 
     try {
       if (currentlyEditing) {
-        const reason = window.prompt("Reason for this edit?");
-        if (!reason) return alert("Update cancelled. Reason is required.");
-        await updateDoc(doc(db, "transactions", currentlyEditing.id), {
-          ...data,
-          isEdited: true,
-          editedBy: auth.currentUser?.email || "admin",
-          editReason: reason,
-          lastUpdatedAt: serverTimestamp(),
+        setConfirmDialog({
+          open: true,
+          title: "Edit Transaction",
+          message: "Please provide a reason for this edit.",
+          requireReason: true,
+          confirmText: "Save Changes",
+          confirmColor: "primary",
+          onConfirm: async (reason) => {
+            try {
+              await updateDoc(doc(db, "transactions", currentlyEditing.id), {
+                ...data,
+                isEdited: true,
+                editedBy: auth.currentUser?.email || "admin",
+                editReason: reason,
+                lastUpdatedAt: serverTimestamp(),
+              });
+              showSnackbar?.("Transaction updated.", 'success');
+              clearForm();
+            } catch (err) {
+              console.error(err);
+              showSnackbar?.("Failed to save transaction.", 'error');
+            }
+          }
         });
+        return;
       } else {
         const tsDate =
           shift?.startTime?.seconds
             ? new Date(shift.startTime.seconds * 1000)
             : shift?.startTime instanceof Date
-            ? shift.startTime
-            : new Date();
+              ? shift.startTime
+              : new Date();
 
         await addDoc(collection(db, "transactions"), {
           ...data,
@@ -368,11 +403,12 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           isEdited: false,
           timestamp: tsDate,
         });
+        showSnackbar?.("Transaction added.", 'success');
       }
       clearForm();
     } catch (err) {
       console.error(err);
-      alert("Failed to save transaction.");
+      showSnackbar?.("Failed to save transaction.", 'error');
     }
   };
 
@@ -383,72 +419,86 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
   };
 
   const handleRowDelete = async (tx) => {
-    const reason = window.prompt("Reason for deleting this entry?");
-    if (!reason) return alert("Deletion cancelled. Reason is required.");
-    if (!window.confirm("Delete this entry?")) return;
-    try {
-      await updateDoc(doc(db, "transactions", tx.id), {
-        isDeleted: true,
-        deletedAt: new Date(),
-        deletedBy: auth.currentUser?.email || "admin",
-        deleteReason: reason,
-      });
-    } catch (e) {
-      console.error(e);
-      alert("Failed to delete entry.");
-    }
+    setConfirmDialog({
+      open: true,
+      title: "Delete Entry",
+      message: `Are you sure you want to delete this entry for ${fmtPeso(tx.total)}?`,
+      requireReason: true,
+      confirmText: "Delete",
+      confirmColor: "error",
+      onConfirm: async (reason) => {
+        try {
+          await updateDoc(doc(db, "transactions", tx.id), {
+            isDeleted: true,
+            deletedAt: new Date(),
+            deletedBy: auth.currentUser?.email || "admin",
+            deleteReason: reason,
+          });
+          showSnackbar?.("Entry deleted.", 'success');
+        } catch (e) {
+          console.error(e);
+          showSnackbar?.("Failed to delete entry.", 'error');
+        }
+      }
+    });
   };
-  
-  const handleUnlink = async (tx) => {
-    const reason = window.prompt("Reason for unlinking this transaction from the shift?");
-    if (!reason) return alert("Unlink cancelled. Reason is required.");
-    
-    if (!window.confirm("Are you sure? This will remove the transaction from this shift but keep the record in the database.")) {
-      return;
-    }
 
-    try {
-      await updateDoc(doc(db, "transactions", tx.id), {
-        shiftId: null, // This effectively unlinks it
-        isEdited: true,
-        editedBy: auth.currentUser?.email || "admin",
-        editReason: `Unlinked from shift: ${reason}`,
-        lastUpdatedAt: serverTimestamp(),
-      });
-      // Note: The onSnapshot listener will automatically remove this from the 
-      // 'transactions' state, triggering the 'servicesTotal' useMemo, 
-      // which triggers the useEffect that updates the shift totals.
-    } catch (e) {
-      console.error(e);
-      alert("Failed to unlink transaction.");
-    }
+  const handleUnlink = async (tx) => {
+    setConfirmDialog({
+      open: true,
+      title: "Unlink Transaction",
+      message: "Are you sure? This will remove the transaction from this shift but keep the record in the database.",
+      requireReason: true,
+      confirmText: "Unlink",
+      confirmColor: "warning",
+      onConfirm: async (reason) => {
+        try {
+          await updateDoc(doc(db, "transactions", tx.id), {
+            shiftId: null,
+            isEdited: true,
+            editedBy: auth.currentUser?.email || "admin",
+            editReason: `Unlinked from shift: ${reason}`,
+            lastUpdatedAt: serverTimestamp(),
+          });
+          showSnackbar?.("Transaction unlinked.", 'success');
+        } catch (e) {
+          console.error(e);
+          showSnackbar?.("Failed to unlink transaction.", 'error');
+        }
+      }
+    });
   };
 
   const handleBulkDelete = async () => {
     if (!selectedTransactions.length) return;
-    const reason = window.prompt(
-      "Reason for deleting selected entries?"
-    );
-    if (!reason) return alert("Deletion cancelled. Reason is required.");
-    if (!window.confirm(`Delete ${selectedTransactions.length} entries?`))
-      return;
 
-    try {
-      const batch = writeBatch(db);
-      selectedTransactions.forEach((id) => {
-        batch.update(doc(db, "transactions", id), {
-          isDeleted: true,
-          deletedAt: new Date(),
-          deletedBy: auth.currentUser?.email || "admin",
-          deleteReason: reason,
-        });
-      });
-      await batch.commit();
-      setSelectedTransactions([]);
-    } catch (e) {
-      console.error(e);
-      alert("Failed to bulk delete.");
-    }
+    setConfirmDialog({
+      open: true,
+      title: "Bulk Delete",
+      message: `Are you sure you want to delete ${selectedTransactions.length} entries?`,
+      requireReason: true,
+      confirmText: "Delete All",
+      confirmColor: "error",
+      onConfirm: async (reason) => {
+        try {
+          const batch = writeBatch(db);
+          selectedTransactions.forEach((id) => {
+            batch.update(doc(db, "transactions", id), {
+              isDeleted: true,
+              deletedAt: new Date(),
+              deletedBy: auth.currentUser?.email || "admin",
+              deleteReason: reason,
+            });
+          });
+          await batch.commit();
+          setSelectedTransactions([]);
+          showSnackbar?.(`${selectedTransactions.length} entries deleted.`, 'success');
+        } catch (e) {
+          console.error(e);
+          showSnackbar?.("Failed to bulk delete.", 'error');
+        }
+      }
+    });
   };
 
   const openBulkDateDialog = () => {
@@ -458,8 +508,8 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
         row?.timestamp?.seconds
           ? new Date(row.timestamp.seconds * 1000)
           : row?.timestamp instanceof Date
-          ? row.timestamp
-          : shiftStart;
+            ? row.timestamp
+            : shiftStart;
       setBulkDateTime(toDatetimeLocal(d));
     } else {
       setBulkDateTime(toDatetimeLocal(shiftStart));
@@ -469,55 +519,71 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
 
   const saveBulkDate = async () => {
     if (!selectedTransactions.length) return;
-    const reason =
-      window.prompt(
-        "Reason for changing the date/time for the selected entries?"
-      ) || "(bulk date edit)";
     const when = fromDatetimeLocal(bulkDateTime);
-    try {
-      const batch = writeBatch(db);
-      selectedTransactions.forEach((id) => {
-        batch.update(doc(db, "transactions", id), {
-          timestamp: when,
-          isEdited: true,
-          editedBy: auth.currentUser?.email || "admin",
-          editReason: reason,
-          lastUpdatedAt: serverTimestamp(),
-        });
-      });
-      await batch.commit();
-      setBulkOpen(false);
-      setSelectedTransactions([]);
-    } catch (e) {
-      console.error(e);
-      alert("Failed to update dates.");
-    }
+
+    setConfirmDialog({
+      open: true,
+      title: "Bulk Date Edit",
+      message: `Are you sure you want to change the date/time for ${selectedTransactions.length} entries to ${when.toLocaleString()}?`,
+      requireReason: true,
+      confirmText: "Update Dates",
+      confirmColor: "primary",
+      onConfirm: async (reason) => {
+        try {
+          const batch = writeBatch(db);
+          selectedTransactions.forEach((id) => {
+            batch.update(doc(db, "transactions", id), {
+              timestamp: when,
+              isEdited: true,
+              editedBy: auth.currentUser?.email || "admin",
+              editReason: reason,
+              lastUpdatedAt: serverTimestamp(),
+            });
+          });
+          await batch.commit();
+          setBulkOpen(false);
+          setSelectedTransactions([]);
+          showSnackbar?.(`${selectedTransactions.length} entries updated.`, 'success');
+        } catch (e) {
+          console.error(e);
+          showSnackbar?.("Failed to update dates.", 'error');
+        }
+      }
+    });
   };
 
   const quickSetShiftStart = async () => {
     if (!selectedTransactions.length) return;
-    const reason =
-      window.prompt(
-        "Reason for setting selected entries to shift start time?"
-      ) || "(bulk date set to shift start)";
-    try {
-      const when = shiftStart;
-      const batch = writeBatch(db);
-      selectedTransactions.forEach((id) => {
-        batch.update(doc(db, "transactions", id), {
-          timestamp: when,
-          isEdited: true,
-          editedBy: auth.currentUser?.email || "admin",
-          editReason: reason,
-          lastUpdatedAt: serverTimestamp(),
-        });
-      });
-      await batch.commit();
-      setSelectedTransactions([]);
-    } catch (e) {
-      console.error(e);
-      alert("Failed to set dates to shift start.");
-    }
+
+    setConfirmDialog({
+      open: true,
+      title: "Bulk Date Reset",
+      message: `Set ${selectedTransactions.length} entries to shift start time (${shiftStart.toLocaleString()})?`,
+      requireReason: true,
+      confirmText: "Reset Dates",
+      confirmColor: "primary",
+      onConfirm: async (reason) => {
+        try {
+          const when = shiftStart;
+          const batch = writeBatch(db);
+          selectedTransactions.forEach((id) => {
+            batch.update(doc(db, "transactions", id), {
+              timestamp: when,
+              isEdited: true,
+              editedBy: auth.currentUser?.email || "admin",
+              editReason: reason,
+              lastUpdatedAt: serverTimestamp(),
+            });
+          });
+          await batch.commit();
+          setSelectedTransactions([]);
+          showSnackbar?.(`${selectedTransactions.length} entries reset to shift start.`, 'success');
+        } catch (e) {
+          console.error(e);
+          showSnackbar?.("Failed to set dates to shift start.", 'error');
+        }
+      }
+    });
   };
 
   const handleReconChange = (denKey, val) =>
@@ -587,10 +653,12 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
       payload.pcRentalTotal = Number(pcRental || 0);
       payload.systemTotal = systemTotal;
       await updateDoc(doc(db, "shifts", shift.id), payload);
-      alert("Reconciliation saved.");
+      if (showSnackbar) showSnackbar("Reconciliation saved.", 'success');
+      showSnackbar?.("Reconciliation saved.", 'success');
     } catch (e) {
       console.error(e);
-      alert("Failed to save reconciliation.");
+      if (showSnackbar) showSnackbar("Failed to save reconciliation.", 'error');
+      showSnackbar?.("Failed to save reconciliation.", 'error');
     }
   };
 
@@ -604,8 +672,8 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     ts?.seconds
       ? new Date(ts.seconds * 1000).toLocaleTimeString()
       : ts instanceof Date
-      ? ts.toLocaleTimeString()
-      : "—";
+        ? ts.toLocaleTimeString()
+        : "—";
 
   const FormContent = (
     <>
@@ -805,8 +873,8 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
                   difference === 0
                     ? "success.main"
                     : difference > 0
-                    ? "warning.main"
-                    : "error.main",
+                      ? "warning.main"
+                      : "error.main",
               }}
             >
               {difference > 0 ? `+${fmtPeso(difference)}` : fmtPeso(difference)}
@@ -1230,9 +1298,9 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
                     <TableCell>{identifierText(tx)}</TableCell>
                     <TableCell align="right">
                       <Tooltip title="Unlink">
-                         <IconButton size="small" onClick={() => handleUnlink(tx)} color="warning">
-                           <LinkOffIcon fontSize="inherit" />
-                         </IconButton>
+                        <IconButton size="small" onClick={() => handleUnlink(tx)} color="warning">
+                          <LinkOffIcon fontSize="inherit" />
+                        </IconButton>
                       </Tooltip>
                       <IconButton size="small" onClick={() => startEdit(tx)}>
                         <EditIcon fontSize="inherit" />
@@ -1315,6 +1383,17 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
         onClose={() => setOpenCustomerDialog(false)}
         onSelectCustomer={handleSelectCustomer}
         user={{ email: shift.staffEmail }}
+      />
+      {/* Confirmation Dialog */}
+      <ConfirmationReasonDialog
+        open={confirmDialog.open}
+        onClose={() => setConfirmDialog((p) => ({ ...p, open: false }))}
+        onConfirm={confirmDialog.onConfirm}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        requireReason={confirmDialog.requireReason}
+        confirmText={confirmDialog.confirmText}
+        confirmColor={confirmDialog.confirmColor}
       />
     </Box>
   );

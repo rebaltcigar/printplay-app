@@ -15,8 +15,9 @@ import {
   collection, addDoc, updateDoc, deleteDoc, doc, query, onSnapshot, writeBatch
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import ConfirmationReasonDialog from './ConfirmationReasonDialog';
 
-export default function ItemManagement() {
+export default function ItemManagement({ showSnackbar }) {
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -28,6 +29,17 @@ export default function ItemManagement() {
 
   const [editOrderMode, setEditOrderMode] = useState(false);
   const [orderedItems, setOrderedItems] = useState([]);
+
+  // Confirmation Dialog State
+  const [confirmDialog, setConfirmDialog] = useState({
+    open: false,
+    title: '',
+    message: '',
+    requireReason: false,
+    onConfirm: () => { },
+    confirmText: 'Confirm',
+    confirmColor: 'error'
+  });
 
   useEffect(() => {
     const q = query(collection(db, 'services'));
@@ -112,7 +124,10 @@ export default function ItemManagement() {
       parentServiceId: form.parentServiceId || null,
       adminOnly: Boolean(form.adminOnly),
     };
-    if (!payload.serviceName) return alert('Item name is required.');
+    if (!payload.serviceName) {
+      showSnackbar?.('Item name is required.', 'error');
+      return;
+    }
 
     try {
       if (editing) {
@@ -130,39 +145,44 @@ export default function ItemManagement() {
         await addDoc(collection(db, 'services'), payload);
       }
       close();
-    } catch (e) { console.error('Save item failed:', e); alert('Failed to save item.'); }
+      showSnackbar?.('Item saved successfully!', 'success');
+    } catch (e) {
+      console.error('Save item failed:', e);
+      showSnackbar?.('Failed to save item.', 'error');
+    }
   };
 
-  const remove = async (item) => {
+  const remove = (item) => {
     const childrenToDelete = items.filter(i => i.parentServiceId === item.id);
-    
-    let confirmMessage = `Are you sure you want to permanently delete "${item.serviceName}"?`;
+
+    let message = `Are you sure you want to permanently delete "${item.serviceName}"?`;
     if (childrenToDelete.length > 0) {
-      confirmMessage += ` This will also delete its ${childrenToDelete.length} sub-item(s).`;
+      message += ` This will also delete its ${childrenToDelete.length} sub-item(s).`;
     }
 
-    if (!window.confirm(confirmMessage)) return;
-
-    try {
-      const batch = writeBatch(db);
-      
-      // Schedule the parent for deletion
-      const parentRef = doc(db, 'services', item.id);
-      batch.delete(parentRef);
-      
-      // Schedule all children for deletion
-      childrenToDelete.forEach(child => {
-        const childRef = doc(db, 'services', child.id);
-        batch.delete(childRef);
-      });
-      
-      // Commit all deletions at once
-      await batch.commit();
-
-    } catch (e) {
-      console.error("Failed to delete item and sub-items:", e);
-      alert('Failed to delete item.');
-    }
+    setConfirmDialog({
+      open: true,
+      title: "Delete Item",
+      message: message,
+      requireReason: false,
+      confirmText: "Delete Permanently",
+      confirmColor: "error",
+      onConfirm: async () => {
+        try {
+          const batch = writeBatch(db);
+          const parentRef = doc(db, 'services', item.id);
+          batch.delete(parentRef);
+          childrenToDelete.forEach(child => {
+            batch.delete(doc(db, 'services', child.id));
+          });
+          await batch.commit();
+          showSnackbar?.('Item deleted successfully.', 'success');
+        } catch (e) {
+          console.error("Failed to delete item:", e);
+          showSnackbar?.('Failed to delete item.', 'error');
+        }
+      }
+    });
   };
 
   const onDragEnd = (result) => {
@@ -177,7 +197,7 @@ export default function ItemManagement() {
 
     if (movedItem.parentServiceId !== (itemBefore?.parentServiceId || null)) {
       if (itemBefore && itemBefore.parentServiceId && !movedItem.parentServiceId) {
-        alert("Cannot move a parent item into a child group.");
+        showSnackbar?.("Cannot move a parent item into a child group.", 'warning');
         return;
       }
     }
@@ -207,11 +227,11 @@ export default function ItemManagement() {
 
     try {
       await batch.commit();
-      alert('New order saved!');
+      showSnackbar?.('New order saved!', 'success');
       setEditOrderMode(false);
     } catch (e) {
       console.error("Failed to save new order:", e);
-      alert("Error saving new order.");
+      showSnackbar?.("Error saving new order.", 'error');
     }
   };
 
@@ -331,6 +351,17 @@ export default function ItemManagement() {
           <Button variant="contained" onClick={save}>Save</Button>
         </DialogActions>
       </Dialog>
+      {/* Confirmation Dialog */}
+      <ConfirmationReasonDialog
+        open={confirmDialog.open}
+        onClose={() => setConfirmDialog(prev => ({ ...prev, open: false }))}
+        onConfirm={confirmDialog.onConfirm}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        requireReason={confirmDialog.requireReason}
+        confirmText={confirmDialog.confirmText}
+        confirmColor={confirmDialog.confirmColor}
+      />
     </Box>
   );
 }
