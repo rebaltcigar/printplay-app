@@ -289,6 +289,7 @@ export default function UnifiedMigration({ showSnackbar }) {
                         // Legacy Salary Fix
                         if (data.expenseType === 'Salary') {
                             if (!data.payrollRunId) { updatePayload.payrollRunId = "legacy_migration"; needsUpdate = true; }
+                            if (data.voided === undefined) { updatePayload.voided = false; needsUpdate = true; }
                         }
 
                     } else {

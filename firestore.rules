@@ -104,17 +104,7 @@ service cloud.firestore {
       // - Staff: Write access except for Salary expenses. Salary advances require a shiftId.
       
       allow create, update: if
-        ( // Admin Block
-          isAdmin() &&
-          (
-            !isSalaryTxn(request.resource.data) ||
-            (
-              isSalaryTxn(request.resource.data) &&
-              request.resource.data.payrollRunId is string &&
-              request.resource.data.voided is bool
-            )
-          )
-        )
+        isAdmin() 
         || // OR
         ( // Staff Block
           ( 
