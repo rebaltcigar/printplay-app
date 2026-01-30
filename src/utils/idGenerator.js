@@ -35,3 +35,48 @@ export const generateDisplayId = async (counterName, prefix = "ID", padding = 6)
         return `${prefix}-${Date.now().toString().slice(-padding)}`;
     }
 };
+
+/**
+ * Reserves a block of IDs for batch processing.
+ * Much more efficient for migration scripts.
+ * 
+ * @param {string} counterName 
+ * @param {string} prefix 
+ * @param {number} count Number of IDs to reserve
+ * @param {number} padding 
+ * @returns {Promise<string[]>} Array of generated IDs
+ */
+export const generateBatchIds = async (counterName, prefix, count, padding = 6) => {
+    if (count <= 0) return [];
+
+    const counterRef = doc(db, "counters", counterName);
+
+    try {
+        const startSeq = await runTransaction(db, async (transaction) => {
+            const counterDoc = await transaction.get(counterRef);
+            let currentSequence = 0;
+
+            if (counterDoc.exists()) {
+                const data = counterDoc.data();
+                currentSequence = data.currentSequence || 0;
+            }
+
+            const nextSequence = currentSequence + count;
+            transaction.set(counterRef, { currentSequence: nextSequence }, { merge: true });
+            // Return the *first* new ID in this batch
+            // e.g. current=5. count=3. new=8. IDs are 6, 7, 8.
+            // We return currentSequence + 1.
+            return currentSequence + 1;
+        });
+
+        const ids = [];
+        for (let i = 0; i < count; i++) {
+            ids.push(`${prefix}-${String(startSeq + i).padStart(padding, "0")}`);
+        }
+        return ids;
+
+    } catch (error) {
+        console.error(`Error generating batch IDs for ${counterName}:`, error);
+        return [];
+    }
+};

@@ -200,6 +200,52 @@ export default function UnifiedMigration({ showSnackbar }) {
                 return null;
             };
 
+            // 0. Fix IDs (Shifts/Payroll)
+            if (healthStats?.shiftsMissing > 0 || healthStats?.payrollMissing > 0) {
+                addLog({ message: "Patching missing IDs...", action: "ID_PATCH_START" });
+
+                // SHIFTS
+                const shiftsSnap = await getDocs(collection(db, 'shifts'));
+                const shiftsToUpdate = shiftsSnap.docs.filter(d => !d.data().displayId);
+
+                for (const d of shiftsToUpdate) {
+                    const newId = await generateDisplayId('shifts', 'SHIFT');
+                    batch.update(doc(db, 'shifts', d.id), { displayId: newId });
+                    opCount++;
+                    currentWrites++; // Update specific stats
+                    setStats(prev => ({ ...prev, writes: currentWrites, updated: prev.updated + 1 }));
+                    addLog({ message: `Assigned ID ${newId} to Shift ${d.id}`, action: "ID_ASSIGN", type: 'Shift' });
+
+                    if (opCount >= BATCH_SIZE) {
+                        await batch.commit();
+                        batch = writeBatch(db);
+                        opCount = 0;
+                        addLog({ message: "Committed batch (IDs)...", action: "COMMIT" });
+                    }
+                }
+
+                // PAYROLL
+                const payrollSnap = await getDocs(collection(db, 'payrollRuns'));
+                const payToUpdate = payrollSnap.docs.filter(d => !d.data().displayId);
+
+                for (const d of payToUpdate) {
+                    const newId = await generateDisplayId('payrollRuns', 'PAY');
+                    batch.update(doc(db, 'payrollRuns', d.id), { displayId: newId });
+                    opCount++;
+                    currentWrites++;
+                    setStats(prev => ({ ...prev, writes: currentWrites, updated: prev.updated + 1 }));
+                    addLog({ message: `Assigned ID ${newId} to Payroll ${d.id}`, action: "ID_ASSIGN", type: 'Payroll' });
+
+                    if (opCount >= BATCH_SIZE) {
+                        await batch.commit();
+                        batch = writeBatch(db);
+                        opCount = 0;
+                        addLog({ message: "Committed batch (IDs)...", action: "COMMIT" });
+                    }
+                }
+                addLog({ message: "ID Patching Complete.", action: "ID_PATCH_END" });
+            }
+
             // 1. Transactions - RESUMABLE QUERY
             addLog({ message: "Processing Transactions...", action: "INFO" });
 
