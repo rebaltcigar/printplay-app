@@ -46,14 +46,14 @@ export const registerFingerprint = async (userEmail, userDisplayName) => {
     authenticatorSelection: {
       // 'platform' tells browser to use Windows Hello (Face/Fingerprint)
       // rather than an external security key like a YubiKey.
-      authenticatorAttachment: "platform", 
+      authenticatorAttachment: "platform",
       userVerification: "required",
     },
   };
 
   try {
     const credential = await navigator.credentials.create({ publicKey });
-    
+
     // We only need to store the ID to verify them later
     return {
       credentialId: bufferToBase64(credential.rawId),
@@ -79,7 +79,7 @@ export const verifyFingerprint = async (storedCredentialId) => {
       type: "public-key",
       // Force browser to look at internal authenticators (TouchID/Windows Hello)
       // preventing the "Passkey / Insert Key" popup if ID is missing.
-      transports: ['internal'] 
+      transports: ['internal']
     }],
     userVerification: "required",
     timeout: 60000,
@@ -89,7 +89,12 @@ export const verifyFingerprint = async (storedCredentialId) => {
     const assertion = await navigator.credentials.get({ publicKey });
     return !!assertion; // Returns true if Windows verified the fingerprint
   } catch (err) {
-    console.error("Verification failed:", err);
+    // Suppress "NotAllowedError" as it usually means user cancelled or ID not found
+    if (err.name === 'NotAllowedError') {
+      console.warn("Biometric verification denied/cancelled/not found.");
+    } else {
+      console.error("Verification failed:", err);
+    }
     return false;
   }
 };

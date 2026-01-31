@@ -28,9 +28,14 @@ import SettingsIcon from "@mui/icons-material/Settings";
 import SettingsDialog from './SettingsDialog';
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 import HistoryGeneratorDialog from "./HistoryGeneratorDialog"; // ADDED
+import MeetingRoomIcon from '@mui/icons-material/MeetingRoom'; // Icon
+import DrawerDialog from "./DrawerDialog"; // RESTORED
+import { openDrawer } from "../utils/drawerService"; // Direct Service Access
 
 import { auth, db } from "../firebase";
 import { signOut } from "firebase/auth";
+import { doc, updateDoc, setDoc, getDoc, serverTimestamp } from "firebase/firestore"; // Added imports
+
 
 import Shifts from "./Shifts";
 import ExpenseManagement from "./ExpenseManagement";
@@ -65,6 +70,8 @@ export default function AdminDashboard({ user }) {
   const [tab, setTab] = useState(0);
   const [visitedTabs, setVisitedTabs] = useState(new Set([0])); // Track visited tabs
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [cashDrawerOpen, setCashDrawerOpen] = useState(false); // RESTORED
+
   const [openSettings, setOpenSettings] = useState(false);
   const [showHistoryDialog, setShowHistoryDialog] = useState(false); // ADDED
   const [systemTab, setSystemTab] = useState(0); // Sub-tab for System
@@ -94,6 +101,16 @@ export default function AdminDashboard({ user }) {
   const devMode =
     import.meta.env.MODE === "development" ||
     import.meta.env.VITE_ENABLE_SEED_BUTTON === "true";
+
+  const handleOpenDrawer = async () => {
+    try {
+      const success = await openDrawer(user, 'manual');
+      if (success) showSnackbar("Drawer opened successfully.");
+    } catch (e) {
+      console.error(e);
+      showSnackbar(e.message || "Failed to open drawer.", "error");
+    }
+  };
 
   const tabs = [
     { label: "Home", index: 0 },
@@ -178,6 +195,18 @@ export default function AdminDashboard({ user }) {
               </span>
             </Tooltip>
           )}
+
+          <Button
+            variant="outlined"
+            color="inherit"
+            startIcon={<MeetingRoomIcon />}
+            onClick={() => setCashDrawerOpen(true)}
+            sx={{ mr: 1, textTransform: "none", borderColor: 'rgba(255,255,255,0.5)' }}
+          >
+            Open Drawer
+          </Button>
+
+
 
           {!isMobile && (
             <>
@@ -385,6 +414,7 @@ export default function AdminDashboard({ user }) {
         onClose={() => setOpenSettings(false)}
         onSettingsUpdated={() => { }}
         showSnackbar={showSnackbar}
+        user={user}
       />
 
       <HistoryGeneratorDialog
@@ -410,6 +440,13 @@ export default function AdminDashboard({ user }) {
         confirmText={confirmDialog.confirmText}
         confirmColor={confirmDialog.confirmColor}
       />
+      <DrawerDialog
+        open={cashDrawerOpen}
+        onClose={() => setCashDrawerOpen(false)}
+        user={user}
+        showSnackbar={showSnackbar}
+      />
     </Box>
+
   );
 }

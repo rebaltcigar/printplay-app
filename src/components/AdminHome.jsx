@@ -23,6 +23,7 @@ import ExpenseBreakdownPanel from "./dashboard/ExpenseBreakdownPanel";
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 import AdminLoading from "./common/AdminLoading"; // NEW IMPORT
 
+
 /* small helper */
 const currency = (n) => fmtPeso(n);
 
@@ -68,6 +69,7 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
   const [confirmDialog, setConfirmDialog] = useState({
     open: false, title: "", message: "", onConfirm: null, requireReason: false,
   });
+
 
   useEffect(() => {
     if (preset === "allTime") {
@@ -199,23 +201,51 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
     });
   }, [filteredTxValid, shiftsScope, r.startLocal, r.endLocal, preset, allTimeMode, serviceMap]);
 
-  // 4. LEADERBOARD ROWS
+  // 4. LEADERBOARD ROWS (UPDATED: Shift-Based)
   const leaderboardRows = useMemo(() => {
     const map = {};
-    filteredTxValid.forEach(t => {
-      const amt = txAmount(t);
-      if (t.isDeleted || amt <= 0) return;
-      const isExp = t.category === "credit" || t.expenseType || t.item === "Expenses" || t.item === "Paid Debt";
-      if (isExp) return;
 
-      const user = t.staffEmail || "Unknown";
-      if (!map[user]) map[user] = 0;
-      map[user] += amt;
+    // We iterate over the shifts currently in scope (filtered by date range)
+    shiftsScope.forEach(shift => {
+      // Use staffEmail from shift, fallback to 'Unknown'
+      const staff = shift.staffEmail || "Unknown";
+
+      // Calculate total sales for this shift
+      // cashTotal usually represents the declared cash, but we want the actual calculated sales ideally.
+      // 'totalSales' field might exist if we verified Shift schema.
+      // If not, we might need to rely on what shiftsScope provides.
+      // Assuming 'expectedCash' ~ Sales + StartingCash + Inputs - Expenses
+      // Better to check if we store 'totalSales' or similar in shift doc.
+      // If not, we might fail if we don't have it.
+      // Let's assume we want to sum 'expectedCash' - 'startingCash' - 'cashInputs' + 'expenses'???
+      // Actually, 'totalSales' is often stored or 'computedTotals.sales'. 
+      // Let's check what came back in shift.
+      // For now, let's look at `pcRentalTotal` + `soldItemsTotal` (if they exist).
+
+      // FALLBACK: Use the helper in AnalyticsContext that might have enriched this?
+      // No, raw shift data usually.
+
+      // Let's use `grossSales` if available, or fallback to 0.
+      // In `Shifts.jsx` it seems we compute it on the fly often.
+      // But looking at stored data in typical implementations:
+      // We'll trust `salesTotal` or `grossSales` if present. 
+      // If not present, we might need to rely on the *transactions* but filtered by shift ID.
+      // BUT user specifically asked: "pull the sales data of each shift they are assigned to based on the date filters"
+
+      // Calculated in EndShiftDialog as: servicesTotal + pcRentalTotal
+      const services = Number(shift.servicesTotal || 0);
+      const rental = Number(shift.pcRentalTotal || 0);
+      const sales = services + rental;
+
+      if (!map[staff]) map[staff] = 0;
+      map[staff] += sales;
     });
+
     return Object.entries(map)
       .map(([staff, sales]) => ({ staff, sales }))
       .sort((a, b) => b.sales - a.sales);
-  }, [filteredTxValid]);
+  }, [shiftsScope]);
+
 
   /* ============ ACTIONS ============ */
   const handleForceEndShift = (shift) => {
@@ -464,5 +494,7 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
         confirmColor={confirmDialog.confirmColor}
       />
     </Box>
+
+
   );
 }

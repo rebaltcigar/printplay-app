@@ -2,10 +2,12 @@ import React, { useState, useEffect } from 'react';
 import {
     Dialog, DialogTitle, DialogContent, DialogActions, Button,
     TextField, Box, Tabs, Tab, Typography, Switch, FormControlLabel,
-    InputAdornment, Stack, Paper
+    InputAdornment, Stack, Paper, Alert
 } from '@mui/material';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import FingerprintIcon from '@mui/icons-material/Fingerprint';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore'; // Added updateDoc
 import { db } from '../firebase';
+import { registerFingerprint } from '../utils/biometrics'; // Added import
 
 function TabPanel(props) {
     const { children, value, index, ...other } = props;
@@ -16,9 +18,10 @@ function TabPanel(props) {
     );
 }
 
-export default function SettingsDialog({ open, onClose, onSettingsUpdated, showSnackbar }) {
+export default function SettingsDialog({ open, onClose, onSettingsUpdated, showSnackbar, user }) {
     const [tab, setTab] = useState(0);
     const [loading, setLoading] = useState(false);
+    const [biometricStatus, setBiometricStatus] = useState("");
 
     // Settings State
     const [settings, setSettings] = useState({
@@ -38,7 +41,10 @@ export default function SettingsDialog({ open, onClose, onSettingsUpdated, showS
     const [capturingHotkey, setCapturingHotkey] = useState(false);
 
     useEffect(() => {
-        if (open) loadSettings();
+        if (open) {
+            loadSettings();
+            checkBiometricStatus();
+        }
     }, [open]);
 
     const loadSettings = async () => {
@@ -58,6 +64,19 @@ export default function SettingsDialog({ open, onClose, onSettingsUpdated, showS
         }
     };
 
+    const checkBiometricStatus = async () => {
+        if (!user || !user.uid) return;
+        try {
+            const userRef = doc(db, 'users', user.uid);
+            const snap = await getDoc(userRef);
+            if (snap.exists() && snap.data().biometricId) {
+                setBiometricStatus("Counter registered.");
+            } else {
+                setBiometricStatus("");
+            }
+        } catch (e) { console.error(e); }
+    };
+
     const handleSave = async () => {
         try {
             setLoading(true);
@@ -67,6 +86,32 @@ export default function SettingsDialog({ open, onClose, onSettingsUpdated, showS
         } catch (e) {
             console.error("Error saving settings:", e);
             showSnackbar?.("Failed to save settings.", 'error');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleRegisterBiometrics = async () => {
+        if (!user) return;
+        setLoading(true);
+        try {
+            // 1. Trigger WebAuthn Registration
+            const result = await registerFingerprint(user.email, user.displayName || user.email);
+
+            if (result && result.success) {
+                // 2. Save ID to User Profile (Matching Prod Schema)
+                const userRef = doc(db, 'users', user.uid);
+                await updateDoc(userRef, {
+                    biometricId: result.credentialId,
+                    biometricRegisteredAt: new Date().toISOString()
+                });
+
+                showSnackbar("Fingerprint registered successfully!", "success");
+                setBiometricStatus("Just registered!");
+            }
+        } catch (err) {
+            console.error("Bio Registration Failed:", err);
+            showSnackbar("Registration failed: " + err.message, "error");
         } finally {
             setLoading(false);
         }
@@ -109,8 +154,9 @@ export default function SettingsDialog({ open, onClose, onSettingsUpdated, showS
                     <Tabs value={tab} onChange={(e, v) => setTab(v)}>
                         <Tab label="Store Profile" />
                         <Tab label="POS Config" />
-                        <Tab label="Hardware / Hotkeys" />
+                        <Tab label="Hardware" />
                         <Tab label="Receipt" />
+                        <Tab label="Security" />
                     </Tabs>
                 </Box>
 
@@ -231,7 +277,38 @@ export default function SettingsDialog({ open, onClose, onSettingsUpdated, showS
                     </Stack>
                 </TabPanel>
 
+                {/* 5. SECURITY (Biometrics) */}
+                <TabPanel value={tab} index={4}>
+                    <Stack spacing={2}>
+                        <Typography variant="h6">Biometric Access</Typography>
+                        <Typography variant="body2" color="text.secondary">
+                            Register a fingerprint or face ID (via Windows Hello) to quickly open the cash drawer without typing your password.
+                        </Typography>
 
+                        <Paper variant="outlined" sx={{ p: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <Box>
+                                <Typography variant="subtitle2">Current Status</Typography>
+                                <Typography variant="body1" fontWeight="bold" color={biometricStatus ? "success.main" : "text.secondary"}>
+                                    {biometricStatus || "Not Registered"}
+                                </Typography>
+                            </Box>
+                            <Button
+                                variant="contained"
+                                startIcon={<FingerprintIcon />}
+                                onClick={handleRegisterBiometrics}
+                                disabled={loading || !user}
+                            >
+                                Register Fingerprint
+                            </Button>
+                        </Paper>
+
+                        {!window.PublicKeyCredential && (
+                            <Alert severity="warning">
+                                Biometrics not supported on this device/browser.
+                            </Alert>
+                        )}
+                    </Stack>
+                </TabPanel>
 
             </DialogContent>
             <DialogActions>
@@ -243,3 +320,4 @@ export default function SettingsDialog({ open, onClose, onSettingsUpdated, showS
         </Dialog>
     );
 }
+

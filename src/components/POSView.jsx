@@ -93,22 +93,60 @@ export default function POSView({ showSnackbar }) {
 
     const addToCart = (item) => {
         const items = [...currentOrder.items];
-        const existing = items.find(i => i.id === item.id);
-        if (existing) {
-            existing.quantity += 1;
+        const existingIdx = items.findIndex(i => i.id === item.id);
+
+        // Stock Validation
+        if (item.trackStock && item.type === 'retail') {
+            const currentQtyInCart = existingIdx >= 0 ? items[existingIdx].quantity : 0;
+            const available = item.stockCount || 0;
+            if (currentQtyInCart + 1 > available) {
+                showSnackbar?.(`Not enough stock. Only ${available} available.`, 'warning');
+                return;
+            }
+        }
+
+        if (existingIdx >= 0) {
+            items[existingIdx].quantity += 1;
         } else {
             items.push({ ...item, quantity: 1 });
         }
         updateOrder(activeTab, { items });
     };
 
+
     const adjustQty = (itemId, delta) => {
-        const items = currentOrder.items.map(i => {
-            if (i.id === itemId) return { ...i, quantity: Math.max(1, i.quantity + delta) };
-            return i;
-        });
+        const order = currentOrder; // Reference
+        const itemIndex = order.items.findIndex(i => i.id === itemId);
+        if (itemIndex === -1) return;
+
+        const item = order.items[itemIndex];
+        const newQty = item.quantity + delta;
+
+        // Stock Validation on Increment
+        if (delta > 0 && item.trackStock && item.type === 'retail') {
+            const available = item.stockCount || 0; // The item from the cart might lack stockCount if we didn't preserve it?
+            // Wait, the item in cart is a COPY of the service item. 
+            // We need to ensure 'stockCount' was copied into the cart item or we look it up.
+            // Usually we copy {...item} in addToCart, so it should be there *snapshot* at time of add.
+            // Better: look up from `services` state to get real-time stock?
+            // `services` state updates via snapshot, so it's accurate.
+            const freshItem = services.find(s => s.id === itemId);
+            const stock = freshItem ? (freshItem.stockCount || 0) : (item.stockCount || 0);
+
+            if (newQty > stock) {
+                showSnackbar?.(`Cannot add more. Only ${stock} in stock.`, 'warning');
+                return;
+            }
+        }
+
+        // Don't go below 1 (use delete for that)
+        if (newQty < 1) return;
+
+        const items = [...order.items];
+        items[itemIndex] = { ...item, quantity: newQty };
         updateOrder(activeTab, { items });
     };
+
 
     const removeFromCart = (itemId) => {
         const items = currentOrder.items.filter(i => i.id !== itemId);
@@ -279,14 +317,25 @@ export default function POSView({ showSnackbar }) {
                                     <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1 }}>
                                         {item.serviceName}
                                     </Typography>
-                                    <Chip
-                                        label={`₱${item.price}`}
-                                        size="small"
-                                        color="primary"
-                                        variant="outlined"
-                                    />
+                                    <Stack direction="row" spacing={1} alignItems="center">
+                                        <Chip
+                                            label={`₱${item.price}`}
+                                            size="small"
+                                            color="primary"
+                                            variant="outlined"
+                                        />
+                                        {item.trackStock && item.type === 'retail' && (
+                                            <Chip
+                                                label={`${item.stockCount || 0} Left`}
+                                                size="small"
+                                                color={(item.stockCount || 0) <= (item.lowStockThreshold || 5) ? "error" : "default"}
+                                                variant="filled"
+                                            />
+                                        )}
+                                    </Stack>
                                 </CardActionArea>
                             </Card>
+
                         </Grid>
                     ))}
                 </Grid>

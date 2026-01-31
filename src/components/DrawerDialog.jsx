@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import {
     Dialog, DialogTitle, DialogContent, DialogActions,
-    Button, TextField, Box, Typography, CircularProgress
+    Button, TextField, Box, Typography, CircularProgress, Alert
 } from '@mui/material';
 import FingerprintIcon from '@mui/icons-material/Fingerprint';
 
 // Firebase
 import { auth, db } from '../firebase';
-import { signInWithEmailAndPassword } from 'firebase/auth';
+import { reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 
 // Helpers
@@ -17,43 +17,55 @@ import { verifyFingerprint } from '../utils/biometrics';
 export default function DrawerDialog({ open, onClose, user, showSnackbar }) {
     const [password, setPassword] = useState("");
     const [loading, setLoading] = useState(false);
+    const [internalError, setInternalError] = useState("");
 
     // Auto-reset and scan when opened
     useEffect(() => {
         if (open) {
             setPassword("");
             setLoading(false);
+            setInternalError(""); // Reset error
             // Optional: Auto-trigger scan on open
             handleBiometricOpen();
         }
     }, [open]);
 
     const handleBiometricOpen = async () => {
-        setLoading(true);
+        if (!user || !user.uid) {
+            setInternalError("User identity invalid.");
+            return;
+        }
+
+        // Don't set loading true immediately to avoid flickering if not set up
         try {
             const userDocRef = doc(db, 'users', user.uid);
             const userSnap = await getDoc(userDocRef);
 
-            if (!userSnap.exists()) throw new Error("User record not found.");
+            if (!userSnap.exists()) {
+                setInternalError("User record not found.");
+                return;
+            }
 
             const userData = userSnap.data();
             const storedBiometricId = userData.biometricId;
 
             if (!storedBiometricId) {
-                // Silent return or slight UI indication if needed, 
-                // but usually we just let them type password if no bio setup.
-                setLoading(false);
+                // Inform user why it's not popping up
+                setInternalError("No fingerprint registered for this account.");
                 return;
             }
 
+            setLoading(true);
             const isVerified = await verifyFingerprint(storedBiometricId);
             if (isVerified) {
                 await openDrawer(user, 'biometric');
                 onClose();
+            } else {
+                setInternalError("Fingerprint failed. You may need to Register (Settings > Security).");
             }
         } catch (err) {
             console.error("Biometric Error:", err);
-            // Don't alert here, just let them fall back to password
+            setInternalError("Scanner error: " + (err.message || "Unknown"));
         } finally {
             setLoading(false);
         }
@@ -64,17 +76,22 @@ export default function DrawerDialog({ open, onClose, user, showSnackbar }) {
         if (!password) return;
 
         setLoading(true);
+        setInternalError("");
         try {
-            // Re-authenticate to prove identity
-            await signInWithEmailAndPassword(auth, user.email, password);
+            // Use Re-Authentication instead of Sign-In to verify current session
+            const credential = EmailAuthProvider.credential(user.email, password);
+            if (!auth.currentUser) throw new Error("No active session.");
+
+            await reauthenticateWithCredential(auth.currentUser, credential);
+
             await openDrawer(user, 'manual');
             onClose();
         } catch (err) {
             console.error("Drawer Unlock Failed:", err);
             if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
-                showSnackbar?.("Incorrect password.", 'error');
+                setInternalError("Incorrect password.");
             } else {
-                showSnackbar?.("Failed to open drawer: " + err.message, 'error');
+                setInternalError("Error: " + err.message);
             }
         } finally {
             setLoading(false);
@@ -86,7 +103,19 @@ export default function DrawerDialog({ open, onClose, user, showSnackbar }) {
             <DialogTitle>Unlock Drawer</DialogTitle>
             <form onSubmit={handlePasswordSubmit}>
                 <DialogContent>
-                    <Typography variant="body2" gutterBottom>Enter password or scan finger.</Typography>
+                    <Box mb={2}>
+                        <Typography variant="body2" color="text.secondary" gutterBottom>
+                            Account: <strong>{user?.email}</strong>
+                        </Typography>
+                        <Typography variant="body2">
+                            Enter password or scan finger.
+                        </Typography>
+                    </Box>
+
+                    {internalError && (
+                        <Alert severity="error" sx={{ mb: 2 }}>{internalError}</Alert>
+                    )}
+
                     <TextField
                         autoFocus
                         label="Password"
@@ -107,11 +136,11 @@ export default function DrawerDialog({ open, onClose, user, showSnackbar }) {
                         disabled={loading}
                         startIcon={<FingerprintIcon />}
                     >
-                        {loading ? "Scanning..." : "Scan Finger"}
+                        {loading ? "Verifying..." : "Retry Scanner"}
                     </Button>
                     <Box sx={{ display: 'flex', gap: 1, width: '100%', justifyContent: 'flex-end' }}>
                         <Button onClick={onClose} disabled={loading}>Cancel</Button>
-                        <Button type="submit" variant="outlined" disabled={loading}>Use Password</Button>
+                        <Button type="submit" variant="outlined" disabled={loading}>Unlock</Button>
                     </Box>
                 </DialogActions>
             </form>
