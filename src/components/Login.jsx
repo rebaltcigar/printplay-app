@@ -213,6 +213,9 @@ export default function Login({ onLogin, onAdminLogin }) {
         <Typography align="center" variant="h5" gutterBottom>
           Print+Play
         </Typography>
+        <Typography align="center" variant="caption" display="block" sx={{ mt: -1, mb: 2, opacity: 0.6 }}>
+          v0.1.0
+        </Typography>
 
         {/* Inline, user-friendly error */}
         {err && (
@@ -290,8 +293,8 @@ export default function Login({ onLogin, onAdminLogin }) {
                 ? "Signing in as Admin…"
                 : "Starting Shift…"
               : adminMode
-              ? "LOGIN AS SUPER ADMIN"
-              : "START SHIFT"}
+                ? "LOGIN AS SUPER ADMIN"
+                : "START SHIFT"}
           </Button>
         </Box>
       </Card>

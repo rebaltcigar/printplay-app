@@ -55,12 +55,13 @@ import {
   writeBatch,
   // --- NEW: Import FieldValue for atomic operations ---
   FieldValue,
-  deleteField,
 } from "firebase/firestore";
 
 
 import CustomerDialog from "./CustomerDialog";
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
+import ShiftConsolidationDialog from "./ShiftConsolidationDialog";
+import AssignmentTurnedInIcon from "@mui/icons-material/AssignmentTurnedIn";
 import logo from "/icon.ico";
 
 // UI-only peso formatter (commas, 2 decimals). Does NOT touch what we store.
@@ -121,12 +122,6 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
         : new Date();
   const [bulkDateTime, setBulkDateTime] = useState(toDatetimeLocal(shiftStart));
 
-  // ----- reconciliation -----
-  const [pcRental, setPcRental] = useState(
-    typeof shift.pcRentalTotal === "number" ? String(shift.pcRentalTotal) : ""
-  );
-  const [recon, setRecon] = useState({});
-
   const isDebtItem = item === "New Debt" || item === "Paid Debt";
 
   // --- responsive (mobile tweaks only) ---
@@ -137,7 +132,6 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
   // Mobile collapses
   const [txControlsOpen, setTxControlsOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
-  const [reconOpen, setReconOpen] = useState(false);
 
   // Confirmation Dialog State
   const [confirmDialog, setConfirmDialog] = useState({
@@ -149,6 +143,9 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
     confirmText: 'Confirm',
     confirmColor: 'error'
   });
+
+  // Consolidation Dialog State
+  const [consolidationOpen, setConsolidationOpen] = useState(false);
 
   // Refs to scroll to
   const txControlsRef = useRef(null);
@@ -200,12 +197,7 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
     })();
 
     (async () => {
-      const s = await getDoc(doc(db, "shifts", shift.id));
-      const d = s.data() || {};
-      setRecon(d.denominations || {});
-      if (typeof d.pcRentalTotal === "number") {
-        setPcRental(String(d.pcRentalTotal));
-      }
+      // Removed old reconciliation fetch
     })();
 
     return () => unsubServices();
@@ -586,20 +578,7 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
     });
   };
 
-  const handleReconChange = (denKey, val) =>
-    setRecon((p) => ({ ...p, [denKey]: val }));
 
-  const cashOnHand = useMemo(
-    () =>
-      Object.entries(recon).reduce((sum, [key, count]) => {
-        const denominationValue = Number(key.split("_")[1]);
-        if (!isNaN(denominationValue)) {
-          return sum + denominationValue * Number(count || 0);
-        }
-        return sum;
-      }, 0),
-    [recon]
-  );
 
   const servicesTotal = useMemo(
     () =>
@@ -608,6 +587,35 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
           return sum + (tx.total || 0);
         return sum;
       }, 0),
+    [transactions]
+  );
+
+  // New Breakdowns
+  const cashSalesTotal = useMemo(() =>
+    transactions.reduce((sum, tx) => {
+      if (tx.item !== 'Expenses' && tx.item !== 'New Debt') {
+        if (tx.paymentMethod === 'Cash' || !tx.paymentMethod) return sum + (tx.total || 0);
+      }
+      return sum;
+    }, 0) + Number(shift.pcRentalTotal || 0),
+    [transactions, shift.pcRentalTotal]
+  );
+
+  const gcashSalesTotal = useMemo(() =>
+    transactions.reduce((sum, tx) => {
+      if (tx.item !== 'Expenses' && tx.item !== 'New Debt' && tx.paymentMethod === 'GCash')
+        return sum + (tx.total || 0);
+      return sum;
+    }, 0),
+    [transactions]
+  );
+
+  const arSalesTotal = useMemo(() =>
+    transactions.reduce((sum, tx) => {
+      if (tx.item !== 'Expenses' && tx.item !== 'New Debt' && tx.paymentMethod === 'Charge')
+        return sum + (tx.total || 0);
+      return sum;
+    }, 0),
     [transactions]
   );
 
@@ -622,8 +630,8 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
   );
 
   const systemTotal = useMemo(
-    () => servicesTotal - expensesTotal + Number(pcRental || 0),
-    [servicesTotal, expensesTotal, pcRental]
+    () => servicesTotal - expensesTotal + Number(shift.pcRentalTotal || 0),
+    [servicesTotal, expensesTotal, shift.pcRentalTotal]
   );
 
   useEffect(() => {
@@ -633,8 +641,8 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
         await updateDoc(doc(db, "shifts", shift.id), {
           servicesTotal,
           expensesTotal,
-          pcRentalTotal: Number(pcRental || 0),
           systemTotal,
+          // We no longer overwrite pcRentalTotal here based on local state
         });
       } catch (e) {
         console.warn("Totals write skipped/failed:", e?.message || e);
@@ -642,31 +650,9 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
     };
     t = setTimeout(write, 500);
     return () => clearTimeout(t);
-  }, [servicesTotal, expensesTotal, pcRental, systemTotal, shift.id]);
+  }, [servicesTotal, expensesTotal, systemTotal, shift.id]);
 
-  const saveRecon = async () => {
-    try {
-      const payload = {
-        denominations: deleteField(),
-      };
-      payload.denominations = recon;
-      payload.pcRentalTotal = Number(pcRental || 0);
-      payload.systemTotal = systemTotal;
-      await updateDoc(doc(db, "shifts", shift.id), payload);
-      if (showSnackbar) showSnackbar("Reconciliation saved.", 'success');
-      showSnackbar?.("Reconciliation saved.", 'success');
-    } catch (e) {
-      console.error(e);
-      if (showSnackbar) showSnackbar("Failed to save reconciliation.", 'error');
-      showSnackbar?.("Failed to save reconciliation.", 'error');
-    }
-  };
 
-  const handleReconEnter = (e) => {
-    if (e.key === "Enter") {
-      saveRecon();
-    }
-  };
 
   const formatTime = (ts) =>
     ts?.seconds
@@ -804,88 +790,7 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
     </>
   );
 
-  const ReconContent = () => {
-    // --- CORRECTED: Use Cash on Hand - System Total for over/short logic ---
-    const difference = cashOnHand - systemTotal;
-    const hasReconData = Object.keys(recon).length > 0;
 
-    return (
-      <>
-        <Typography variant="subtitle1" fontWeight={600}>
-          Admin Cash Reconciliation
-        </Typography>
-        <TextField
-          label="PC Rental Total"
-          type="number"
-          value={pcRental}
-          onChange={(e) => setPcRental(e.target.value)}
-          onKeyDown={handleReconEnter}
-          fullWidth
-          size={fieldSize}
-        />
-        <Typography variant="subtitle2" sx={{ mt: 1 }}>
-          Bills
-        </Typography>
-        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-          {BILL_DENOMS.map((d) => (
-            <TextField
-              key={`bill-${d}`}
-              type="number"
-              size="small"
-              label={`₱${d} x`}
-              value={recon[`b_${d}`] || ""}
-              onChange={(e) => handleReconChange(`b_${d}`, e.target.value)}
-              sx={{ width: 110 }}
-            />
-          ))}
-        </Box>
-        <Typography variant="subtitle2">Coins</Typography>
-        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-          {COIN_DENOMS.map((d) => (
-            <TextField
-              key={`coin-${d}`}
-              type="number"
-              size="small"
-              label={`₱${d} x`}
-              value={recon[`c_${d}`] || ""}
-              onChange={(e) => handleReconChange(`c_${d}`, e.target.value)}
-              sx={{ width: 110 }}
-            />
-          ))}
-        </Box>
-        <Divider />
-        <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-          <Typography>System Total</Typography>
-          <Typography>{fmtPeso(systemTotal)}</Typography>
-        </Box>
-        <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-          <Typography>Cash on Hand</Typography>
-          <Typography>{hasReconData ? fmtPeso(cashOnHand) : "—"}</Typography>
-        </Box>
-        <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-          <Typography variant="subtitle1">Difference</Typography>
-          {hasReconData ? (
-            <Typography
-              variant="subtitle1"
-              fontWeight="bold"
-              sx={{
-                color:
-                  difference === 0
-                    ? "success.main"
-                    : difference > 0
-                      ? "warning.main"
-                      : "error.main",
-              }}
-            >
-              {difference > 0 ? `+${fmtPeso(difference)}` : fmtPeso(difference)}
-            </Typography>
-          ) : (
-            <Typography variant="subtitle1">—</Typography>
-          )}
-        </Box>
-      </>
-    );
-  };
 
 
   const startEdit = (tx) => {
@@ -915,6 +820,14 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
         <img src={logo} width={18} height={18} alt="" />
         <Button onClick={onBack} size="small" sx={{ ml: 0.5 }}>
           &larr; Back to All Shifts
+        </Button>
+        <Box sx={{ flexGrow: 1 }} />
+        <Button
+          variant="outlined"
+          startIcon={<AssignmentTurnedInIcon />}
+          onClick={() => setConsolidationOpen(true)}
+        >
+          Consolidate Shift
         </Button>
       </Box>
 
@@ -953,11 +866,11 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
               </Button>
             )}
             <Divider sx={{ my: 1 }} />
-            <ReconContent />
+            <Divider sx={{ my: 1 }} />
+            {/* ReconContent Removed */}
             <Stack direction="row" spacing={1} sx={{ mt: "auto" }}></Stack>
-            <Button onClick={saveRecon} variant="contained">
-              Save Reconciliation
-            </Button>
+            <Stack direction="row" spacing={1} sx={{ mt: "auto" }}></Stack>
+
           </Card>
         </Box>
 
@@ -1118,6 +1031,20 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
               <Typography>Expenses Total</Typography>
               <Typography>{fmtPeso(expensesTotal)}</Typography>
             </Box>
+            <Divider sx={{ my: 1 }} />
+            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+              <Typography variant="body2">Cash Sales</Typography>
+              <Typography variant="body2">{fmtPeso(cashSalesTotal)}</Typography>
+            </Box>
+            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+              <Typography variant="body2">GCash Sales</Typography>
+              <Typography variant="body2">{fmtPeso(gcashSalesTotal)}</Typography>
+            </Box>
+            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+              <Typography variant="body2">Receivables</Typography>
+              <Typography variant="body2">{fmtPeso(arSalesTotal)}</Typography>
+            </Box>
+            <Divider sx={{ my: 1 }} />
             <Box sx={{ display: "flex", justifyContent: "space-between" }}>
               <Typography variant="subtitle1">System Total</Typography>
               <Typography variant="subtitle1">
@@ -1328,6 +1255,20 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
               <Typography>Expenses</Typography>
               <Typography>{fmtPeso(expensesTotal)}</Typography>
             </Box>
+            <Divider sx={{ my: 1 }} />
+            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+              <Typography variant="body2">Cash Sales</Typography>
+              <Typography variant="body2">{fmtPeso(cashSalesTotal)}</Typography>
+            </Box>
+            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+              <Typography variant="body2">GCash Sales</Typography>
+              <Typography variant="body2">{fmtPeso(gcashSalesTotal)}</Typography>
+            </Box>
+            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+              <Typography variant="body2">Receivables</Typography>
+              <Typography variant="body2">{fmtPeso(arSalesTotal)}</Typography>
+            </Box>
+            <Divider sx={{ my: 1 }} />
             <Box sx={{ display: "flex", justifyContent: "space-between" }}>
               <Typography fontWeight={600}>System Total</Typography>
               <Typography fontWeight={600}>{fmtPeso(systemTotal)}</Typography>
@@ -1335,24 +1276,7 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
           </Box>
         </Paper>
 
-        <Card sx={{ p: 1.25 }}>
-          <Box sx={{ display: "flex", alignItems: "center" }}>
-            <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
-              Reconciliation
-            </Typography>
-            <IconButton size="small" onClick={() => setReconOpen((v) => !v)}>
-              {reconOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-            </IconButton>
-          </Box>
-          <Collapse in={reconOpen} unmountOnExit>
-            <Stack spacing={1.25} sx={{ mt: 1 }}>
-              <ReconContent />
-              <Button onClick={saveRecon} variant="contained" size="small">
-                Save Reconciliation
-              </Button>
-            </Stack>
-          </Collapse>
-        </Card>
+
       </Box>
 
       <Dialog open={bulkOpen} onClose={() => setBulkOpen(false)} fullWidth maxWidth="xs">
@@ -1395,6 +1319,16 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
         confirmText={confirmDialog.confirmText}
         confirmColor={confirmDialog.confirmColor}
       />
+      {/* Consolidation Dialog */}
+      {consolidationOpen && (
+        <ShiftConsolidationDialog
+          open={consolidationOpen}
+          onClose={() => setConsolidationOpen(false)}
+          shift={shift}
+          transactions={transactions}
+          showSnackbar={showSnackbar}
+        />
+      )}
     </Box>
   );
 }

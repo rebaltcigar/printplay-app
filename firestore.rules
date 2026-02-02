@@ -89,7 +89,8 @@ service cloud.firestore {
           isStaff() &&
           resource.data.staffEmail == request.auth.token.email &&
           request.resource.data.diff(resource.data).changedKeys().hasOnly([
-            'pcRentalTotal','servicesTotal','expensesTotal','systemTotal','endTime'
+            'pcRentalTotal','servicesTotal','expensesTotal','systemTotal','endTime',
+            'denominations','lastConsolidatedAt'
           ])
         );
       allow delete: if isAdmin();

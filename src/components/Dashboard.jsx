@@ -30,6 +30,10 @@ import ShoppingCartIcon from '@mui/icons-material/ShoppingCart';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess'; // ADDED
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'; // ADDED
 import SettingsIcon from '@mui/icons-material/Settings'; // ADDED
+import MonitorIcon from '@mui/icons-material/Monitor'; // ADDED for PC Rental
+import ContentCopyIcon from '@mui/icons-material/ContentCopy'; // ADDED for Photocopy
+import PhotoCameraIcon from '@mui/icons-material/PhotoCamera'; // ADDED for Photo
+import LayersIcon from '@mui/icons-material/Layers'; // ADDED for Laminate
 
 // Components
 import OrderCustomerDialog from './OrderCustomerDialog';
@@ -161,6 +165,7 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
 
   // --- PRINTING ---
   const [printOrder, setPrintOrder] = useState(null);
+  const [printShiftData, setPrintShiftData] = useState(null); // ADDED
   const [showEndShiftReceipt, setShowEndShiftReceipt] = useState(false);
   const [endShiftReceiptData, setEndShiftReceiptData] = useState(null);
 
@@ -391,13 +396,14 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
 
   // Auto-Print Trigger
   useEffect(() => {
-    if (printOrder) {
+    if (printOrder || printShiftData) {
       setTimeout(() => {
         window.print();
         setPrintOrder(null);
+        setPrintShiftData(null);
       }, 500);
     }
-  }, [printOrder]);
+  }, [printOrder, printShiftData]);
 
   const handleLogoutOnly = () => {
     try { auth.signOut(); } catch (e) { console.error('Logout failed:', e); }
@@ -615,6 +621,7 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
           category: 'Revenue', // Always Revenue (Accrual)
           financialCategory: 'Revenue', // Explicit
           paymentMethod: paymentData.paymentMethod,
+          paymentDetails: paymentData.paymentDetails || {}, // ADDED
           invoiceStatus: isUnpaid ? 'UNPAID' : 'PAID', // ADD STATUS
           isDeleted: false
         });
@@ -805,7 +812,8 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
           const ref = doc(db, 'transactions', item.transactionId);
           batch.update(ref, {
             ...itemData,
-            paymentMethod: paymentData.paymentMethod
+            paymentMethod: paymentData.paymentMethod,
+            paymentDetails: paymentData.paymentDetails || {} // ADDED
           });
         } else {
           const ref = doc(collection(db, 'transactions'));
@@ -819,6 +827,7 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
             orderNumber: order.orderNumber,
             category: 'Revenue',
             paymentMethod: paymentData.paymentMethod,
+            paymentDetails: paymentData.paymentDetails || {}, // ADDED
             isDeleted: false
           });
         }
@@ -916,7 +925,7 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', bgcolor: 'background.default', color: 'text.primary' }}>
 
       {/* FIXED: Passing 'order' to fix printing */}
-      <SimpleReceipt order={printOrder} staffName={staffDisplayName} settings={systemSettings} />
+      <SimpleReceipt order={printOrder} shiftData={printShiftData} staffName={staffDisplayName} settings={systemSettings} />
 
       {/* --- HEADER --- */}
       <AppBar position="static" color="default" elevation={1} sx={{ bgcolor: 'background.paper', borderBottom: 1, borderColor: 'divider' }}>
@@ -1001,6 +1010,54 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
               </Box>
               <Box p={2}>
                 <Stack spacing={1}>
+                  {/* Quick Actions (MOVED) */}
+                  <Stack direction="row" spacing={1} sx={{ overflowX: 'auto', pb: 0.5 }}>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={<MonitorIcon />}
+                      onClick={() => { setItem("PC Rental"); setQuantity(1); setPrice(''); }}
+                      sx={{ flex: 1, whiteSpace: 'nowrap', minWidth: 'fit-content' }}
+                    >
+                      PC Rental
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={<PrintIcon />}
+                      onClick={() => { setItem("Print"); setQuantity(1); setPrice(''); }}
+                      sx={{ flex: 1, whiteSpace: 'nowrap', minWidth: 'fit-content' }}
+                    >
+                      Print
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={<ContentCopyIcon />}
+                      onClick={() => { setItem("Photocopy"); setQuantity(1); setPrice(''); }}
+                      sx={{ flex: 1, whiteSpace: 'nowrap', minWidth: 'fit-content' }}
+                    >
+                      Photocopy
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={<PhotoCameraIcon />}
+                      onClick={() => { setItem("Photo"); setQuantity(1); setPrice(''); }}
+                      sx={{ flex: 1, whiteSpace: 'nowrap', minWidth: 'fit-content' }}
+                    >
+                      ID Photo
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={<LayersIcon />}
+                      onClick={() => { setItem("Laminate"); setQuantity(1); setPrice(''); }}
+                      sx={{ flex: 1, whiteSpace: 'nowrap', minWidth: 'fit-content' }}
+                    >
+                      Laminate
+                    </Button>
+                  </Stack>
                   {/* CONDITIONAL EXTRA FIELDS (Expenses/Debt) */}
                   {item === 'Expenses' && (
                     <Stack direction="row" spacing={1}>
@@ -1086,6 +1143,8 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
 
 
                 </Stack>
+
+
               </Box>
             </Box>
 
@@ -1369,7 +1428,7 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
           </Box>
 
         </Grid>
-      </Box> {/* Close centered content box - FIXED */}
+      </Box > {/* Close centered content box - FIXED */}
 
       {/* --- DIALOGS --- */}
       <DrawerDialog open={openDrawerDialog} onClose={() => setOpenDrawerDialog(false)} user={user} showSnackbar={showSnackbar} />
@@ -1486,26 +1545,31 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
               </Typography>
             </Box>
 
-            {/* PC Rental */}
+            {/* SECTION 1: SALES */}
+            <Typography variant="caption" color="gray" display="block" mb={0.5} fontWeight="bold">SALES</Typography>
+            <Box display="flex" justifyContent="space-between" pl={1}>
+              <Typography variant="body2">PC Rental</Typography>
+              <Typography variant="body2">{currency(endShiftReceiptData?.pcRentalTotal)}</Typography>
+            </Box>
+            {endShiftReceiptData?.salesBreakdown?.map(([label, amt]) => (
+              <Box key={label} display="flex" justifyContent="space-between" pl={1}>
+                <Typography variant="body2">{label}</Typography>
+                <Typography variant="body2">{currency(amt)}</Typography>
+              </Box>
+            ))}
+
+            <Divider sx={{ my: 0.5, borderStyle: 'dashed', borderColor: '#555' }} />
+
             <Box display="flex" justifyContent="space-between">
-              <Typography variant="body1">PC Rental</Typography>
-              <Typography variant="body1">{currency(endShiftReceiptData?.pcRentalTotal)}</Typography>
+              <Typography variant="body2" fontWeight="bold">Total Sales</Typography>
+              <Typography variant="body2" fontWeight="bold">
+                {currency((endShiftReceiptData?.servicesTotal || 0) + (endShiftReceiptData?.pcRentalTotal || 0))}
+              </Typography>
             </Box>
 
-            {/* Sales Breakdown */}
-            <Box mt={1}>
-              <Typography variant="caption" color="gray" display="block" mb={0.5}>Sales</Typography>
-              {endShiftReceiptData?.salesBreakdown?.map(([label, amt]) => (
-                <Box key={label} display="flex" justifyContent="space-between" pl={1}>
-                  <Typography variant="body2">{label}</Typography>
-                  <Typography variant="body2">{currency(amt)}</Typography>
-                </Box>
-              ))}
-            </Box>
-
-            {/* Expenses Breakdown */}
-            <Box mt={1}>
-              <Typography variant="caption" color="gray" display="block" mb={0.5}>Expenses</Typography>
+            {/* SECTION 2: EXPENSES */}
+            <Box mt={2}>
+              <Typography variant="caption" color="gray" display="block" mb={0.5} fontWeight="bold">EXPENSES</Typography>
               {endShiftReceiptData?.expensesBreakdown?.length === 0 && (
                 <Typography variant="caption" color="text.secondary" pl={1}>No expenses</Typography>
               )}
@@ -1515,35 +1579,60 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
                   <Typography variant="body2">{currency(amt)}</Typography>
                 </Box>
               ))}
+              <Divider sx={{ my: 0.5, borderStyle: 'dashed', borderColor: '#555' }} />
+              <Box display="flex" justifyContent="space-between">
+                <Typography variant="body2" fontWeight="bold">Total Expenses</Typography>
+                <Typography variant="body2" fontWeight="bold">{currency(endShiftReceiptData?.expensesTotal)}</Typography>
+              </Box>
             </Box>
 
             <Divider sx={{ borderColor: '#333', my: 2 }} />
 
-            {/* Subtotals */}
-            <Box display="flex" justifyContent="space-between">
-              <Typography variant="body2">Total Sales</Typography>
-              <Typography variant="body2">
-                {currency((endShiftReceiptData?.servicesTotal || 0) + (endShiftReceiptData?.pcRentalTotal || 0))}
-              </Typography>
-            </Box>
-            <Box display="flex" justifyContent="space-between">
-              <Typography variant="body2">Total Expenses</Typography>
-              <Typography variant="body2">{currency(endShiftReceiptData?.expensesTotal)}</Typography>
-            </Box>
-
-            <Divider sx={{ borderColor: '#333', my: 2 }} />
-
-            {/* System Total */}
+            {/* SECTION 3: SYSTEM TOTAL */}
             <Box display="flex" justifyContent="space-between" alignItems="center" mt={1}>
               <Typography variant="h6" fontWeight="900">SYSTEM TOTAL</Typography>
               <Typography variant="h4" fontWeight="900">{currency(endShiftReceiptData?.systemTotal)}</Typography>
             </Box>
 
+            <Divider sx={{ borderColor: '#333', my: 2 }} />
+
+            {/* SECTION 4: PAYMENT BREAKDOWN */}
+            <Box mt={1}>
+              <Typography variant="caption" color="gray" display="block" mb={0.5} fontWeight="bold">PAYMENT BREAKDOWN</Typography>
+              <Box display="flex" justifyContent="space-between" pl={1}>
+                <Typography variant="body2">Cash</Typography>
+                <Typography variant="body2">{currency(endShiftReceiptData?.breakdown?.cash)}</Typography>
+              </Box>
+              <Box display="flex" justifyContent="space-between" pl={1}>
+                <Typography variant="body2">GCash</Typography>
+                <Typography variant="body2">{currency(endShiftReceiptData?.breakdown?.gcash)}</Typography>
+              </Box>
+              <Box display="flex" justifyContent="space-between" pl={1}>
+                <Typography variant="body2">Receivables</Typography>
+                <Typography variant="body2">{currency(endShiftReceiptData?.breakdown?.receivables)}</Typography>
+              </Box>
+            </Box>
+
+            {/* SECTION 5: EXPECTED CASH */}
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2, p: 2, bgcolor: 'background.paper', borderRadius: 1, border: 1, borderColor: 'divider' }}>
+              <Typography variant="subtitle1" fontWeight="bold" color="text.primary">Expected Cash on Hand</Typography>
+              <Typography variant="subtitle1" fontWeight="bold" color="text.primary">
+                {currency((endShiftReceiptData?.breakdown?.cash || 0) - (endShiftReceiptData?.expensesTotal || 0))}
+              </Typography>
+            </Box>
+
           </Stack>
         </DialogContent>
-        <DialogActions sx={{ p: 2, borderTop: '1px solid #333' }}>
+        <DialogActions sx={{ p: 2, borderTop: '1px solid #333', justifyContent: 'space-between' }}>
           <Button
-            fullWidth
+            variant="outlined"
+            onClick={() => setPrintShiftData(endShiftReceiptData)}
+            startIcon={<PrintIcon />}
+          >
+            PRINT
+          </Button>
+          <Button
+            variant="contained"
             color="error"
             onClick={() => auth.signOut()}
             sx={{ fontWeight: 'bold' }}
@@ -1601,7 +1690,7 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
       >
         <CircularProgress color="inherit" />
       </Backdrop>
-    </Box>
+    </Box >
   );
 }
 

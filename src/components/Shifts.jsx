@@ -40,8 +40,11 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import AddIcon from "@mui/icons-material/Add";
 import EditIcon from "@mui/icons-material/Edit";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow"; // Resume icon
+
+import AssignmentTurnedInIcon from "@mui/icons-material/AssignmentTurnedIn"; // Consolidation Icon
 import AdminLoading from "./common/AdminLoading"; // NEW IMPORT
 import ShiftDetailView from "./ShiftDetailView";
+import ShiftConsolidationDialog from "./ShiftConsolidationDialog";
 import { db } from "../firebase";
 import {
   collection,
@@ -134,7 +137,7 @@ const toLocalInput = (tsOrDate) => {
 const normalize = (s) => String(s ?? "").trim().toLowerCase();
 
 /* -------------------- aggregation (spec-compliant) -------------------- */
-const aggregateShiftTransactions = (txList, serviceMeta, pcRental = 0) => {
+const aggregateShiftTransactions = (txList, serviceMeta) => {
   const nameToCategory = {};
   for (const s of serviceMeta || []) {
     const n = normalize(s.name);
@@ -145,6 +148,11 @@ const aggregateShiftTransactions = (txList, serviceMeta, pcRental = 0) => {
   const serviceTotals = {};
   let sales = 0;
   let expenses = 0;
+
+  // Breakdown
+  let cashSales = 0;
+  let gcashSales = 0;
+  let arSales = 0; // Accounts Receivable (Charge)
 
   for (const tx of txList) {
     if (!tx || tx.isDeleted === true) continue;
@@ -169,18 +177,28 @@ const aggregateShiftTransactions = (txList, serviceMeta, pcRental = 0) => {
       "Unknown";
     serviceTotals[displayName] = (serviceTotals[displayName] || 0) + amt;
 
-    if (normalize(cat) === "debit") sales += amt;
-    else if (normalize(cat) === "credit") expenses += amt;
+    if (normalize(cat) === "debit") {
+      sales += amt;
+      // Payment Method Breakdown
+      if (tx.paymentMethod === 'GCash') gcashSales += amt;
+      else if (tx.paymentMethod === 'Charge') arSales += amt;
+      else cashSales += amt; // Default to cash if unknown/null + explicit Cash
+    }
+    else if (normalize(cat) === "credit") {
+      expenses += amt;
+    }
   }
 
-  const salesWithPc = Number(sales) + Number(pcRental || 0);
-  const systemTotal = salesWithPc - Number(expenses);
+  const systemTotal = sales - Number(expenses);
 
   return {
     serviceTotals,
-    sales: salesWithPc,
+    sales,
     expenses,
     systemTotal,
+    cashSales,
+    gcashSales,
+    arSales
   };
 };
 
@@ -225,7 +243,13 @@ const Shifts = ({ showSnackbar }) => {
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [shiftToDelete, setShiftToDelete] = useState(null);
+
   const [deleteMode, setDeleteMode] = useState("unlink");
+
+  // Consolidation Dialog
+  const [consolidationOpen, setConsolidationOpen] = useState(false);
+  const [consolidationShift, setConsolidationShift] = useState(null);
+  const [consolidationTx, setConsolidationTx] = useState([]);
 
   const [txAggByShift, setTxAggByShift] = useState({});
   const txUnsubsRef = useRef({});
@@ -264,7 +288,16 @@ const Shifts = ({ showSnackbar }) => {
         // Hide shifts without denominations if either checkbox is unchecked
         if (!filterShowShort || !filterShowOverage) return false;
       } else {
-        const difference = onHand - (agg.systemTotal || 0);
+        // New logic for calculating difference in fitler
+        const pc = Number(s.pcRentalTotal || 0);
+        const expenses = Number(agg.expenses || 0);
+        let expectedCash = 0;
+        if (s.breakdown) {
+          expectedCash = (s.breakdown?.cash || 0) - expenses;
+        } else {
+          expectedCash = (Number(agg.cashSales || 0) + pc) - expenses;
+        }
+        const difference = onHand - expectedCash;
         const isShort = difference < 0;
         const isOverage = difference > 0;
 
@@ -363,7 +396,11 @@ const Shifts = ({ showSnackbar }) => {
     return () => unsub();
   }, []);
 
-  const serviceNames = useMemo(() => services.map((s) => s.name), [services]);
+  const serviceNames = useMemo(() =>
+    services
+      .filter(s => normalize(s.category) !== 'credit')
+      .map((s) => s.name),
+    [services]);
 
   useEffect(() => {
     const desired = new Set(shifts.map((s) => s.id));
@@ -381,9 +418,12 @@ const Shifts = ({ showSnackbar }) => {
       const unsub = onSnapshot(
         q1,
         (snap) => {
-          const txs = snap.docs.map((d) => d.data()).filter((t) => t && t.isDeleted !== true);
-          const aggregated = aggregateShiftTransactions(txs, services, s.pcRentalTotal);
-          setTxAggByShift((prev) => ({ ...prev, [s.id]: aggregated }));
+          const txs = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((t) => t && t.isDeleted !== true);
+          const aggregated = aggregateShiftTransactions(txs, services);
+          setTxAggByShift((prev) => ({
+            ...prev,
+            [s.id]: { ...aggregated, fullTransactions: txs } // Store full transactions for consolidation
+          }));
         },
         (e) => console.warn("transactions listener failed for shift", s.id, e)
       );
@@ -422,19 +462,71 @@ const Shifts = ({ showSnackbar }) => {
 
     for (const s of filteredShifts) {
       const agg = txAggByShift[s.id];
-      pcRental += Number(s?.pcRentalTotal || 0);
+      const pc = Number(s?.pcRentalTotal || 0);
+      pcRental += pc;
+
       const currentOnHand = calculateOnHand(s.denominations);
       if (currentOnHand !== null) {
         onHand += currentOnHand;
         shiftsWithDenominations++;
       }
+
       if (agg) {
-        sales += Number(agg.sales || 0);
-        expenses += Number(agg.expenses || 0);
-        system += Number(agg.systemTotal || 0);
+        const _expenses = Number(agg.expenses || 0);
+        sales += Number(agg.sales || 0) + pc;
+        expenses += _expenses;
+        system += (Number(agg.sales || 0) + pc - _expenses);
+
+        // Expected Cash Logic for Grand Total Difference
+        let expectedCashForShift = 0;
+        if (s.breakdown) {
+          // New Logic: Use saved breakdown
+          expectedCashForShift = (s.breakdown?.cash || 0) - _expenses;
+        } else {
+          // Old Logic: Services Cash + PC (assumed cash) - Expenses
+          expectedCashForShift = (Number(agg.cashSales || 0) + pc) - _expenses;
+        }
+
+        // Difference for this shift
+        if (currentOnHand !== null) {
+          // We can accumulate difference strictly, or just do onHand - expectedCash
+          // But grand.difference usually calculates (GrandOnHand - GrandExpectedSystem).
+          // However, strictly speaking, `grand.system` is NET SALES.
+          // If we want `grand.difference` to be meaningful for hybrid shifts, we can't use `grand.system` (which includes gcash/ar).
+          // So we should verify what `grand.system` is being used for in difference calculation.
+          // The old code did: `const difference = onHand - system;` 
+          // This implies `system` was treated as `Expected Cash`.
+          // We need to fix this.
+        }
       }
     }
-    const difference = onHand - system;
+
+    // Since calculating grand difference is tricky with mixed expected cash definitions, 
+    // let's just sum up individual differences? 
+    // Valid "On Hand" is only present for `shiftsWithDenominations`.
+    // Let's sum Expected Cash for those shifts only.
+    let totalExpectedCash = 0;
+
+    for (const s of filteredShifts) {
+      const agg = txAggByShift[s.id];
+      const onHandVal = calculateOnHand(s.denominations);
+      if (onHandVal !== null && agg) {
+        const pc = Number(s?.pcRentalTotal || 0);
+        const _expenses = Number(agg.expenses || 0);
+
+        if (s.breakdown) {
+          totalExpectedCash += (s.breakdown?.cash || 0) - _expenses;
+        } else {
+          totalExpectedCash += (Number(agg.cashSales || 0) + pc) - _expenses;
+        }
+      }
+    }
+
+    // Recalculate difference based on (Total On Hand - Total Expected Cash)
+    // Note: Use `system` variable above for "Total Net Sales" display
+
+    const difference = onHand - totalExpectedCash;
+
     return { pcRental, sales, expenses, system, onHand, difference, shiftsWithDenominations };
   }, [filteredShifts, txAggByShift]);
 
@@ -447,14 +539,30 @@ const Shifts = ({ showSnackbar }) => {
       rows = filteredShifts.map((s) => {
         const agg = txAggByShift[s.id] || {};
         const onHand = calculateOnHand(s.denominations);
-        const difference = onHand !== null ? onHand - (agg.systemTotal || 0) : null;
+
+        // Calculation Logic
+        const pc = Number(s.pcRentalTotal || 0);
+        const serviceSales = Number(agg.sales || 0);
+        const expenses = Number(agg.expenses || 0);
+        const totalSales = serviceSales + pc;
+        const netTotal = totalSales - expenses;
+
+        let expectedCash = 0;
+        if (s.breakdown) {
+          expectedCash = (s.breakdown?.cash || 0) - expenses;
+        } else {
+          expectedCash = (Number(agg.cashSales || 0) + pc) - expenses;
+        }
+
+        const difference = onHand !== null ? onHand - expectedCash : null;
+
         return [
           s.startTime ? new Date(s.startTime.seconds * 1000).toLocaleDateString() : "N/A",
           userMap[s.staffEmail] || s.staffEmail,
           s.shiftPeriod || "",
-          Number(agg.sales || 0).toFixed(2),
-          Number(agg.expenses || 0).toFixed(2),
-          Number(agg.systemTotal || 0).toFixed(2),
+          totalSales.toFixed(2),
+          expenses.toFixed(2),
+          netTotal.toFixed(2),
           onHand !== null ? onHand.toFixed(2) : "N/A",
           difference !== null ? difference.toFixed(2) : "N/A",
         ].join(",");
@@ -473,15 +581,22 @@ const Shifts = ({ showSnackbar }) => {
       rows = filteredShifts.map((s) => {
         const agg = txAggByShift[s.id] || { serviceTotals: {} };
         const perSvc = serviceNames.map((n) => Number(agg.serviceTotals?.[n] || 0).toFixed(2));
+
+        const pc = Number(s.pcRentalTotal || 0);
+        const serviceSales = Number(agg.sales || 0);
+        const expenses = Number(agg.expenses || 0);
+        const totalSales = serviceSales + pc;
+        const netTotal = totalSales - expenses;
+
         return [
           s.startTime ? new Date(s.startTime.seconds * 1000).toLocaleDateString() : "N/A",
           userMap[s.staffEmail] || s.staffEmail,
           s.shiftPeriod || "",
-          Number(s.pcRentalTotal || 0).toFixed(2),
+          pc.toFixed(2),
           ...perSvc,
-          Number(agg.sales || 0).toFixed(2),
-          Number(agg.expenses || 0).toFixed(2),
-          Number(agg.systemTotal || 0).toFixed(2),
+          totalSales.toFixed(2), // Sales (Gross)
+          expenses.toFixed(2),
+          netTotal.toFixed(2),   // Total (Net)
         ].join(",");
       });
     }
@@ -596,6 +711,17 @@ const Shifts = ({ showSnackbar }) => {
       console.error("Delete shift failed:", e);
       showSnackbar?.(`Failed to delete shift: ${e.message || e.code || e}`, 'error');
     }
+  };
+
+  const openConsolidation = (shift) => {
+    const agg = txAggByShift[shift.id];
+    if (!agg) {
+      showSnackbar?.("Loading shift data...", "info");
+      return;
+    }
+    setConsolidationShift(shift);
+    setConsolidationTx(agg.fullTransactions || []);
+    setConsolidationOpen(true);
   };
 
   if (viewingShift) {
@@ -786,9 +912,9 @@ const Shifts = ({ showSnackbar }) => {
                 <TableCell sx={{ whiteSpace: "nowrap" }}>Date</TableCell>
                 <TableCell sx={{ display: { xs: "none", sm: "table-cell" } }}>Shift</TableCell>
                 <TableCell>Staff</TableCell>
-                <TableCell align="right">Sales</TableCell>
+                <TableCell align="right">Total Sales</TableCell>
                 <TableCell align="right">Expenses</TableCell>
-                <TableCell align="right">Total</TableCell>
+                <TableCell align="right">Net Total</TableCell>
                 <TableCell align="right">On Hand</TableCell>
                 <TableCell align="right">Difference</TableCell>
                 <TableCell align="right">Actions</TableCell>
@@ -799,7 +925,22 @@ const Shifts = ({ showSnackbar }) => {
                 const agg = txAggByShift[s.id] || {};
                 const isActiveRow = activeShiftId === s.id;
                 const onHand = calculateOnHand(s.denominations);
-                const difference = onHand === null ? null : onHand - (agg.systemTotal || 0);
+
+                // Calculations
+                const pc = Number(s.pcRentalTotal || 0);
+                const serviceSales = Number(agg.sales || 0); // aggregated service sales (no pc)
+                const expenses = Number(agg.expenses || 0);
+                const totalSales = serviceSales + pc;
+                const netTotal = totalSales - expenses;
+
+                let expectedCash = 0;
+                if (s.breakdown) {
+                  expectedCash = (s.breakdown?.cash || 0) - expenses;
+                } else {
+                  expectedCash = (Number(agg.cashSales || 0) + pc) - expenses;
+                }
+
+                const difference = onHand === null ? null : onHand - expectedCash;
 
                 return (
                   <TableRow
@@ -842,9 +983,9 @@ const Shifts = ({ showSnackbar }) => {
                         {userMap[s.staffEmail] || s.staffEmail}
                       </Typography>
                     </TableCell>
-                    <TableCell align="right">{fmtPeso(agg.sales || 0)}</TableCell>
-                    <TableCell align="right">{fmtPeso(agg.expenses || 0)}</TableCell>
-                    <TableCell align="right">{fmtPeso(agg.systemTotal || 0)}</TableCell>
+                    <TableCell align="right">{fmtPeso(totalSales)}</TableCell>
+                    <TableCell align="right">{fmtPeso(expenses)}</TableCell>
+                    <TableCell align="right">{fmtPeso(netTotal)}</TableCell>
                     <TableCell align="right">
                       {onHand === null ? "—" : fmtPeso(onHand)}
                     </TableCell>
@@ -872,6 +1013,11 @@ const Shifts = ({ showSnackbar }) => {
                       <Tooltip title="Edit shift">
                         <IconButton size="small" onClick={() => openEdit(s)}>
                           <EditIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Consolidate">
+                        <IconButton size="small" color="primary" onClick={(e) => { e.stopPropagation(); openConsolidation(s); }}>
+                          <AssignmentTurnedInIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
                       <Tooltip title="Delete shift">
@@ -1002,9 +1148,9 @@ const Shifts = ({ showSnackbar }) => {
                     <TableCell sx={{ maxWidth: 220 }}><Typography noWrap>{userMap[s.staffEmail] || s.staffEmail}</Typography></TableCell>
                     <TableCell align="right">{fmtPeso(s.pcRentalTotal || 0)}</TableCell>
                     {serviceNames.map((h) => (<TableCell key={h} align="right">{fmtPeso(agg?.serviceTotals?.[h] || 0)}</TableCell>))}
-                    <TableCell align="right">{fmtPeso(agg?.sales || 0)}</TableCell>
+                    <TableCell align="right">{fmtPeso((agg?.sales || 0) + Number(s.pcRentalTotal || 0))}</TableCell>
                     <TableCell align="right">{fmtPeso(agg?.expenses || 0)}</TableCell>
-                    <TableCell align="right">{fmtPeso(agg?.systemTotal || 0)}</TableCell>
+                    <TableCell align="right">{fmtPeso(((agg?.sales || 0) + Number(s.pcRentalTotal || 0)) - (agg?.expenses || 0))}</TableCell>
                     <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
                       <Tooltip title="Edit shift">
                         <IconButton size="small" onClick={() => openEdit(s)}><EditIcon fontSize="small" /></IconButton>
@@ -1121,6 +1267,14 @@ const Shifts = ({ showSnackbar }) => {
           <Button color="error" variant="contained" onClick={handleDeleteShift}>Confirm Delete</Button>
         </DialogActions>
       </Dialog>
+
+      <ShiftConsolidationDialog
+        open={consolidationOpen}
+        onClose={() => setConsolidationOpen(false)}
+        shift={consolidationShift}
+        transactions={consolidationTx}
+        showSnackbar={showSnackbar}
+      />
     </Box>
   );
 };

@@ -8,7 +8,8 @@ PrintPlay is a comprehensive Point of Sale (POS) and management system designed 
 ### 1. Point of Sale (POS)
 - **Transaction Processing**: Handles sales of services (e.g., printing, computer rental) and retail items (e.g., snacks, beverages).
 - **Cart System**: Supports multiple potential orders (tabs) and allows adding/removing items.
-- **Payment Handling**: Supports Cash and GCash payments.
+- **Payment Handling**: Supports Cash, GCash, and Charge (Accounts Receivable) payments.
+- **Quick Actions**: One-tap buttons for common services: Print, Photocopy, ID Photo, Laminate.
 - **Receipts**: Auto-generates and prints receipts upon checkout.
 - **Quick Expenses**: Allows staff to quickly log operational expenses (e.g., buying ice) directly from the POS.
 
@@ -29,8 +30,9 @@ PrintPlay is a comprehensive Point of Sale (POS) and management system designed 
     - **Deduction**: Automatically deducts stock upon POS sale.
 
 ### 4. Shift Management
-- **Shift Logic**: Tracks business activity per shift.
-- **Reconciliation**: At the end of a shift, staff reconcile cash expected vs. cash on hand, declaring discrepancies.
+- **Shift Logic**: Tracks business activity per shift (Morning, Afternoon, Evening).
+- **Consolidation**: End-of-shift feature to reconcile cash, verify GCash transactions, and track Accounts Receivable.
+- **Hybrid PC Rental**: Supports split payments for PC rentals (part Cash, part GCash/Charge), automatically calculating expected cash on hand.
 - **Active Shift Tracking**: Admin can see the live status of the current shift.
 
 ### 5. User & Staff Management

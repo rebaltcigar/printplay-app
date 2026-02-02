@@ -5,9 +5,116 @@ import { Box, Typography, Divider, Table, TableBody, TableRow, TableCell } from 
 // Helper for currency format
 const currency = (num) => `₱${Number(num || 0).toFixed(2)}`;
 
-export const SimpleReceipt = ({ order, staffName, settings }) => {
-  if (!order) return null;
+export const SimpleReceipt = ({ order, shiftData, staffName, settings }) => {
+  if (!order && !shiftData) return null;
 
+  // Default values if settings not loaded/provided
+  const storeName = settings?.storeName || 'PrintPlay';
+  const address = settings?.address || '6 Abra St. Bago Bantay, Quezon City';
+  const phone = settings?.phone || '(02) 8651 2462';
+  const email = settings?.email || 'printplay.net | printplay.ph@gmail.com';
+  const footerMsg = settings?.receiptFooter || 'Salamat, Idol!';
+  const logoUrl = settings?.logoUrl || null;
+
+  // --- SHIFT SUMMARY MODE ---
+  if (shiftData) {
+    const dateStr = new Date().toLocaleString();
+    const period = shiftData.shiftPeriod || "---";
+    const user = staffName || shiftData.staffEmail || "Staff";
+
+    const { breakdown, expenses, systemTotal, cashOnHand, difference } = shiftData;
+
+    return (
+      <Box
+        id="printable-receipt"
+        sx={{
+          display: 'none',
+          '@media print': {
+            display: 'block',
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '80mm',
+            padding: '10px 5px',
+            backgroundColor: 'white',
+            color: 'black',
+            fontFamily: 'monospace',
+          },
+        }}
+      >
+        <style>
+          {`
+              @media print {
+                body * { visibility: hidden; }
+                #printable-receipt, #printable-receipt * { visibility: visible; color: black !important; }
+                #printable-receipt { position: absolute; left: 0; top: 0; }
+              }
+            `}
+        </style>
+
+        <Box sx={{ textAlign: 'center', mb: 2 }}>
+          <Typography variant="h6" sx={{ fontWeight: 900, fontSize: '16px', color: 'black' }}>
+            {storeName} - Shift Report
+          </Typography>
+          <Typography variant="caption" display="block" sx={{ fontSize: '10px', color: 'black' }}>
+            {dateStr}
+          </Typography>
+          <Typography variant="caption" display="block" sx={{ fontSize: '10px', color: 'black' }}>
+            Shift: {period} | Staff: {user}
+          </Typography>
+        </Box>
+
+        <Table size="small" sx={{ mb: 1 }}>
+          <TableBody>
+            <TableRow>
+              <TableCell sx={{ borderBottom: 'none', py: 0.5, fontSize: '10px', fontWeight: 'bold' }}>Total Sales</TableCell>
+              <TableCell align="right" sx={{ borderBottom: 'none', py: 0.5, fontSize: '10px', fontWeight: 'bold' }}>{currency((breakdown?.cash || 0) + (breakdown?.gcash || 0) + (breakdown?.receivables || 0))}</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell sx={{ borderBottom: 'none', py: 0.5, pl: 2, fontSize: '9px' }}>Cash</TableCell>
+              <TableCell align="right" sx={{ borderBottom: 'none', py: 0.5, fontSize: '9px' }}>{currency(breakdown?.cash)}</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell sx={{ borderBottom: 'none', py: 0.5, pl: 2, fontSize: '9px' }}>GCash</TableCell>
+              <TableCell align="right" sx={{ borderBottom: 'none', py: 0.5, fontSize: '9px' }}>{currency(breakdown?.gcash)}</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell sx={{ borderBottom: 'none', py: 0.5, pl: 2, fontSize: '9px' }}>Receivables</TableCell>
+              <TableCell align="right" sx={{ borderBottom: 'none', py: 0.5, fontSize: '9px' }}>{currency(breakdown?.receivables)}</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell sx={{ borderBottom: '1px dashed black', py: 0.5, fontSize: '10px' }}>Expenses</TableCell>
+              <TableCell align="right" sx={{ borderBottom: '1px dashed black', py: 0.5, fontSize: '10px' }}>-{currency(expenses)}</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell sx={{ borderBottom: 'none', py: 0.5, fontSize: '12px', fontWeight: 'bold' }}>System Total</TableCell>
+              <TableCell align="right" sx={{ borderBottom: 'none', py: 0.5, fontSize: '12px', fontWeight: 'bold' }}>{currency(systemTotal)}</TableCell>
+            </TableRow>
+            {cashOnHand !== undefined && (
+              <TableRow>
+                <TableCell sx={{ borderBottom: 'none', py: 0.5, fontSize: '10px' }}>Cash Count</TableCell>
+                <TableCell align="right" sx={{ borderBottom: 'none', py: 0.5, fontSize: '10px' }}>{currency(cashOnHand)}</TableCell>
+              </TableRow>
+            )}
+            {difference !== undefined && (
+              <TableRow>
+                <TableCell sx={{ borderBottom: 'none', py: 0.5, fontSize: '10px' }}>Difference</TableCell>
+                <TableCell align="right" sx={{ borderBottom: 'none', py: 0.5, fontSize: '10px', fontWeight: 'bold', color: difference < 0 ? 'black' : 'black' }}>
+                  {difference > 0 ? '+' : ''}{currency(difference)}
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+        <Divider sx={{ my: 1, borderStyle: 'dashed' }} />
+        <Typography variant="caption" display="block" align="center" sx={{ fontSize: '9px', mt: 2 }}>
+          -- End of Shift --
+        </Typography>
+      </Box>
+    );
+  }
+
+  // --- ORDER RECEIPT MODE (Existing Logic) ---
   // Safe accessors in case we are printing an old-style transaction object
   const items = order.items || (order.item ? [{
     name: order.item,
@@ -23,14 +130,6 @@ export const SimpleReceipt = ({ order, staffName, settings }) => {
 
   // Use the passed staffName prop (live Dashboard state) or fallback to order data
   const cashierDisplay = staffName || order.staffName || 'Staff';
-
-  // Default values if settings not loaded/provided
-  const storeName = settings?.storeName || 'PrintPlay';
-  const address = settings?.address || '6 Abra St. Bago Bantay, Quezon City';
-  const phone = settings?.phone || '(02) 8651 2462';
-  const email = settings?.email || 'printplay.net | printplay.ph@gmail.com';
-  const footerMsg = settings?.receiptFooter || 'Salamat, Idol!';
-  const logoUrl = settings?.logoUrl || null;
 
   return (
     <Box
@@ -100,128 +199,85 @@ export const SimpleReceipt = ({ order, staffName, settings }) => {
             Cashier: {cashierDisplay}
           </Typography>
           <Typography variant="caption" display="block" sx={{ fontSize: '9px', color: 'black', lineHeight: 1.2 }}>
-            {dateStr}
+            Date: {dateStr}
           </Typography>
-
-          {/* Customer Details */}
-          {order.customerName && order.customerName !== 'Walk-in Customer' && (
-            <Box sx={{ mt: 1, borderTop: '1px dashed black', pt: 0.5 }}>
-              <Typography variant="caption" display="block" sx={{ fontSize: '9px', color: 'black' }}>
-                Name: {order.customerName}
-              </Typography>
-              {order.customerPhone && (
-                <Typography variant="caption" display="block" sx={{ fontSize: '9px', color: 'black' }}>
-                  Phone: {order.customerPhone}
-                </Typography>
-              )}
-              {order.customerAddress && (
-                <Typography variant="caption" display="block" sx={{ fontSize: '9px', color: 'black' }}>
-                  Address: {order.customerAddress}
-                </Typography>
-              )}
-            </Box>
-          )}
         </Box>
       </Box>
 
-      <Divider sx={{ borderBottomStyle: 'dashed', mb: 1, borderColor: 'black' }} />
+      <Divider sx={{ borderBottomWidth: '1px', borderColor: 'black', mb: 1 }} />
 
       {/* ITEMS */}
-      <Table size="small" sx={{ '& td': { border: 'none', padding: '2px 0', fontSize: '11px', color: 'black' } }}>
+      <Table size="small" sx={{ mb: 1 }}>
         <TableBody>
           {items.map((item, index) => (
-            <React.Fragment key={index}>
-              <TableRow>
-                <TableCell colSpan={2} sx={{ fontWeight: 'bold', color: 'black' }}>
-                  {item.name || item.serviceName || 'Unknown Item'}
-                </TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell sx={{ pl: 1, color: 'black' }}>
-                  {item.quantity} x {currency(item.price)}
-                </TableCell>
-                <TableCell align="right" sx={{ color: 'black' }}>
-                  {currency(item.subtotal)}
-                </TableCell>
-              </TableRow>
-            </React.Fragment>
+            <TableRow key={index} sx={{ '& td': { border: 0, padding: '2px 0' } }}>
+              <TableCell sx={{ fontSize: '10px', color: 'black', width: '60%', verticalAlign: 'top' }}>
+                <Typography variant="caption" sx={{ fontSize: '10px', fontWeight: 'bold' }}>
+                  {item.name}
+                </Typography>
+                <br />
+                {item.quantity} x {currency(item.price)}
+              </TableCell>
+              <TableCell align="right" sx={{ fontSize: '10px', color: 'black', verticalAlign: 'top' }}>
+                {currency(item.subtotal)}
+              </TableCell>
+            </TableRow>
           ))}
         </TableBody>
       </Table>
 
-      <Divider sx={{ borderBottomStyle: 'dashed', my: 1, borderColor: 'black' }} />
+      <Divider sx={{ borderBottomWidth: '1px', borderColor: 'black', mb: 1 }} />
 
       {/* TOTALS */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-        <Typography variant="body2" sx={{ fontWeight: 'bold', fontSize: '12px', color: 'black' }}>TOTAL</Typography>
-        <Typography variant="body2" sx={{ fontWeight: 'bold', fontSize: '14px', color: 'black' }}>
+        <Typography variant="caption" sx={{ fontSize: '12px', fontWeight: 'bold', color: 'black' }}>
+          TOTAL AMOUNT
+        </Typography>
+        <Typography variant="caption" sx={{ fontSize: '12px', fontWeight: 'bold', color: 'black' }}>
           {currency(order.total)}
         </Typography>
       </Box>
 
-      {/* Tax Breakdown (Optional) */}
-      {settings?.showTaxBreakdown && settings?.taxRate > 0 && (
-        <Box sx={{ mt: 0.5 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-            <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>Vatable Sales</Typography>
-            <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>
-              {currency(order.total / (1 + (settings.taxRate / 100)))}
-            </Typography>
-          </Box>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-            <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>VAT ({settings.taxRate}%)</Typography>
-            <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>
-              {currency(order.total - (order.total / (1 + (settings.taxRate / 100))))}
-            </Typography>
-          </Box>
+      {order.paymentMethod && (
+        <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+          <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>
+            Paid via {order.paymentMethod}
+          </Typography>
         </Box>
       )}
 
-      {/* PAYMENT DETAILS */}
-      <Box sx={{ mt: 1 }}>
+      {order.amountTendered > 0 && (
         <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-          <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>Payment Method:</Typography>
-          <Typography variant="caption" sx={{ fontSize: '10px', fontWeight: 'bold', color: 'black' }}>
-            {order.paymentMethod === 'Charge' ? 'Pay Later' : order.paymentMethod}
+          <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>
+            Cash Tendered
+          </Typography>
+          <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>
+            {currency(order.amountTendered)}
           </Typography>
         </Box>
+      )}
 
-        {order.paymentMethod === 'Cash' && (
-          <>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-              <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>Cash Tendered:</Typography>
-              <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>{currency(order.amountTendered)}</Typography>
-            </Box>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-              <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>Change:</Typography>
-              <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>{currency(order.change)}</Typography>
-            </Box>
-          </>
-        )}
+      {order.change > 0 && (
+        <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+          <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>
+            Change
+          </Typography>
+          <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>
+            {currency(order.change)}
+          </Typography>
+        </Box>
+      )}
 
-        {order.paymentMethod === 'GCash' && order.paymentDetails && (
-          <Box sx={{ mt: 1, textAlign: 'left' }}>
-            <Typography variant="caption" display="block" sx={{ fontSize: '9px', fontWeight: 'bold', color: 'black' }}>
-              GCASH DETAILS:
-            </Typography>
-            <Typography variant="caption" display="block" sx={{ fontSize: '9px', color: 'black' }}>
-              Ref No: {order.paymentDetails.refNumber}
-            </Typography>
-            <Typography variant="caption" display="block" sx={{ fontSize: '9px', color: 'black' }}>
-              Mobile: {order.paymentDetails.phone}
-            </Typography>
-          </Box>
-        )}
-      </Box>
 
-      <Divider sx={{ borderBottomStyle: 'dashed', my: 2, borderColor: 'black' }} />
+      <Divider sx={{ borderBottomWidth: '1px', borderColor: 'black', my: 2 }} />
 
       {/* FOOTER */}
-      <Box sx={{ textAlign: 'center' }}>
-        <Typography variant="caption" sx={{ fontSize: '10px', fontStyle: 'italic', fontWeight: 'bold', color: 'black', whiteSpace: 'pre-line' }}>
-          {footerMsg}
-        </Typography>
-      </Box>
+      <Typography variant="caption" display="block" align="center" sx={{ fontSize: '10px', color: 'black', fontStyle: 'italic' }}>
+        {footerMsg}
+      </Typography>
+      <Typography variant="caption" display="block" align="center" sx={{ fontSize: '10px', color: 'black', mt: 1 }}>
+        This is not an official receipt.
+      </Typography>
     </Box>
   );
 };
