@@ -8,6 +8,7 @@ import {
   Grid, Checkbox, Avatar, CssBaseline, Tooltip, Divider, ListItemButton, Switch,
   Autocomplete, Snackbar, Alert, Backdrop, CircularProgress // ADDED
 } from '@mui/material';
+import html2canvas from 'html2canvas';
 import { useTheme, createTheme, ThemeProvider } from '@mui/material/styles';
 
 // Icons
@@ -34,6 +35,7 @@ import MonitorIcon from '@mui/icons-material/Monitor'; // ADDED for PC Rental
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'; // ADDED for Photocopy
 import PhotoCameraIcon from '@mui/icons-material/PhotoCamera'; // ADDED for Photo
 import LayersIcon from '@mui/icons-material/Layers'; // ADDED for Laminate
+import DownloadIcon from '@mui/icons-material/Download'; // ADDED
 
 // Components
 import OrderCustomerDialog from './OrderCustomerDialog';
@@ -165,7 +167,8 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
 
   // --- PRINTING ---
   const [printOrder, setPrintOrder] = useState(null);
-  const [printShiftData, setPrintShiftData] = useState(null); // ADDED
+  const [printShiftData, setPrintShiftData] = useState(null);
+  const receiptRef = useRef(null); // ADDED
   const [showEndShiftReceipt, setShowEndShiftReceipt] = useState(false);
   const [endShiftReceiptData, setEndShiftReceiptData] = useState(null);
 
@@ -407,6 +410,25 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
 
   const handleLogoutOnly = () => {
     try { auth.signOut(); } catch (e) { console.error('Logout failed:', e); }
+  };
+
+  const handleDownloadReceipt = async () => {
+    if (receiptRef.current) {
+      try {
+        const canvas = await html2canvas(receiptRef.current, {
+          backgroundColor: '#1E1E1E', // Dark theme dialog paper color
+          scale: 2,
+        });
+        const image = canvas.toDataURL("image/png");
+        const link = document.createElement("a");
+        link.href = image;
+        link.download = `Shift-Receipt-${new Date().toISOString().slice(0, 10)}.png`;
+        link.click();
+      } catch (error) {
+        console.error("Receipt capture failed:", error);
+        showSnackbar("Failed to generate image.", "error");
+      }
+    }
   };
 
   // =========================================================================
@@ -1528,33 +1550,112 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
       {/* End Receipt */}
       <Dialog
         open={showEndShiftReceipt}
-        onClose={() => auth.signOut()}
+
         maxWidth="sm"
         fullWidth
       >
         <DialogTitle sx={{ borderBottom: '1px solid #333', pb: 2 }}>
           Shift Summary Receipt
         </DialogTitle>
-        <DialogContent sx={{ pt: 3 }}>
-          <Stack spacing={1}>
-            {/* Header Info */}
-            <Box mb={2}>
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', p: 0, height: '70vh' }}>
+
+          {/* === HIDDEN FULL RECEIPT FOR IMAGE CAPTURE === */}
+          <Box sx={{ position: 'absolute', top: -9999, left: -9999, width: 400, bgcolor: '#1E1E1E' }}>
+            <Stack spacing={0.5} ref={receiptRef} sx={{ p: 2, bgcolor: '#1E1E1E' }}>
+              <Box mb={2}>
+                <Typography variant="body2" fontWeight="bold">{staffDisplayName}</Typography>
+                <Typography variant="caption" color="gray">
+                  {shiftPeriod} Shift — {new Date().toLocaleDateString()}
+                </Typography>
+              </Box>
+              <Typography variant="caption" color="gray" display="block" flexShrink={0} fontWeight="bold">SALES</Typography>
+              <Box display="flex" justifyContent="space-between" pl={1}>
+                <Typography sx={{ fontSize: '0.75rem' }}>PC Rental</Typography>
+                <Typography sx={{ fontSize: '0.75rem' }}>{currency(endShiftReceiptData?.pcRentalTotal)}</Typography>
+              </Box>
+              {endShiftReceiptData?.salesBreakdown?.map(([label, amt]) => (
+                <Box key={label} display="flex" justifyContent="space-between" pl={1}>
+                  <Typography sx={{ fontSize: '0.75rem' }}>{label}</Typography>
+                  <Typography sx={{ fontSize: '0.75rem' }}>{currency(amt)}</Typography>
+                </Box>
+              ))}
+              <Divider sx={{ my: 0.5, borderStyle: 'dashed', borderColor: '#555' }} />
+              <Box display="flex" justifyContent="space-between">
+                <Typography variant="body2" fontWeight="bold">Total Sales</Typography>
+                <Typography variant="body2" fontWeight="bold">
+                  {currency((endShiftReceiptData?.servicesTotal || 0) + (endShiftReceiptData?.pcRentalTotal || 0))}
+                </Typography>
+              </Box>
+              <Box mt={1}>
+                <Typography variant="caption" color="gray" display="block" fontWeight="bold">EXPENSES</Typography>
+                {endShiftReceiptData?.expensesBreakdown?.map(([label, amt]) => (
+                  <Box key={label} display="flex" justifyContent="space-between" pl={1}>
+                    <Typography sx={{ fontSize: '0.75rem' }}>{label}</Typography>
+                    <Typography sx={{ fontSize: '0.75rem' }}>{currency(amt)}</Typography>
+                  </Box>
+                ))}
+                <Divider sx={{ my: 0.5, borderStyle: 'dashed', borderColor: '#555' }} />
+                <Box display="flex" justifyContent="space-between">
+                  <Typography variant="body2" fontWeight="bold">Total Expenses</Typography>
+                  <Typography variant="body2" fontWeight="bold">{currency(endShiftReceiptData?.expensesTotal)}</Typography>
+                </Box>
+              </Box>
+              <Divider sx={{ borderColor: '#333', my: 2 }} />
+              <Box display="flex" justifyContent="space-between" alignItems="center" mt={1}>
+                <Typography variant="h6" fontWeight="900">SYSTEM TOTAL</Typography>
+                <Typography variant="h4" fontWeight="900">{currency(endShiftReceiptData?.systemTotal)}</Typography>
+              </Box>
+              <Divider sx={{ borderColor: '#333', my: 2 }} />
+              <Box mt={1}>
+                <Typography variant="caption" color="gray" display="block" mb={0.5} fontWeight="bold">PAYMENT BREAKDOWN</Typography>
+                <Box display="flex" justifyContent="space-between" pl={1}>
+                  <Typography variant="body2">Cash</Typography>
+                  <Typography variant="body2">{currency(endShiftReceiptData?.breakdown?.cash)}</Typography>
+                </Box>
+                <Box display="flex" justifyContent="space-between" pl={1}>
+                  <Typography variant="body2">GCash</Typography>
+                  <Typography variant="body2">{currency(endShiftReceiptData?.breakdown?.gcash)}</Typography>
+                </Box>
+                <Box display="flex" justifyContent="space-between" pl={1}>
+                  <Typography variant="body2">Receivables</Typography>
+                  <Typography variant="body2">{currency(endShiftReceiptData?.breakdown?.receivables)}</Typography>
+                </Box>
+              </Box>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2, p: 2, bgcolor: 'background.paper', borderRadius: 1, border: 1, borderColor: 'divider' }}>
+                <Typography variant="subtitle1" fontWeight="bold" color="text.primary">Expected Cash on Hand</Typography>
+                <Typography variant="subtitle1" fontWeight="bold" color="text.primary">
+                  {currency((endShiftReceiptData?.breakdown?.cash || 0) - (endShiftReceiptData?.expensesTotal || 0))}
+                </Typography>
+              </Box>
+            </Stack>
+          </Box>
+
+
+          {/* === VISIBLE SCROLLABLE LAYOUT === */}
+
+          {/* ANCHORED HEADER: STAFF & DATE */}
+          <Box sx={{ p: 2, pb: 1, borderBottom: '1px solid #333', bgcolor: '#1E1E1E' }}>
+            <Box>
               <Typography variant="body2" fontWeight="bold">{staffDisplayName}</Typography>
               <Typography variant="caption" color="gray">
                 {shiftPeriod} Shift — {new Date().toLocaleDateString()}
               </Typography>
             </Box>
+          </Box>
 
-            {/* SECTION 1: SALES */}
-            <Typography variant="caption" color="gray" display="block" mb={0.5} fontWeight="bold">SALES</Typography>
+          {/* SCROLLABLE AREA: LISTS */}
+          <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
+
+            {/* SALES */}
+            <Typography variant="caption" color="gray" display="block" flexShrink={0} fontWeight="bold">SALES</Typography>
             <Box display="flex" justifyContent="space-between" pl={1}>
-              <Typography variant="body2">PC Rental</Typography>
-              <Typography variant="body2">{currency(endShiftReceiptData?.pcRentalTotal)}</Typography>
+              <Typography sx={{ fontSize: '0.75rem' }}>PC Rental</Typography>
+              <Typography sx={{ fontSize: '0.75rem' }}>{currency(endShiftReceiptData?.pcRentalTotal)}</Typography>
             </Box>
             {endShiftReceiptData?.salesBreakdown?.map(([label, amt]) => (
               <Box key={label} display="flex" justifyContent="space-between" pl={1}>
-                <Typography variant="body2">{label}</Typography>
-                <Typography variant="body2">{currency(amt)}</Typography>
+                <Typography sx={{ fontSize: '0.75rem' }}>{label}</Typography>
+                <Typography sx={{ fontSize: '0.75rem' }}>{currency(amt)}</Typography>
               </Box>
             ))}
 
@@ -1567,16 +1668,16 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
               </Typography>
             </Box>
 
-            {/* SECTION 2: EXPENSES */}
-            <Box mt={2}>
-              <Typography variant="caption" color="gray" display="block" mb={0.5} fontWeight="bold">EXPENSES</Typography>
+            {/* EXPENSES */}
+            <Box mt={1}>
+              <Typography variant="caption" color="gray" display="block" fontWeight="bold">EXPENSES</Typography>
               {endShiftReceiptData?.expensesBreakdown?.length === 0 && (
                 <Typography variant="caption" color="text.secondary" pl={1}>No expenses</Typography>
               )}
               {endShiftReceiptData?.expensesBreakdown?.map(([label, amt]) => (
                 <Box key={label} display="flex" justifyContent="space-between" pl={1}>
-                  <Typography variant="body2">{label}</Typography>
-                  <Typography variant="body2">{currency(amt)}</Typography>
+                  <Typography sx={{ fontSize: '0.75rem' }}>{label}</Typography>
+                  <Typography sx={{ fontSize: '0.75rem' }}>{currency(amt)}</Typography>
                 </Box>
               ))}
               <Divider sx={{ my: 0.5, borderStyle: 'dashed', borderColor: '#555' }} />
@@ -1585,11 +1686,13 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
                 <Typography variant="body2" fontWeight="bold">{currency(endShiftReceiptData?.expensesTotal)}</Typography>
               </Box>
             </Box>
+          </Box>
 
-            <Divider sx={{ borderColor: '#333', my: 2 }} />
+          {/* ANCHORED FOOTER: TOTALS */}
+          <Box sx={{ p: 2, pt: 1, borderTop: '1px solid #333', bgcolor: '#1E1E1E' }}>
+            <Divider sx={{ borderColor: '#333', mb: 1, display: 'none' }} />
 
-            {/* SECTION 3: SYSTEM TOTAL */}
-            <Box display="flex" justifyContent="space-between" alignItems="center" mt={1}>
+            <Box display="flex" justifyContent="space-between" alignItems="center" mt={0}>
               <Typography variant="h6" fontWeight="900">SYSTEM TOTAL</Typography>
               <Typography variant="h4" fontWeight="900">{currency(endShiftReceiptData?.systemTotal)}</Typography>
             </Box>
@@ -1620,16 +1723,16 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
                 {currency((endShiftReceiptData?.breakdown?.cash || 0) - (endShiftReceiptData?.expensesTotal || 0))}
               </Typography>
             </Box>
+          </Box>
 
-          </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2, borderTop: '1px solid #333', justifyContent: 'space-between' }}>
           <Button
             variant="outlined"
-            onClick={() => setPrintShiftData(endShiftReceiptData)}
-            startIcon={<PrintIcon />}
+            onClick={handleDownloadReceipt}
+            startIcon={<DownloadIcon />}
           >
-            PRINT
+            DOWNLOAD
           </Button>
           <Button
             variant="contained"

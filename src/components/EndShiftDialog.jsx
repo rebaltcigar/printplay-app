@@ -179,8 +179,9 @@ export default function EndShiftDialog({
     return (
         <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
             <DialogTitle>End of Shift</DialogTitle>
-            <DialogContent>
-                <Stack spacing={2} sx={{ mt: 1 }}>
+            <DialogContent sx={{ display: 'flex', flexDirection: 'column', p: 0, height: '60vh' }}>
+                {/* 1. TOP FIXED: INPUT */}
+                <Box sx={{ p: 2, pb: 1, borderBottom: '1px solid', borderColor: 'divider' }}>
                     <TextField
                         autoFocus
                         label="PC Rental Total (From Timer System)"
@@ -191,23 +192,21 @@ export default function EndShiftDialog({
                         required
                         helperText={loggedPcNonCash > 0 ? `Includes ₱${loggedPcNonCash} logged as Non-Cash (GCash/Charge)` : "Enter the Grand Total from your timer"}
                     />
+                </Box>
 
-                    <Divider />
-
-                    {/* SECTION 1: SALES */}
-                    <Typography variant="subtitle2" sx={{ mt: 1, fontWeight: 'bold' }}>SALES</Typography>
-
+                {/* 2. MIDDLE SCROLLABLE: BREAKDOWNS */}
+                <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
+                    {/* SALES */}
+                    <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>SALES</Typography>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', pl: 1 }}>
                         <Typography variant="body2">PC Rental</Typography>
                         <Typography variant="body2">{currency(pcRentalNum)}</Typography>
                     </Box>
-
-                    {/* Itemized Sales */}
-                    <Box sx={{ maxHeight: 150, overflow: 'auto' }}>
+                    <Box>
                         {salesBreakdown.map(([label, amt]) => (
                             <Box key={label} sx={{ display: 'flex', justifyContent: 'space-between', pl: 1 }}>
-                                <Typography variant="caption">{label}</Typography>
-                                <Typography variant="caption">{currency(amt)}</Typography>
+                                <Typography sx={{ fontSize: '0.75rem' }}>{label}</Typography>
+                                <Typography sx={{ fontSize: '0.75rem' }}>{currency(amt)}</Typography>
                             </Box>
                         ))}
                     </Box>
@@ -219,17 +218,16 @@ export default function EndShiftDialog({
                         <Typography variant="subtitle2">{currency(pcRentalNum + servicesTotal)}</Typography>
                     </Box>
 
-
-                    {/* SECTION 2: EXPENSES */}
+                    {/* EXPENSES */}
                     <Typography variant="subtitle2" sx={{ mt: 2, fontWeight: 'bold' }}>EXPENSES</Typography>
                     {expensesBreakdown.length === 0 && (
                         <Typography variant="caption" sx={{ pl: 1, opacity: 0.7 }}>No expenses</Typography>
                     )}
-                    <Box sx={{ maxHeight: 100, overflow: 'auto' }}>
+                    <Box>
                         {expensesBreakdown.map(([label, amt]) => (
                             <Box key={label} sx={{ display: 'flex', justifyContent: 'space-between', pl: 1 }}>
-                                <Typography variant="caption">{label}</Typography>
-                                <Typography variant="caption">{currency(amt)}</Typography>
+                                <Typography sx={{ fontSize: '0.75rem' }}>{label}</Typography>
+                                <Typography sx={{ fontSize: '0.75rem' }}>{currency(amt)}</Typography>
                             </Box>
                         ))}
                     </Box>
@@ -240,10 +238,10 @@ export default function EndShiftDialog({
                         <Typography variant="subtitle2">Total Expenses</Typography>
                         <Typography variant="subtitle2">{currency(expensesTotal)}</Typography>
                     </Box>
+                </Box>
 
-                    <Divider sx={{ my: 1 }} />
-
-                    {/* SECTION 3: SYSTEM TOTAL */}
+                {/* 3. BOTTOM FIXED: TOTALS */}
+                <Box sx={{ p: 2, pt: 1, borderTop: '1px solid', borderColor: 'divider', bgcolor: 'background.paper' }}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <Typography variant="h6" fontWeight="bold">SYSTEM TOTAL</Typography>
                         <Typography variant="h6" fontWeight="bold">{currency(finalTotal)}</Typography>
@@ -251,7 +249,6 @@ export default function EndShiftDialog({
 
                     <Divider sx={{ my: 1 }} />
 
-                    {/* SECTION 4: PAYMENT BREAKDOWN */}
                     <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 'bold' }}>PAYMENT BREAKDOWN</Typography>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', pl: 1 }}>
                         <Typography variant="body2">Cash Sales (+ PC Rental)</Typography>
@@ -266,13 +263,11 @@ export default function EndShiftDialog({
                         <Typography variant="body2">{currency(totalAr)}</Typography>
                     </Box>
 
-                    {/* SECTION 5: CASHIER EXPECTED CASH */}
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 1, p: 2, bgcolor: 'background.paper', borderRadius: 1, border: 1, borderColor: 'divider' }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 1, p: 2, bgcolor: 'action.hover', borderRadius: 1, border: 1, borderColor: 'divider' }}>
                         <Typography variant="subtitle1" fontWeight="bold" color="text.primary">Expected Cash on Hand</Typography>
                         <Typography variant="subtitle1" fontWeight="bold" color="text.primary">{currency(totalCash - expensesTotal)}</Typography>
                     </Box>
-
-                </Stack>
+                </Box>
             </DialogContent>
             <DialogActions>
                 <Button onClick={onClose}>Cancel</Button>

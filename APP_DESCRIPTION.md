@@ -34,6 +34,7 @@ PrintPlay is a comprehensive Point of Sale (POS) and management system designed 
 - **Consolidation**: End-of-shift feature to reconcile cash, verify GCash transactions, and track Accounts Receivable.
 - **Hybrid PC Rental**: Supports split payments for PC rentals (part Cash, part GCash/Charge), automatically calculating expected cash on hand.
 - **Active Shift Tracking**: Admin can see the live status of the current shift.
+- **Receipt Image Download**: Saving shift summary as a full-length image for record keeping.
 
 ### 5. User & Staff Management
 - **Roles**: Distinguishes between Admin and Staff users.
