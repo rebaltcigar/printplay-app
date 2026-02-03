@@ -1,4 +1,7 @@
 # PrintPlay App Description
+> [!NOTE]
+> *   For Developer/LLM Context & Internals, see **[LLM_CONTEXT.md](LLM_CONTEXT.md)**
+> *   For Planned Updates, see **[ROADMAP.md](ROADMAP.md)**
 
 ## Overview
 PrintPlay is a comprehensive Point of Sale (POS) and management system designed for an internet cafe and printing business. It manages transactions, inventory, staff shifts, and business analytics.

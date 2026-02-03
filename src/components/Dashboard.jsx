@@ -127,6 +127,8 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
   const [notes, setNotes] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const itemInputRef = useRef(null);
+  const quantityInputRef = useRef(null);
+  const priceInputRef = useRef(null);
 
   // --- LEGACY SHIFT STATE ---
   const [shiftStart, setShiftStart] = useState(null);
@@ -450,6 +452,14 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
     if (val !== 'New Debt' && val !== 'Paid Debt') {
       setSelectedCustomer(null);
     }
+
+    // UX: Auto-focus Quantity after selecting item
+    if (val) {
+      setTimeout(() => {
+        quantityInputRef.current?.focus();
+        quantityInputRef.current?.select();
+      }, 100);
+    }
   };
 
   const handleAddEntry = async () => {
@@ -657,7 +667,11 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
       }
       showSnackbar("Transaction completed!", "success");
 
-      openDrawer(user, 'transaction').catch(console.warn);
+      openDrawer(user, 'transaction').then(success => {
+        if (!success) {
+          showSnackbar("Drawer connection check failed. Click 'Drawer' manually if needed.", "warning");
+        }
+      }).catch(console.warn);
 
       setOpenCheckout(false);
 
@@ -889,6 +903,13 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
 
       await batch.commit();
 
+      // TRIGGER DRAWER for Updates too
+      openDrawer(user, 'transaction').then(success => {
+        if (!success) {
+          showSnackbar("Drawer not connected. Click 'Drawer' to connect.", "warning");
+        }
+      }).catch(console.warn);
+
       if (shouldPrint) {
         handlePrintExistingOrder({
           ...order,
@@ -1038,7 +1059,10 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
                       size="small"
                       variant="outlined"
                       startIcon={<MonitorIcon />}
-                      onClick={() => { setItem("PC Rental"); setQuantity(1); setPrice(''); }}
+                      onClick={() => {
+                        setItem("PC Rental"); setQuantity(1); setPrice('');
+                        setTimeout(() => priceInputRef.current?.focus(), 50);
+                      }}
                       sx={{ flex: 1, whiteSpace: 'nowrap', minWidth: 'fit-content' }}
                     >
                       PC Rental
@@ -1047,7 +1071,10 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
                       size="small"
                       variant="outlined"
                       startIcon={<PrintIcon />}
-                      onClick={() => { setItem("Print"); setQuantity(1); setPrice(''); }}
+                      onClick={() => {
+                        setItem("Print"); setQuantity(1); setPrice('');
+                        setTimeout(() => priceInputRef.current?.focus(), 50);
+                      }}
                       sx={{ flex: 1, whiteSpace: 'nowrap', minWidth: 'fit-content' }}
                     >
                       Print
@@ -1056,7 +1083,10 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
                       size="small"
                       variant="outlined"
                       startIcon={<ContentCopyIcon />}
-                      onClick={() => { setItem("Photocopy"); setQuantity(1); setPrice(''); }}
+                      onClick={() => {
+                        setItem("Photocopy"); setQuantity(1); setPrice('');
+                        setTimeout(() => priceInputRef.current?.focus(), 50);
+                      }}
                       sx={{ flex: 1, whiteSpace: 'nowrap', minWidth: 'fit-content' }}
                     >
                       Photocopy
@@ -1065,7 +1095,10 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
                       size="small"
                       variant="outlined"
                       startIcon={<PhotoCameraIcon />}
-                      onClick={() => { setItem("Photo"); setQuantity(1); setPrice(''); }}
+                      onClick={() => {
+                        setItem("Photo"); setQuantity(1); setPrice('');
+                        setTimeout(() => priceInputRef.current?.focus(), 50);
+                      }}
                       sx={{ flex: 1, whiteSpace: 'nowrap', minWidth: 'fit-content' }}
                     >
                       ID Photo
@@ -1074,7 +1107,10 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
                       size="small"
                       variant="outlined"
                       startIcon={<LayersIcon />}
-                      onClick={() => { setItem("Laminate"); setQuantity(1); setPrice(''); }}
+                      onClick={() => {
+                        setItem("Laminate"); setQuantity(1); setPrice('');
+                        setTimeout(() => priceInputRef.current?.focus(), 50);
+                      }}
                       sx={{ flex: 1, whiteSpace: 'nowrap', minWidth: 'fit-content' }}
                     >
                       Laminate
@@ -1135,6 +1171,7 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
                       label="Qty"
                       type="number"
                       size="small"
+                      inputRef={quantityInputRef}
                       sx={{ flex: 2 }}
                       value={quantity}
                       onChange={e => setQuantity(e.target.value)}
@@ -1145,6 +1182,7 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
                       label="Price"
                       type="number"
                       size="small"
+                      inputRef={priceInputRef}
                       sx={{ flex: 2 }}
                       value={price}
                       onChange={e => setPrice(e.target.value)}
