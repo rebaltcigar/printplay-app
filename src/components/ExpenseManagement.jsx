@@ -496,8 +496,6 @@ export default function ExpenseManagement({ user, showSnackbar }) {
       // 3. Add the complete document
       await addDoc(collection(db, "transactions"), expenseDoc);
 
-      await addDoc(collection(db, "transactions"), expenseDoc);
-
       setFormType("");
       setFinancialCategory("OPEX");
       setFormStaffId("");

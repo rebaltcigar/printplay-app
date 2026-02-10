@@ -154,6 +154,23 @@ export default function RunPayroll({
       );
       const sSnap = await getDocs(qShifts);
 
+      // Also fetch admin-added Salary/Salary Advance within this period
+      // Also fetch admin-added Salary/Salary Advance within this period
+      console.log("Fetching admin manual salary entries via Timestamp only...");
+      // Safe query: Only range on timestamp. No composite index needed.
+      const qAdmin = query(
+        collection(db, "transactions"),
+        where("timestamp", ">=", start),
+        where("timestamp", "<=", end)
+      );
+      const adminSnap = await getDocs(qAdmin);
+      console.log(`Transactions found in range: ${adminSnap.size}`);
+      const adminExpenses = adminSnap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(t => t.item === "Expenses");
+      console.log(`Filtered to ${adminExpenses.length} expenses.`);
+
+
       //
       const rawShifts = sSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
       const ongoing = rawShifts.filter((s) => !s.endTime);
@@ -341,6 +358,60 @@ export default function RunPayroll({
           });
         }
       }
+
+      // Proceess admin manual entries
+      adminSnap.docs.forEach((docSnap) => {
+        const tx = docSnap.data();
+        if (tx.voided || tx.isDeleted) return;
+
+        // Only care about Salary Advance (User requested "Salary" be ignored/not deducted)
+        if (tx.expenseType !== "Salary Advance") return;
+
+        const amt = Number(tx.total || 0);
+
+        // SKIP if linked to a shift (Duplicate check)
+        if (tx.shiftId) return;
+
+        // Identify staff
+        const staffEmail = tx.expenseStaffEmail || tx.staffEmail;
+        const staffUid = tx.expenseStaffId; // might be null
+
+        // Key for our map
+        let key = staffEmail;
+        if (!key && staffUid) {
+          // try to find email from uid in usersByEmail
+          const userObj = Array.from(usersByEmail.values()).find(u => u.uid === staffUid);
+          key = userObj ? userObj.email : `uid:${staffUid}`;
+        }
+
+        if (!key) return; // orphan transaction
+
+        // Ensure bucket exists
+        if (!byStaff.has(key)) {
+          // Create new bucket for this staff if they have no shifts but have salary entries
+          const name = tx.expenseStaffName || (usersByEmail.get(key)?.name) || "Unknown Staff";
+          byStaff.set(key, {
+            staffUid: staffUid || null,
+            staffName: name,
+            staffEmail: staffEmail || key, // fallback
+            minutes: 0,
+            shiftRows: [],
+            extraAdvances: [],
+          });
+        }
+
+        const bucket = byStaff.get(key);
+
+        // Add to extraAdvances. 
+        // Note: If expenseType is "Salary", we treat it as an ADVANCE (deduction) 
+        // because it was already paid out manually.
+        bucket.extraAdvances.push({
+          id: docSnap.id,
+          label: `${tx.expenseType} (Admin Manual - ${toLocaleDateStringPHT(tx.timestamp)})`,
+          amount: amt,
+          fromShiftId: null, // manual
+        });
+      });
 
       updateBusy("Building payroll preview...");
       const endDateForRate = new Date(`${periodEnd}T23:59:59`);
@@ -1058,11 +1129,66 @@ export default function RunPayroll({
       }
 
       updateBusy("Merging cross-staff salary advances...");
-      // This loop now *only* populates `crossDeductions`.
+
+      // --- FIX: FETCH ADMIN MANUAL EXPENSES (Mirroring generatePreview) ---
+      updateBusy("Fetching admin manual salary entries...");
+      // We need to re-fetch these because finalizeRun rebuilds everything from shifts/lines
+      const start = tsFromYMD(runData.periodStart ? toYMD_PHT_fromTS(runData.periodStart) : periodStart, false);
+      const end = tsFromYMD(runData.periodEnd ? toYMD_PHT_fromTS(runData.periodEnd) : periodEnd, true);
+
+      const qAdmin = query(
+        collection(db, "transactions"),
+        where("timestamp", ">=", start),
+        where("timestamp", "<=", end),
+        where("item", "==", "Expenses")
+      );
+      const adminSnap = await getDocs(qAdmin);
+      const adminExpenses = adminSnap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(t => t.item === "Expenses"); // Double check
+
+      // Distribute Admin Expenses
+      for (const tx of adminExpenses) {
+        if (tx.voided || tx.isDeleted) continue;
+        // FIX: Only treat "Salary Advance" as a deduction. Ignore "Salary".
+        if (tx.expenseType !== "Salary Advance") continue;
+
+        // Skip consistency check with shiftId (already handled in generatePreview, but good for safety)
+        if (tx.shiftId) continue;
+
+        const email = tx.expenseStaffEmail || tx.staffEmail;
+        const uid = tx.expenseStaffId || tx.staffUid;
+        const amt = Number(tx.total || 0);
+
+        // Find target line
+        const targetLine = materializedLines.find(l =>
+          (uid && l.staffUid === uid) ||
+          (email && l.staffEmail === email)
+        );
+
+        if (targetLine) {
+          // Check if this deduction is already in crossDeductions (unlikely but safe)
+          const exists = (targetLine.crossDeductions || []).some(d => d.id === tx.id);
+          if (!exists) {
+            if (!targetLine.crossDeductions) targetLine.crossDeductions = [];
+            targetLine.crossDeductions.push({
+              id: tx.id,
+              label: `Manual: ${tx.notes || "Salary Advance"}`,
+              amount: amt,
+              expenseDate: tx.timestamp
+            });
+          }
+        }
+      }
+      // --- END FIX ---
+
+      // This loop now *only* populates/merges `crossDeductions`.
       for (const [targetLineId, extraList] of extraDeductionsByLineId.entries()) {
         const target = materializedLines.find((m) => m.lineId === targetLineId);
         if (target) {
-          target.crossDeductions = extraList;
+          // Merge with existing crossDeductions (from Admin Manual above)
+          const current = target.crossDeductions || [];
+          target.crossDeductions = [...current, ...extraList];
         }
       }
 
@@ -1171,7 +1297,9 @@ export default function RunPayroll({
 
         // 1. Post Pay Additions (Bonuses) - Always dated on Pay Date usually
         // These are Expenses for the business.
-        if (m.additionTotal > 0) {
+        // FIX: Only post separate additions if we are in PER-SHIFT mode.
+        // In PER-STAFF mode, the "Net Pay" transaction already includes these additions.
+        if (m.additionTotal > 0 && expenseModeToUse === "per-shift") {
           txBatch.set(doc(collection(db, "transactions")), {
             item: "Expenses",
             expenseType: "Salary",

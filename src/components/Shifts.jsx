@@ -160,8 +160,14 @@ const aggregateShiftTransactions = (txList, serviceMeta) => {
     const itemName = normalize(tx.item);
     if (!itemName) continue;
 
-    const cat = nameToCategory[itemName];
-    if (!cat) continue;
+    let cat = nameToCategory[itemName];
+
+    // Fix: If category is unknown, check if it is "Expenses" specifically.
+    // If not "Expenses", and not empty, default to "debit" (Sales) so we don't lose the record.
+    if (!cat) {
+      if (itemName === 'expenses') cat = 'credit';
+      else cat = 'debit';
+    }
 
     let amt = Number(tx.total);
     if (!Number.isFinite(amt)) {

@@ -79,7 +79,7 @@ export const resolveHourlyRate = (payroll, asOfDate) => {
 export const sumDenominations = (denoms = {}) => {
   let total = 0;
   for (const [k, v] of Object.entries(denoms || {})) {
-    const m = /^([bc])_(\d+(?:\.\d+)?)$/i.exec(k);
+    const m = /^([bc]|bill|coin)_(\d+(?:\.\d+)?)$/i.exec(k);
     if (!m) continue;
     const face = Number(m[2]);
     const count = Number(v || 0);
