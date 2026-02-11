@@ -214,7 +214,7 @@ export default function Login({ onLogin, onAdminLogin }) {
           Print+Play
         </Typography>
         <Typography align="center" variant="caption" display="block" sx={{ mt: -1, mb: 2, opacity: 0.6 }}>
-          v0.1.3
+          v0.1.5
         </Typography>
 
         {/* Inline, user-friendly error */}

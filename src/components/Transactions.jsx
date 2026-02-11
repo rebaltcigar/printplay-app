@@ -59,7 +59,10 @@ import {
 } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import { SimpleReceipt } from "./SimpleReceipt"; // RESTORED
+
 import { normalizeReceiptData, safePrint } from "../utils/receiptHelper";
+import { ServiceInvoice } from "./ServiceInvoice"; // NEW
+import { normalizeInvoiceData, safePrintInvoice } from "../utils/invoiceHelper"; // NEW
 import AdminLoading from './common/AdminLoading';
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 
@@ -164,7 +167,9 @@ const Transactions = ({ showSnackbar }) => {
   }, []);
 
   // Printing State
+
   const [reprintOrder, setReprintOrder] = useState(null);
+  const [printInvoiceData, setPrintInvoiceData] = useState(null); // NEW for Invoice
 
   // Confirmation Dialog State
   const [confirmDialog, setConfirmDialog] = useState({
@@ -476,26 +481,48 @@ const Transactions = ({ showSnackbar }) => {
 
   /* ---- Reprint Handler (NEW) ---- */
   const handleReprint = async (row) => {
-    if (!row.orderId) {
-      showSnackbar?.("Transaction is not part of a POS Order (legacy or manual).", 'warning');
-      return;
-    }
-
     try {
-      const orderRef = doc(db, 'orders', row.orderId);
-      const snap = await getDoc(orderRef);
-      if (snap.exists()) {
-        const rawOrder = { id: snap.id, ...snap.data() };
-        // Use shared normalizer for consistent receipt
-        const printData = normalizeReceiptData(rawOrder, {
-          staffName: rawOrder.staffName || 'Staff',
-          isReprint: true
-        });
-        setReprintOrder(printData);
-        // Print triggered by useEffect
+      let rawOrder;
+      if (row.orderId) {
+        const orderRef = doc(db, 'orders', row.orderId);
+        const snap = await getDoc(orderRef);
+        if (snap.exists()) {
+          rawOrder = { id: snap.id, ...snap.data() };
+        } else {
+          showSnackbar?.("Order record not found (deleted?).", 'error');
+          return;
+        }
       } else {
-        showSnackbar?.("Order record not found (deleted?).", 'error');
+        // Ad-hoc transaction mock
+        rawOrder = {
+          id: row.id,
+          orderNumber: row.orderNumber || "ADHOC",
+          timestamp: row.timestamp,
+          staffName: row.staffEmail || 'Staff',
+          customerName: row.customerName || 'Walk-in',
+          items: [{
+            name: row.item,
+            quantity: row.quantity,
+            price: row.price,
+            total: row.total,
+            // For ad-hoc, subtotal is same as total
+            subtotal: row.total
+          }],
+          total: row.total,
+          subtotal: row.total,
+          amountTendered: row.total,
+          change: 0,
+          paymentMethod: "Manual"
+        };
       }
+
+      // Use shared normalizer for consistent receipt
+      const printData = normalizeReceiptData(rawOrder, {
+        staffName: rawOrder.staffName || 'Staff',
+        isReprint: true
+      });
+      setReprintOrder(printData);
+
     } catch (e) {
       console.error("Reprint error:", e);
       showSnackbar?.("Failed to load order for printing.", 'error');
@@ -517,6 +544,71 @@ const Transactions = ({ showSnackbar }) => {
     }
     return () => clearTimeout(timer);
   }, [reprintOrder]);
+
+  /* ---- Print Invoice Handler (NEW) ---- */
+  const handlePrintInvoice = async (row) => {
+    try {
+      let rawOrder;
+      if (row.orderId) {
+        const orderRef = doc(db, 'orders', row.orderId);
+        const snap = await getDoc(orderRef);
+        if (snap.exists()) {
+          rawOrder = { id: snap.id, ...snap.data() };
+        } else {
+          showSnackbar?.("Order record not found.", 'error');
+          return;
+        }
+      } else {
+        // Ad-hoc transaction mock
+        rawOrder = {
+          id: row.id,
+          orderNumber: row.orderNumber || "ADHOC",
+          timestamp: row.timestamp,
+          staffName: row.staffEmail || 'Staff',
+          customerName: row.customerName || 'Walk-in',
+          items: [{
+            name: row.item,
+            quantity: row.quantity,
+            price: row.price,
+            total: row.total,
+            subtotal: row.total
+          }],
+          total: row.total,
+          subtotal: row.total,
+          amountTendered: row.total,
+          change: 0,
+          paymentMethod: "Manual"
+        };
+      }
+
+      // Normalize for Invoice
+      const invData = normalizeInvoiceData(rawOrder, {
+        staffName: rawOrder.staffName || 'Staff',
+        isReprint: true
+      });
+      setPrintInvoiceData(invData);
+
+    } catch (e) {
+      console.error("Invoice Print error:", e);
+      showSnackbar?.("Failed to load invoice data.", 'error');
+    }
+  };
+
+  // EFFECT: Handle Invoice Printing safely
+  const isPrintingInvoice = useRef(false);
+  useEffect(() => {
+    let timer;
+    if (printInvoiceData && !isPrintingInvoice.current) {
+      isPrintingInvoice.current = true;
+      timer = setTimeout(() => {
+        safePrintInvoice(() => {
+          setPrintInvoiceData(null);
+          isPrintingInvoice.current = false;
+        }, "Transactions-Invoice");
+      }, 500);
+    }
+    return () => clearTimeout(timer);
+  }, [printInvoiceData]);
 
   /* ---- Delete (soft, single) ---- */
   const softDelete = (row) => {
@@ -796,7 +888,9 @@ const Transactions = ({ showSnackbar }) => {
       }}
     >
       {/* Hidden Receipt Component for Re-printing */}
+
       <SimpleReceipt order={reprintOrder} settings={systemSettings} />
+      <ServiceInvoice order={printInvoiceData} settings={systemSettings} />
 
       {/* LEFT: Filters / Controls (WEB) */}
       <Card
@@ -1120,6 +1214,17 @@ const Transactions = ({ showSnackbar }) => {
                       ) : "—"}
                     </TableCell>
                     <TableCell align="right">
+                      <Tooltip title="Print Receipt (Thermal)">
+                        <IconButton size="small" onClick={() => handleReprint(r)}>
+                          <PrintIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Print Service Invoice (8.5x11)">
+                        <IconButton size="small" onClick={() => handlePrintInvoice(r)} sx={{ color: 'primary.main' }}>
+                          <PrintIcon fontSize="small" />
+                          <Typography variant="caption" sx={{ fontSize: '10px', fontWeight: 'bold', ml: 0.5 }}>A4</Typography>
+                        </IconButton>
+                      </Tooltip>
                       <Tooltip title="Edit">
                         <IconButton size="small" onClick={() => openEdit(r)}>
                           <EditIcon fontSize="inherit" />
@@ -1543,6 +1648,18 @@ const Transactions = ({ showSnackbar }) => {
                         <Tooltip title="Edit">
                           <IconButton size="small" onClick={() => openEdit(r)}>
                             <EditIcon fontSize="inherit" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Print Receipt (Thermal)">
+                          <IconButton size="small" onClick={() => handleReprint(r)}>
+                            <PrintIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        {/* Invoice Button */}
+                        <Tooltip title="Print Service Invoice (8.5x11)">
+                          <IconButton size="small" onClick={() => handlePrintInvoice(r)} sx={{ color: 'primary.main' }}>
+                            <PrintIcon fontSize="small" />
+                            <Typography variant="caption" sx={{ fontSize: '10px', fontWeight: 'bold', ml: 0.5 }}>A4</Typography>
                           </IconButton>
                         </Tooltip>
                         <Tooltip title="Soft delete">

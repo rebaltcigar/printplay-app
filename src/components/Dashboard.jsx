@@ -49,6 +49,7 @@ import EditTransactionDialog from './EditTransactionDialog';
 import DeleteTransactionDialog from './DeleteTransactionDialog'; // ADDED
 import ChangeDisplayDialog from './ChangeDisplayDialog'; // ADDED
 import { SimpleReceipt } from './SimpleReceipt';
+// removed duplicate ServiceInvoice import if any, handled above
 
 // Firebase
 import { auth, db } from '../firebase';
@@ -61,6 +62,8 @@ import {
 import { openDrawer } from '../utils/drawerService';
 import { generateOrderNumber, createOrderObject } from '../utils/orderService';
 import { normalizeReceiptData, safePrint } from '../utils/receiptHelper'; // ADDED
+import { ServiceInvoice } from './ServiceInvoice'; // ADDED
+import { normalizeInvoiceData, safePrintInvoice } from '../utils/invoiceHelper'; // ADDED
 
 import logo from '/icon.ico';
 
@@ -170,6 +173,7 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
 
   // --- PRINTING ---
   const [printOrder, setPrintOrder] = useState(null);
+  const [printInvoiceData, setPrintInvoiceData] = useState(null); // ADDED
   const [printShiftData, setPrintShiftData] = useState(null);
   const receiptRef = useRef(null); // ADDED
   const [showEndShiftReceipt, setShowEndShiftReceipt] = useState(false);
@@ -192,6 +196,22 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
     }
     return () => clearTimeout(timer);
   }, [printOrder, printShiftData]);
+
+  // EFFECT: Auto-Print Invoice
+  const isPrintingInvoice = useRef(false);
+  useEffect(() => {
+    let timer;
+    if (printInvoiceData && !isPrintingInvoice.current) {
+      isPrintingInvoice.current = true;
+      timer = setTimeout(() => {
+        safePrintInvoice(() => {
+          setPrintInvoiceData(null);
+          isPrintingInvoice.current = false;
+        }, "Dashboard-Invoice");
+      }, 500);
+    }
+    return () => clearTimeout(timer);
+  }, [printInvoiceData]);
 
   // --- UI STATE ---
   const [menuAnchor, setMenuAnchor] = useState(null);
@@ -968,6 +988,15 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
     setPrintOrder(printData);
   };
 
+  const handlePrintExistingInvoice = (orderData) => {
+    // Normalization logic for Invoice
+    const invData = normalizeInvoiceData(orderData, {
+      staffName: staffDisplayName,
+      isReprint: true
+    });
+    setPrintInvoiceData(invData);
+  };
+
   const handleConfirmDeleteCartItem = (reason) => {
     const { tabIndex, itemIndex } = deleteCartItemState;
     setOrders(prev => {
@@ -996,6 +1025,7 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
 
       {/* FIXED: Passing 'order' to fix printing */}
       <SimpleReceipt order={printOrder} shiftData={printShiftData} staffName={staffDisplayName} settings={systemSettings} />
+      <ServiceInvoice order={printInvoiceData} settings={systemSettings} />
 
       {/* --- HEADER --- */}
       <AppBar position="static" color="default" elevation={1} sx={{ bgcolor: 'background.paper', borderBottom: 1, borderColor: 'divider' }}>
@@ -1342,6 +1372,9 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
                     </Button>
                     <Button variant="outlined" size="large" startIcon={<PrintIcon />} onClick={() => handlePrintExistingOrder({ ...currentOrder, total: currentTotal })}>
                       RECEIPT
+                    </Button>
+                    <Button variant="outlined" size="large" onClick={() => handlePrintExistingInvoice({ ...currentOrder, total: currentTotal })}>
+                      INVOICE
                     </Button>
                   </Stack>
                 ) : (

@@ -7,7 +7,7 @@ import CloseIcon from '@mui/icons-material/Close';
 
 export default function OrderCustomerDialog({ open, onClose, onSetCustomer, currentCustomer, showSnackbar }) {
     const [name, setName] = useState('');
-    const [phone, setPhone] = useState('');
+    // Phone removed
     const [address, setAddress] = useState('');
     const [tin, setTin] = useState('');
 
@@ -16,12 +16,11 @@ export default function OrderCustomerDialog({ open, onClose, onSetCustomer, curr
         if (open) {
             if (currentCustomer) {
                 setName(currentCustomer.fullName || '');
-                setPhone(currentCustomer.phone || '');
+                setName(currentCustomer.fullName || '');
                 setAddress(currentCustomer.address || '');
                 setTin(currentCustomer.tin || '');
             } else {
                 setName('');
-                setPhone('');
                 setAddress('');
                 setTin('');
             }
@@ -36,7 +35,6 @@ export default function OrderCustomerDialog({ open, onClose, onSetCustomer, curr
 
         onSetCustomer({
             fullName: name.trim(),
-            phone: phone.trim(),
             address: address.trim(),
             tin: tin.trim(),
             id: 'manual-entry' // Distinguish from DB customers
@@ -65,12 +63,6 @@ export default function OrderCustomerDialog({ open, onClose, onSetCustomer, curr
                         value={name}
                         onChange={(e) => setName(e.target.value)}
                         autoFocus
-                    />
-                    <TextField
-                        label="Phone"
-                        fullWidth
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
                     />
                     <TextField
                         label="Address"

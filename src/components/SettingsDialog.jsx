@@ -28,8 +28,11 @@ export default function SettingsDialog({ open, onClose, onSettingsUpdated, showS
         storeName: 'PrintPlay',
         logoUrl: '',
         address: '',
+        address: '',
         phone: '',
+        mobile: '', // ADDED
         email: '',
+        tin: '', // ADDED
         currencySymbol: '₱',
         taxRate: 0,
         receiptFooter: 'Thank you for your business!',
@@ -195,6 +198,18 @@ export default function SettingsDialog({ open, onClose, onSettingsUpdated, showS
                                 fullWidth
                                 value={settings.phone}
                                 onChange={e => setSettings({ ...settings, phone: e.target.value })}
+                            />
+                            <TextField
+                                label="Mobile"
+                                fullWidth
+                                value={settings.mobile}
+                                onChange={e => setSettings({ ...settings, mobile: e.target.value })}
+                            />
+                            <TextField
+                                label="TIN"
+                                fullWidth
+                                value={settings.tin}
+                                onChange={e => setSettings({ ...settings, tin: e.target.value })}
                             />
                             <TextField
                                 label="Email"

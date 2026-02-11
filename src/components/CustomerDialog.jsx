@@ -22,7 +22,7 @@ export default function CustomerDialog({ open, onClose, onSelectCustomer, user, 
   const [search, setSearch] = useState('');
   const [username, setUsername] = useState('');
   const [fullName, setFullName] = useState('');
-  const [phone, setPhone] = useState('');
+  // Phone removed
   const [address, setAddress] = useState('');
   const [tin, setTin] = useState('');
   const [results, setResults] = useState([]);
@@ -139,7 +139,6 @@ export default function CustomerDialog({ open, onClose, onSelectCustomer, user, 
       const docRef = await addDoc(collection(db, 'customers'), {
         username: u,                // lowercase for stable search
         fullName: f,
-        phone: phone.trim(),
         address: address.trim(),
         tin: tin.trim(),
         createdAt: serverTimestamp(),
@@ -150,7 +149,6 @@ export default function CustomerDialog({ open, onClose, onSelectCustomer, user, 
         id: docRef.id,
         username: u,
         fullName: f,
-        phone: phone.trim(),
         address: address.trim(),
         tin: tin.trim()
       });
@@ -166,7 +164,6 @@ export default function CustomerDialog({ open, onClose, onSelectCustomer, user, 
     setSearch('');
     setUsername('');
     setFullName('');
-    setPhone('');
     setAddress('');
     setTin('');
     setResults([]);
@@ -254,15 +251,6 @@ export default function CustomerDialog({ open, onClose, onSelectCustomer, user, 
           />
 
           <TextField
-            label="Phone"
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            fullWidth
-            size="small"
-            sx={{ mt: 2 }}
-          />
-
-          <TextField
             label="Address"
             value={address}
             onChange={(e) => setAddress(e.target.value)}
@@ -297,7 +285,6 @@ export default function CustomerDialog({ open, onClose, onSelectCustomer, user, 
               onClick={() => {
                 setUsername('');
                 setFullName('');
-                setPhone('');
                 setAddress('');
                 setTin('');
               }}
