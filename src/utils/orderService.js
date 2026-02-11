@@ -43,6 +43,7 @@ export const createOrderObject = (
         customerName: customer?.fullName || 'Walk-in Customer',
         customerPhone: customer?.phone || '',
         customerAddress: customer?.address || '',
+        customerTin: customer?.tin || '',
         staffId: user?.uid || 'unknown',
         staffEmail: user?.email || 'unknown',
         staffName: user?.displayName || user?.email || 'Staff',

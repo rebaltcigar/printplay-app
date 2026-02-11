@@ -58,11 +58,11 @@ import {
   getDocs
 } from "firebase/firestore";
 import { db, auth } from "../firebase";
-import { SimpleReceipt } from "./SimpleReceipt";
+import { SimpleReceipt } from "./SimpleReceipt"; // RESTORED
+import { normalizeReceiptData, safePrint } from "../utils/receiptHelper";
+import AdminLoading from './common/AdminLoading';
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
-import AdminLoading from "./common/AdminLoading"; // NEW IMPORT
 
-/* ---------- helpers ---------- */
 const startOfMonth = (d = new Date()) =>
   new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
 const endOfMonth = (d = new Date()) =>
@@ -153,6 +153,15 @@ const Transactions = ({ showSnackbar }) => {
   // Bulk date dialog
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkDT, setBulkDT] = useState(toDatetimeLocal(new Date()));
+
+  // Settings for Receipt
+  const [systemSettings, setSystemSettings] = useState({});
+
+  useEffect(() => {
+    getDoc(doc(db, 'settings', 'config')).then(snap => {
+      if (snap.exists()) setSystemSettings(snap.data());
+    });
+  }, []);
 
   // Printing State
   const [reprintOrder, setReprintOrder] = useState(null);
@@ -476,14 +485,14 @@ const Transactions = ({ showSnackbar }) => {
       const orderRef = doc(db, 'orders', row.orderId);
       const snap = await getDoc(orderRef);
       if (snap.exists()) {
-        const orderData = { id: snap.id, ...snap.data() };
-        setReprintOrder(orderData);
-
-        // Allow React to render the receipt, then print
-        setTimeout(() => {
-          window.print();
-          setReprintOrder(null);
-        }, 500);
+        const rawOrder = { id: snap.id, ...snap.data() };
+        // Use shared normalizer for consistent receipt
+        const printData = normalizeReceiptData(rawOrder, {
+          staffName: rawOrder.staffName || 'Staff',
+          isReprint: true
+        });
+        setReprintOrder(printData);
+        // Print triggered by useEffect
       } else {
         showSnackbar?.("Order record not found (deleted?).", 'error');
       }
@@ -492,6 +501,22 @@ const Transactions = ({ showSnackbar }) => {
       showSnackbar?.("Failed to load order for printing.", 'error');
     }
   };
+
+  // EFFECT: Handle Reprinting safely
+  const isPrintingReprint = useRef(false);
+  useEffect(() => {
+    let timer;
+    if (reprintOrder && !isPrintingReprint.current) {
+      isPrintingReprint.current = true;
+      timer = setTimeout(() => {
+        safePrint(() => {
+          setReprintOrder(null);
+          isPrintingReprint.current = false;
+        }, "Transactions");
+      }, 500);
+    }
+    return () => clearTimeout(timer);
+  }, [reprintOrder]);
 
   /* ---- Delete (soft, single) ---- */
   const softDelete = (row) => {
@@ -771,7 +796,7 @@ const Transactions = ({ showSnackbar }) => {
       }}
     >
       {/* Hidden Receipt Component for Re-printing */}
-      <SimpleReceipt order={reprintOrder} />
+      <SimpleReceipt order={reprintOrder} settings={systemSettings} />
 
       {/* LEFT: Filters / Controls (WEB) */}
       <Card

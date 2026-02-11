@@ -1,5 +1,6 @@
 // src/components/SimpleReceipt.jsx
 import React from 'react';
+import ReactDOM from 'react-dom'; // ADDED for Portal
 import { Box, Typography, Divider, Table, TableBody, TableRow, TableCell } from '@mui/material';
 
 // Helper for currency format
@@ -131,7 +132,22 @@ export const SimpleReceipt = ({ order, shiftData, staffName, settings }) => {
   // Use the passed staffName prop (live Dashboard state) or fallback to order data
   const cashierDisplay = staffName || order.staffName || 'Staff';
 
-  return (
+  // Normalize Customer Data (Handle both flat fields and nested customer object)
+  const custName = order.customerName || order.customer?.fullName || '';
+  const custPhone = order.customerPhone || order.customer?.phone || '';
+  const custAddress = order.customerAddress || order.customer?.address || '';
+  const custTin = order.customerTin || order.customer?.tin || '';
+
+  // Determine if Walk-in (Show info if valid name exists and is not 'Walk-in')
+  // We remove the check for !order.customerId because manual entries might not have an ID but have a name.
+  const isWalkIn = !custName || custName === 'Walk-in Customer' || custName === 'Walk-in' || order.customerId === 'walk-in';
+  const showCustomerInfo = !isWalkIn;
+
+  const paymentLabel = order.paymentMethod === 'Charge' ? 'Unpaid (Charge)' : order.paymentMethod;
+  const mountNode = document.body;
+
+  // Use Portal to render outside of root, allowing us to hide root completely
+  return ReactDOM.createPortal(
     <Box
       id="printable-receipt"
       sx={{
@@ -146,138 +162,204 @@ export const SimpleReceipt = ({ order, shiftData, staffName, settings }) => {
           backgroundColor: 'white',
           color: 'black',
           fontFamily: 'monospace', // Monospace aligns numbers better on receipts
+          zIndex: 99999,
         },
       }}
     >
       <style>
         {`
           @media print {
-            body * { visibility: hidden; }
-            #printable-receipt, #printable-receipt * { visibility: visible; color: black !important; }
-            #printable-receipt { position: absolute; left: 0; top: 0; }
+            /* Hide EVERYTHING inside body */
+            body > * {
+              display: none !important;
+            }
+
+            /* Explicitly show the receipt container wrapper */
+            body > #printable-receipt {
+              display: block !important;
+              visibility: visible !important;
+              position: absolute !important;
+              left: 0 !important;
+              top: 0 !important;
+              width: 100% !important;
+              height: auto !important;
+              background-color: white !important;
+              z-index: 99999 !important;
+            }
+
+            /* HIDE the style tags explicitly just in case */
+            #printable-receipt style {
+              display: none !important;
+            }
+
+            /* Target the specific wrapper for visibility */
+            #receipt-content-wrapper {
+              display: block !important;
+              visibility: visible !important;
+            }
+            
+            #receipt-content-wrapper * {
+               visibility: visible !important;
+               color: black !important;
+            }
+
+            /* Reset body properties */
+            body, html {
+              margin: 0 !important;
+              padding: 0 !important;
+              height: 100% !important;
+              overflow: visible !important;
+              background-color: white !important;
+            }
           }
         `}
       </style>
 
-      {/* HEADER */}
-      <Box sx={{ textAlign: 'center', mb: 2 }}>
-        {logoUrl && (
-          <img
-            src={logoUrl}
-            alt="Logo"
-            style={{ height: '40px', objectFit: 'contain', marginBottom: '5px', filter: 'grayscale(100%)' }}
-          />
-        )}
-        <Typography variant="h6" sx={{ fontWeight: 900, fontSize: '16px', color: 'black' }}>
-          {storeName}
-        </Typography>
-        {address && (
-          <Typography variant="caption" display="block" sx={{ fontSize: '10px', color: 'black', whiteSpace: 'pre-line' }}>
-            {address}
+      <div id="receipt-content-wrapper">
+        {/* HEADER */}
+        <Box sx={{ textAlign: 'center', mb: 1 }}>
+          {logoUrl && (
+            <img
+              src={logoUrl}
+              alt="Logo"
+              style={{ height: '40px', objectFit: 'contain', marginBottom: '5px', filter: 'grayscale(100%)' }}
+            />
+          )}
+          <Typography variant="h6" sx={{ fontWeight: 900, fontSize: '16px', color: 'black' }}>
+            {storeName}
           </Typography>
-        )}
-        {phone && (
-          <Typography variant="caption" display="block" sx={{ fontSize: '10px', color: 'black' }}>
-            {phone}
-          </Typography>
-        )}
-        {email && (
-          <Typography variant="caption" display="block" sx={{ fontSize: '10px', color: 'black' }}>
-            {email}
-          </Typography>
-        )}
+          {address && (
+            <Typography variant="caption" display="block" sx={{ fontSize: '10px', color: 'black', whiteSpace: 'pre-line' }}>
+              {address}
+            </Typography>
+          )}
+          {phone && (
+            <Typography variant="caption" display="block" sx={{ fontSize: '10px', color: 'black' }}>
+              {phone}
+            </Typography>
+          )}
+          {email && (
+            <Typography variant="caption" display="block" sx={{ fontSize: '10px', color: 'black' }}>
+              {email}
+            </Typography>
+          )}
 
-        <Typography variant="caption" display="block" sx={{ fontSize: '10px', mt: 1, fontWeight: 'bold', color: 'black' }}>
-          Acknowledgement Receipt
-        </Typography>
-
-        <Box sx={{ mt: 0.5, textAlign: 'left' }}>
-          <Typography variant="caption" display="block" sx={{ fontSize: '9px', color: 'black', lineHeight: 1.2 }}>
-            Order No: {orderId}
+          <Typography variant="caption" display="block" sx={{ fontSize: '10px', mt: 1, fontWeight: 'bold', color: 'black' }}>
+            Acknowledgement Receipt
           </Typography>
-          <Typography variant="caption" display="block" sx={{ fontSize: '9px', textTransform: 'capitalize', color: 'black', lineHeight: 1.2 }}>
-            Cashier: {cashierDisplay}
-          </Typography>
-          <Typography variant="caption" display="block" sx={{ fontSize: '9px', color: 'black', lineHeight: 1.2 }}>
-            Date: {dateStr}
-          </Typography>
-        </Box>
-      </Box>
 
-      <Divider sx={{ borderBottomWidth: '1px', borderColor: 'black', mb: 1 }} />
+          <Box sx={{ mt: 0.5, textAlign: 'left' }}>
+            <Typography variant="caption" display="block" sx={{ fontSize: '9px', color: 'black', lineHeight: 1.2 }}>
+              Order No: {orderId}
+            </Typography>
+            <Typography variant="caption" display="block" sx={{ fontSize: '9px', textTransform: 'capitalize', color: 'black', lineHeight: 1.2 }}>
+              Cashier: {cashierDisplay}
+            </Typography>
+            <Typography variant="caption" display="block" sx={{ fontSize: '9px', color: 'black', lineHeight: 1.2 }}>
+              Date: {dateStr}
+            </Typography>
+          </Box>
 
-      {/* ITEMS */}
-      <Table size="small" sx={{ mb: 1 }}>
-        <TableBody>
-          {items.map((item, index) => (
-            <TableRow key={index} sx={{ '& td': { border: 0, padding: '2px 0' } }}>
-              <TableCell sx={{ fontSize: '10px', color: 'black', width: '60%', verticalAlign: 'top' }}>
-                <Typography variant="caption" sx={{ fontSize: '10px', fontWeight: 'bold' }}>
-                  {item.name}
+          {showCustomerInfo && (
+            <Box sx={{ mt: 0.5, textAlign: 'left', borderTop: '1px dashed black', pt: 0.5 }}>
+              <Typography variant="caption" display="block" sx={{ fontSize: '9px', fontWeight: 'bold', lineHeight: 1.2 }}>
+                Customer: {custName}
+              </Typography>
+              {custPhone && (
+                <Typography variant="caption" display="block" sx={{ fontSize: '9px', lineHeight: 1.2 }}>
+                  Phone: {custPhone}
                 </Typography>
-                <br />
-                {item.quantity} x {currency(item.price)}
-              </TableCell>
-              <TableCell align="right" sx={{ fontSize: '10px', color: 'black', verticalAlign: 'top' }}>
-                {currency(item.subtotal)}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+              )}
+              {custAddress && (
+                <Typography variant="caption" display="block" sx={{ fontSize: '9px', lineHeight: 1.2 }}>
+                  Addr: {custAddress}
+                </Typography>
+              )}
+              {custTin && (
+                <Typography variant="caption" display="block" sx={{ fontSize: '9px', lineHeight: 1.2 }}>
+                  TIN: {custTin}
+                </Typography>
+              )}
+            </Box>
+          )}
+        </Box>
 
-      <Divider sx={{ borderBottomWidth: '1px', borderColor: 'black', mb: 1 }} />
+        <Divider sx={{ borderBottomWidth: '1px', borderColor: 'black', mb: 1 }} />
 
-      {/* TOTALS */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-        <Typography variant="caption" sx={{ fontSize: '12px', fontWeight: 'bold', color: 'black' }}>
-          TOTAL AMOUNT
+        {/* ITEMS */}
+        <Table size="small" sx={{ mb: 0.5 }}>
+          <TableBody>
+            {items.map((item, index) => (
+              <TableRow key={index} sx={{ '& td': { border: 0, padding: '2px 0' } }}>
+                <TableCell sx={{ fontSize: '10px', color: 'black', width: '60%', verticalAlign: 'top' }}>
+                  <Typography variant="caption" sx={{ fontSize: '10px', fontWeight: 'bold' }}>
+                    {item.name}
+                  </Typography>
+                  <br />
+                  {item.quantity} x {currency(item.price)}
+                </TableCell>
+                <TableCell align="right" sx={{ fontSize: '10px', color: 'black', verticalAlign: 'top' }}>
+                  {currency(item.subtotal || item.total || (item.price * item.quantity))}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+
+        <Divider sx={{ borderBottomWidth: '1px', borderColor: 'black', mb: 1 }} />
+
+        {/* TOTALS */}
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+          <Typography variant="caption" sx={{ fontSize: '12px', fontWeight: 'bold', color: 'black' }}>
+            TOTAL AMOUNT
+          </Typography>
+          <Typography variant="caption" sx={{ fontSize: '12px', fontWeight: 'bold', color: 'black' }}>
+            {currency(order.total)}
+          </Typography>
+        </Box>
+
+        {order.paymentMethod && (
+          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+            <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>
+              Paid via {paymentLabel}
+            </Typography>
+          </Box>
+        )}
+
+        {order.amountTendered > 0 && (
+          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+            <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>
+              Cash Tendered
+            </Typography>
+            <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>
+              {currency(order.amountTendered)}
+            </Typography>
+          </Box>
+        )}
+
+        {order.change > 0 && (
+          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+            <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>
+              Change
+            </Typography>
+            <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>
+              {currency(order.change)}
+            </Typography>
+          </Box>
+        )}
+
+
+        <Divider sx={{ borderBottomWidth: '1px', borderColor: 'black', my: 2 }} />
+
+        {/* FOOTER */}
+        <Typography variant="caption" display="block" align="center" sx={{ fontSize: '10px', color: 'black', fontStyle: 'italic' }}>
+          {footerMsg}
         </Typography>
-        <Typography variant="caption" sx={{ fontSize: '12px', fontWeight: 'bold', color: 'black' }}>
-          {currency(order.total)}
+        <Typography variant="caption" display="block" align="center" sx={{ fontSize: '10px', color: 'black', mt: 1 }}>
+          This is not an official receipt.
         </Typography>
-      </Box>
-
-      {order.paymentMethod && (
-        <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-          <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>
-            Paid via {order.paymentMethod}
-          </Typography>
-        </Box>
-      )}
-
-      {order.amountTendered > 0 && (
-        <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-          <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>
-            Cash Tendered
-          </Typography>
-          <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>
-            {currency(order.amountTendered)}
-          </Typography>
-        </Box>
-      )}
-
-      {order.change > 0 && (
-        <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-          <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>
-            Change
-          </Typography>
-          <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>
-            {currency(order.change)}
-          </Typography>
-        </Box>
-      )}
-
-
-      <Divider sx={{ borderBottomWidth: '1px', borderColor: 'black', my: 2 }} />
-
-      {/* FOOTER */}
-      <Typography variant="caption" display="block" align="center" sx={{ fontSize: '10px', color: 'black', fontStyle: 'italic' }}>
-        {footerMsg}
-      </Typography>
-      <Typography variant="caption" display="block" align="center" sx={{ fontSize: '10px', color: 'black', mt: 1 }}>
-        This is not an official receipt.
-      </Typography>
-    </Box>
+      </div>
+    </Box>,
+    mountNode
   );
 };

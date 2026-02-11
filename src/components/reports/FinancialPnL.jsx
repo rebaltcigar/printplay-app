@@ -45,6 +45,7 @@ import {
 } from '../../utils/analytics';
 import dayjs from 'dayjs';
 import { useAnalytics } from '../../contexts/AnalyticsContext';
+import { safePrint } from '../../utils/receiptHelper';
 
 export default function FinancialPnL() {
     // --- Context ---
@@ -178,7 +179,7 @@ export default function FinancialPnL() {
                         <MenuItem value="allTime">All Time</MenuItem>
                     </Select>
                 </FormControl>
-                <Button variant="outlined" onClick={() => window.print()}>Print / PDF</Button>
+                <Button variant="outlined" onClick={() => safePrint(null, "FinancialPnL")}>Print / PDF</Button>
             </Paper>
 
             {/* SUMMARY CARDS */}

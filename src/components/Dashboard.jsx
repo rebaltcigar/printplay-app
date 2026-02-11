@@ -60,6 +60,7 @@ import {
 // Helpers
 import { openDrawer } from '../utils/drawerService';
 import { generateOrderNumber, createOrderObject } from '../utils/orderService';
+import { normalizeReceiptData, safePrint } from '../utils/receiptHelper'; // ADDED
 
 import logo from '/icon.ico';
 
@@ -173,6 +174,24 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
   const receiptRef = useRef(null); // ADDED
   const [showEndShiftReceipt, setShowEndShiftReceipt] = useState(false);
   const [endShiftReceiptData, setEndShiftReceiptData] = useState(null);
+
+  // --- EFFECT: Auto-Print Trigger ---
+  // --- EFFECT: Auto-Print Trigger ---
+  const isPrintingLocal = useRef(false);
+  useEffect(() => {
+    let timer;
+    if ((printOrder || printShiftData) && !isPrintingLocal.current) {
+      isPrintingLocal.current = true;
+      timer = setTimeout(() => {
+        safePrint(() => {
+          setPrintOrder(null);
+          setPrintShiftData(null);
+          isPrintingLocal.current = false;
+        }, "Dashboard");
+      }, 500);
+    }
+    return () => clearTimeout(timer);
+  }, [printOrder, printShiftData]);
 
   // --- UI STATE ---
   const [menuAnchor, setMenuAnchor] = useState(null);
@@ -399,16 +418,7 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
     return () => { isMounted = false; };
   }, [user?.email]);
 
-  // Auto-Print Trigger
-  useEffect(() => {
-    if (printOrder || printShiftData) {
-      setTimeout(() => {
-        window.print();
-        setPrintOrder(null);
-        setPrintShiftData(null);
-      }, 500);
-    }
-  }, [printOrder, printShiftData]);
+
 
   const handleLogoutOnly = () => {
     try { auth.signOut(); } catch (e) { console.error('Logout failed:', e); }
@@ -676,7 +686,11 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
       setOpenCheckout(false);
 
       if (shouldPrint) {
-        setPrintOrder(fullOrder);
+        // Use shared normalizer for consistent receipt
+        setPrintOrder(normalizeReceiptData(fullOrder, {
+          staffName: staffDisplayName,
+          isReprint: false // Use current timestamp
+        }));
       }
 
       if (orders.length > 1) {
@@ -781,6 +795,8 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
           serviceName: data.item, // For backward compatibility in UI
           price: Number(data.price),
           quantity: Number(data.quantity),
+          subtotal: Number(data.total), // ADDED
+          total: Number(data.total), // ADDED
           notes: data.notes || '',
         };
       });
@@ -796,6 +812,9 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
           fullName: order.customerName,
           id: order.customerId,
           email: '',
+          phone: order.customerPhone || '',
+          address: order.customerAddress || '',
+          tin: order.customerTin || '', // Ensure legacy orders work too
         },
         paymentMethod: order.paymentMethod,
         paymentDetails: order.paymentDetails,
@@ -807,8 +826,11 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
       setOrders(prev => {
         const exists = prev.findIndex(o => o.orderNumber === order.orderNumber);
         if (exists >= 0) {
+          // Update existing tab with fresh data (e.g. if TIN was added)
+          const next = [...prev];
+          next[exists] = newTab;
           setActiveTab(exists);
-          return prev;
+          return next;
         }
         const next = [...prev, newTab];
         setActiveTab(prev.length);
@@ -938,7 +960,12 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
   };
 
   const handlePrintExistingOrder = (orderData) => {
-    setPrintOrder({ ...orderData, timestamp: new Date() });
+    // Use the shared normalizer to ensure consistent receipt format
+    const printData = normalizeReceiptData(orderData, {
+      staffName: staffDisplayName,
+      isReprint: true // Use original timestamp if available
+    });
+    setPrintOrder(printData);
   };
 
   const handleConfirmDeleteCartItem = (reason) => {

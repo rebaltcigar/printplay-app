@@ -22,6 +22,9 @@ export default function CustomerDialog({ open, onClose, onSelectCustomer, user, 
   const [search, setSearch] = useState('');
   const [username, setUsername] = useState('');
   const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [address, setAddress] = useState('');
+  const [tin, setTin] = useState('');
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -136,11 +139,21 @@ export default function CustomerDialog({ open, onClose, onSelectCustomer, user, 
       const docRef = await addDoc(collection(db, 'customers'), {
         username: u,                // lowercase for stable search
         fullName: f,
+        phone: phone.trim(),
+        address: address.trim(),
+        tin: tin.trim(),
         createdAt: serverTimestamp(),
         createdBy: user?.email || 'unknown',
       });
 
-      onSelectCustomer?.({ id: docRef.id, username: u, fullName: f });
+      onSelectCustomer?.({
+        id: docRef.id,
+        username: u,
+        fullName: f,
+        phone: phone.trim(),
+        address: address.trim(),
+        tin: tin.trim()
+      });
     } catch (e) {
       console.error('Error adding new customer:', e);
       showSnackbar?.('Failed to add new customer.', 'error');
@@ -153,6 +166,9 @@ export default function CustomerDialog({ open, onClose, onSelectCustomer, user, 
     setSearch('');
     setUsername('');
     setFullName('');
+    setPhone('');
+    setAddress('');
+    setTin('');
     setResults([]);
     onClose?.();
   };
@@ -237,6 +253,35 @@ export default function CustomerDialog({ open, onClose, onSelectCustomer, user, 
             size="small"
           />
 
+          <TextField
+            label="Phone"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            fullWidth
+            size="small"
+            sx={{ mt: 2 }}
+          />
+
+          <TextField
+            label="Address"
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            fullWidth
+            size="small"
+            multiline
+            rows={2}
+            sx={{ mt: 2 }}
+          />
+
+          <TextField
+            label="TIN (Tax Identification Number)"
+            value={tin}
+            onChange={(e) => setTin(e.target.value)}
+            fullWidth
+            size="small"
+            sx={{ mt: 2 }}
+          />
+
           <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
             <Button
               variant="contained"
@@ -249,7 +294,13 @@ export default function CustomerDialog({ open, onClose, onSelectCustomer, user, 
             <Button
               variant="text"
               color="inherit"
-              onClick={() => { setUsername(''); setFullName(''); }}
+              onClick={() => {
+                setUsername('');
+                setFullName('');
+                setPhone('');
+                setAddress('');
+                setTin('');
+              }}
               size="small"
               sx={{ minWidth: 88 }}
             >

@@ -47,6 +47,7 @@ export default function OrderDetailsDialog({ open, onClose, order, onUpdate, onP
                 customerName: order.customerName,
                 customerPhone: order.customerPhone,
                 customerAddress: order.customerAddress,
+                customerTin: order.customerTin,
                 customerId: order.customerId
             });
         }
@@ -76,6 +77,7 @@ export default function OrderDetailsDialog({ open, onClose, order, onUpdate, onP
             customerName: customerData.fullName || customerData.name || 'Walk-in',
             customerPhone: customerData.phone || '',
             customerAddress: customerData.address || '',
+            customerTin: customerData.tin || '',
             customerId: customerData.id || null
         }));
         setCustomerDialog(false);
@@ -106,6 +108,7 @@ export default function OrderDetailsDialog({ open, onClose, order, onUpdate, onP
             customerName: currentCustomer.customerName,
             customerPhone: currentCustomer.customerPhone || null,
             customerAddress: currentCustomer.customerAddress || null,
+            customerTin: currentCustomer.customerTin || null,
             customerId: currentCustomer.customerId || null,
             updatedAt: serverTimestamp(),
             // Ensure payment fields are present even if not changed here
@@ -140,6 +143,7 @@ export default function OrderDetailsDialog({ open, onClose, order, onUpdate, onP
             customerName: currentCustomer.customerName,
             customerPhone: currentCustomer.customerPhone,
             customerAddress: currentCustomer.customerAddress,
+            customerTin: currentCustomer.customerTin,
         };
         onPrint(fullOrder); // callback to print
         onClose();
@@ -168,6 +172,9 @@ export default function OrderDetailsDialog({ open, onClose, order, onUpdate, onP
                         )}
                         {currentCustomer?.customerAddress && (
                             <Typography variant="body2" color="text.secondary">{currentCustomer.customerAddress}</Typography>
+                        )}
+                        {currentCustomer?.customerTin && (
+                            <Typography variant="body2" color="text.secondary">TIN: {currentCustomer.customerTin}</Typography>
                         )}
                     </Box>
                     <Button startIcon={<EditIcon />} size="small" onClick={() => setCustomerDialog(true)}>

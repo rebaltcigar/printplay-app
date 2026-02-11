@@ -9,6 +9,7 @@ export default function OrderCustomerDialog({ open, onClose, onSetCustomer, curr
     const [name, setName] = useState('');
     const [phone, setPhone] = useState('');
     const [address, setAddress] = useState('');
+    const [tin, setTin] = useState('');
 
     // Pre-fill if editing existing customer on order
     useEffect(() => {
@@ -17,10 +18,12 @@ export default function OrderCustomerDialog({ open, onClose, onSetCustomer, curr
                 setName(currentCustomer.fullName || '');
                 setPhone(currentCustomer.phone || '');
                 setAddress(currentCustomer.address || '');
+                setTin(currentCustomer.tin || '');
             } else {
                 setName('');
                 setPhone('');
                 setAddress('');
+                setTin('');
             }
         }
     }, [open, currentCustomer]);
@@ -35,6 +38,7 @@ export default function OrderCustomerDialog({ open, onClose, onSetCustomer, curr
             fullName: name.trim(),
             phone: phone.trim(),
             address: address.trim(),
+            tin: tin.trim(),
             id: 'manual-entry' // Distinguish from DB customers
         });
         onClose();
@@ -77,6 +81,13 @@ export default function OrderCustomerDialog({ open, onClose, onSetCustomer, curr
                         onChange={(e) => setAddress(e.target.value)}
                     />
                 </Stack>
+                <TextField
+                    label="TIN"
+                    fullWidth
+                    value={tin}
+                    onChange={(e) => setTin(e.target.value)}
+                    sx={{ mt: 2 }}
+                />
             </DialogContent>
             <DialogActions sx={{ justifyContent: 'space-between', p: 2 }}>
                 <Button onClick={handleClear} color="error">Remove Customer</Button>
