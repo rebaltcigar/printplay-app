@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.6] - 2026-02-12
+
+### Added
+- **Dynamic Branding**: Store logo and name are now fetched from settings and displayed on the login screen, staff dashboard, and admin header.
+- **Unified Typography**: Implemented "Inter" font across the entire application for a consistent, professional look.
+- **Automatic Versioning**: Configured Vite to pull the version number from `package.json` and display it dynamically on the login page.
+- **Logo Verification**: Added a "Preview" button and verification UI for logo URLs in Store Settings.
+
+### Changed
+- **Settings Layout**: Reorganized settings tabs (Profile, POS, Receipt, Security, Hardware, Expenses, Data Core) for better navigation.
+- **Admin Header Styling**: Refined store name display to be white, balanced (weight 600), and natural case.
+- **Sidebar UX**: Moved the toggle button to the top of the sidebar for a more compact and consistent interface.
+
+### Fixed
+- **Login Imports**: Fixed a missing `useEffect` import in the Login component.
+
 ## [0.1.5] - 2026-02-12
 
 ### Added

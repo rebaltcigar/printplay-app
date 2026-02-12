@@ -88,7 +88,7 @@ const darkTheme = createTheme({
     divider: '#333333',
   },
   typography: {
-    fontFamily: 'Roboto, sans-serif',
+    fontFamily: "'Inter', sans-serif",
   },
   components: {
     MuiPaper: {
@@ -243,6 +243,7 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
   const [systemSettings, setSystemSettings] = useState({
     drawerHotkey: { altKey: true, code: 'Backquote' }, // Fallback default
     logoUrl: null, // Fallback
+    storeName: 'PrintPlay', // Fallback
   });
 
   // Load Settings on Mount
@@ -1030,18 +1031,18 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
       {/* --- HEADER --- */}
       <AppBar position="static" color="default" elevation={1} sx={{ bgcolor: 'background.paper', borderBottom: 1, borderColor: 'divider' }}>
         <Toolbar sx={{ gap: 1 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Box onClick={(e) => setStaffMenuAnchor(e.currentTarget)} sx={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 1.5 }}>
             {systemSettings.logoUrl ? (
-              <img src={systemSettings.logoUrl} alt="logo" height={25} style={{ maxWidth: 100, objectFit: 'contain' }} />
+              <img src={systemSettings.logoUrl} alt="logo" height={32} style={{ maxWidth: 120, objectFit: 'contain' }} />
             ) : (
-              <img src={logo} alt="logo" width={20} height={20} />
+              <img src={logo} alt="logo" width={24} height={24} />
             )}
-            <Box onClick={(e) => setStaffMenuAnchor(e.currentTarget)} sx={{ cursor: 'pointer', display: 'flex', flexDirection: 'column' }}>
-              <Typography variant="subtitle2" sx={{ opacity: 0.9, lineHeight: 1, color: 'text.primary' }}>
-                {staffDisplayName}
+            <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 'bold', lineHeight: 1.2, color: 'text.primary', letterSpacing: '0.02em' }}>
+                {systemSettings.storeName}
               </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1 }}>
-                {shiftPeriod} Shift • {elapsed}
+              <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1, fontSize: '0.7rem', opacity: 0.8 }}>
+                {staffDisplayName} • {shiftPeriod}
               </Typography>
             </Box>
           </Box>

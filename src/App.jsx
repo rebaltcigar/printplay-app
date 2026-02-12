@@ -33,6 +33,9 @@ const darkTheme = createTheme({
     mode: "dark",
     primary: { main: "#f44336" },
   },
+  typography: {
+    fontFamily: "'Inter', sans-serif",
+  },
 });
 
 export default function App() {

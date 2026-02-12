@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Box,
   Card,
@@ -15,6 +15,8 @@ import {
   CircularProgress,
   Alert,
 } from "@mui/material";
+import { db } from "../firebase";
+import { doc, getDoc } from "firebase/firestore";
 import Visibility from "@mui/icons-material/Visibility";
 import VisibilityOff from "@mui/icons-material/VisibilityOff";
 import ShieldPerson from "@mui/icons-material/AdminPanelSettings";
@@ -130,6 +132,26 @@ export default function Login({ onLogin, onAdminLogin }) {
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const [branding, setBranding] = useState({ storeName: 'Print+Play', logoUrl: '/logo.png' });
+
+  useEffect(() => {
+    const fetchBranding = async () => {
+      try {
+        const docRef = doc(db, 'settings', 'config');
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setBranding({
+            storeName: data.storeName || 'Print+Play',
+            logoUrl: data.logoUrl || '/logo.png'
+          });
+        }
+      } catch (e) {
+        console.error("Login branding fetch error:", e);
+      }
+    };
+    fetchBranding();
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -193,12 +215,12 @@ export default function Login({ onLogin, onAdminLogin }) {
           </span>
         </Tooltip>
 
-        {/* Centered logo from /public/logo.png */}
+        {/* Centered logo */}
         <Box sx={{ display: "flex", justifyContent: "center", mb: 1 }}>
           <Box
             component="img"
-            src="/logo.png"
-            alt="Print+Play Logo"
+            src={branding.logoUrl}
+            alt={`${branding.storeName} Logo`}
             sx={{
               width: 72,
               height: 72,
@@ -211,10 +233,10 @@ export default function Login({ onLogin, onAdminLogin }) {
         </Box>
 
         <Typography align="center" variant="h5" gutterBottom>
-          Print+Play
+          {branding.storeName}
         </Typography>
         <Typography align="center" variant="caption" display="block" sx={{ mt: -1, mb: 2, opacity: 0.6 }}>
-          v0.1.5
+          v{__APP_VERSION__}
         </Typography>
 
         {/* Inline, user-friendly error */}
