@@ -1,7 +1,16 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
-
+ 
+## [0.1.10] - 2026-02-13
+ 
+### Added
+- **Shift Audit Debugger**: Integrated a new "Debug Calculations" tool in the Shift Detail view to help administrators identify discrepancies between list views and shift receipts.
+ 
+### Fixed
+- **PC Rental Double-Counting**: Hardcoded special logic for "PC Rental" transactions to exclude them from standard services totals (since they are added manually at end-of-shift) while still maintaining accurate payment method breakdowns (GCash/Charge) for "Expected Cash" calculations.
+- **Improved Item Matching**: Added case-insensitive item normalization for more robust calculation logic across all shift views.
+ 
 ## [0.1.9] - 2026-02-13
 
 ### Added

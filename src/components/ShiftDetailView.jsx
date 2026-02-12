@@ -40,6 +40,7 @@ import CommentIcon from "@mui/icons-material/Comment";
 
 import LinkOffIcon from "@mui/icons-material/LinkOff";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
+import BugReportIcon from "@mui/icons-material/BugReport"; // NEW
 
 import { db, auth } from "../firebase";
 import {
@@ -64,6 +65,7 @@ import { generateDisplayId } from "../utils/idGenerator";
 import CustomerDialog from "./CustomerDialog";
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 import ShiftConsolidationDialog from "./ShiftConsolidationDialog";
+import ShiftAuditDebugger from "./ShiftAuditDebugger"; // NEW
 import AssignmentTurnedInIcon from "@mui/icons-material/AssignmentTurnedIn";
 import logo from "/icon.ico";
 
@@ -73,6 +75,8 @@ const fmtPeso = (n) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+
+const normalize = (s) => String(s ?? "").trim().toLowerCase(); // NEW HELPER
 
 const BILL_DENOMS = [1000, 500, 200, 100, 50, 20];
 const COIN_DENOMS = [20, 10, 5, 1];
@@ -151,6 +155,7 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
 
   // Consolidation Dialog State
   const [consolidationOpen, setConsolidationOpen] = useState(false);
+  const [debugOpen, setDebugOpen] = useState(false); // NEW
 
   // Refs to scroll to
   const txControlsRef = useRef(null);
@@ -666,7 +671,8 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
   const servicesTotal = useMemo(
     () =>
       transactions.reduce((sum, tx) => {
-        if (tx.item !== "Expenses" && tx.item !== "New Debt")
+        // Exclude PC Rental from standard services sum (it's added separately via shift.pcRentalTotal)
+        if (tx.item !== "Expenses" && tx.item !== "New Debt" && normalize(tx.item) !== "pc rental")
           return sum + (tx.total || 0);
         return sum;
       }, 0),
@@ -676,7 +682,8 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
   // New Breakdowns
   const cashSalesTotal = useMemo(() =>
     transactions.reduce((sum, tx) => {
-      if (tx.item !== 'Expenses' && tx.item !== 'New Debt') {
+      // Exclude PC Rental from cash sum (it's added separately via shift.pcRentalTotal)
+      if (tx.item !== 'Expenses' && tx.item !== 'New Debt' && normalize(tx.item) !== 'pc rental') {
         if (tx.paymentMethod === 'Cash' || !tx.paymentMethod) return sum + (tx.total || 0);
       }
       return sum;
@@ -686,7 +693,9 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
 
   const gcashSalesTotal = useMemo(() =>
     transactions.reduce((sum, tx) => {
-      if (tx.item !== 'Expenses' && tx.item !== 'New Debt' && tx.paymentMethod === 'GCash')
+      const isPc = normalize(tx.item) === 'pc rental';
+      // INCLUDE PC Rental in GCash sum (since it's not part of shift.pcRentalTotal's cash portion)
+      if (tx.item !== 'Expenses' && tx.item !== 'New Debt' && (isPc || true) && tx.paymentMethod === 'GCash')
         return sum + (tx.total || 0);
       return sum;
     }, 0),
@@ -695,7 +704,9 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
 
   const arSalesTotal = useMemo(() =>
     transactions.reduce((sum, tx) => {
-      if (tx.item !== 'Expenses' && tx.item !== 'New Debt' && tx.paymentMethod === 'Charge')
+      const isPc = normalize(tx.item) === 'pc rental';
+      // INCLUDE PC Rental in Charge sum
+      if (tx.item !== 'Expenses' && tx.item !== 'New Debt' && (isPc || true) && tx.paymentMethod === 'Charge')
         return sum + (tx.total || 0);
       return sum;
     }, 0),
@@ -1244,6 +1255,16 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
               >
                 Export CSV
               </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                color="warning"
+                startIcon={<BugReportIcon />}
+                onClick={() => setDebugOpen(true)}
+                fullWidth
+              >
+                Debug Calculations
+              </Button>
             </Stack>
           </Collapse>
         </Card>
@@ -1430,6 +1451,14 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
           showSnackbar={showSnackbar}
         />
       )}
+      {/* Debugger Dialog */}
+      <ShiftAuditDebugger
+        open={debugOpen}
+        onClose={() => setDebugOpen(false)}
+        shift={shift}
+        transactions={transactions}
+        serviceItems={serviceItems}
+      />
     </Box>
   );
 }

@@ -160,6 +160,8 @@ const aggregateShiftTransactions = (txList, serviceMeta) => {
     const itemName = normalize(tx.item);
     if (!itemName) continue;
 
+    const isPcRental = itemName === "pc rental";
+
     let cat = nameToCategory[itemName];
 
     // Fix: If category is unknown, check if it is "Expenses" specifically.
@@ -181,14 +183,26 @@ const aggregateShiftTransactions = (txList, serviceMeta) => {
       serviceMeta.find((s) => normalize(s.name) === itemName)?.name ||
       tx.item ||
       "Unknown";
+
+    // Always track per-service totals (even PC Rental for audit)
     serviceTotals[displayName] = (serviceTotals[displayName] || 0) + amt;
 
     if (normalize(cat) === "debit") {
-      sales += amt;
+      // EXCLUDE PC Rental from base sales sum because it's added manually later
+      if (!isPcRental) {
+        sales += amt;
+      }
+
       // Payment Method Breakdown
       if (tx.paymentMethod === 'GCash') gcashSales += amt;
       else if (tx.paymentMethod === 'Charge') arSales += amt;
-      else cashSales += amt; // Default to cash if unknown/null + explicit Cash
+      else {
+        // Only add to cash sales if NOT PC Rental
+        // (Cash PC Rental is covered by the manual end-shift entry)
+        if (!isPcRental) {
+          cashSales += amt;
+        }
+      }
     }
     else if (normalize(cat) === "credit") {
       expenses += amt;
