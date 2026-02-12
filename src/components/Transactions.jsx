@@ -55,8 +55,10 @@ import {
   getDoc, // Added for fetching full order details
   limit,
   startAfter,
-  getDocs
+
+  getDocs // Added for fetching full order details
 } from "firebase/firestore";
+import { generateDisplayId, generateBatchIds } from "../utils/idGenerator";
 import { db, auth } from "../firebase";
 import { SimpleReceipt } from "./SimpleReceipt"; // RESTORED
 
@@ -116,6 +118,7 @@ const currency = (n) => `₱${Number(n || 0).toFixed(2)}`;
 /* ---------- component ---------- */
 const Transactions = ({ showSnackbar }) => {
   // Filters
+  const [loading, setLoading] = useState(false);
   const [start, setStart] = useState(toDateInput(startOfMonth()));
   const [end, setEnd] = useState(toDateInput(endOfMonth()));
   const [staffEmail, setStaffEmail] = useState("");
@@ -477,6 +480,73 @@ const Transactions = ({ showSnackbar }) => {
     setOnlyEdited(false);
     setServicesFilter([]);
     attachStream("month");
+  };
+
+  const handleBackfillTransactions = async () => {
+    if (!window.confirm("This will generate TX-XXXXXX (for sales) and EXP-XXXXXX (for expenses) IDs for ALL transactions that are missing them. Continue?")) return;
+
+    setLoading(true);
+    try {
+      const q = query(collection(db, "transactions"));
+      const snap = await getDocs(q);
+
+      const missingExpenses = [];
+      const missingTx = [];
+
+      snap.docs.forEach(d => {
+        const data = d.data();
+        if (!data.displayId) {
+          if (data.item === 'Expenses') missingExpenses.push(d);
+          else missingTx.push(d);
+        }
+      });
+
+      let countExp = 0;
+      let countTx = 0;
+
+      // 1. Sort by timestamp for chronological assignment
+      const sortFn = (a, b) => (a.data().timestamp?.seconds || 0) - (b.data().timestamp?.seconds || 0);
+      missingExpenses.sort(sortFn);
+      missingTx.sort(sortFn);
+
+      // 2. Generate Batches
+      const expIds = await generateBatchIds("expenses", "EXP", missingExpenses.length);
+      const txIds = await generateBatchIds("transactions", "TX", missingTx.length);
+
+      const batchLimit = 500;
+      let batch = writeBatch(db);
+      let ops = 0;
+
+      const commitBatch = async () => {
+        await batch.commit();
+        batch = writeBatch(db);
+        ops = 0;
+      };
+
+      // 3. Assign IDs
+      for (let i = 0; i < missingExpenses.length; i++) {
+        batch.update(missingExpenses[i].ref, { displayId: expIds[i] });
+        ops++;
+        countExp++;
+        if (ops >= batchLimit) await commitBatch();
+      }
+
+      for (let i = 0; i < missingTx.length; i++) {
+        batch.update(missingTx[i].ref, { displayId: txIds[i] });
+        ops++;
+        countTx++;
+        if (ops >= batchLimit) await commitBatch();
+      }
+
+      if (ops > 0) await commitBatch();
+
+      showSnackbar?.(`Backfilled: ${countExp} Expenses, ${countTx} Transactions.`, 'success');
+    } catch (e) {
+      console.error("Backfill failed:", e);
+      showSnackbar?.("Backfill failed. Check console.", 'error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   /* ---- Reprint Handler (NEW) ---- */
@@ -871,8 +941,9 @@ const Transactions = ({ showSnackbar }) => {
   }
 
   /* ---- VIEW ---- */
-  if (initLoading) {
-    return <LoadingScreen message="Loading transactions..." />;
+  /* ---- VIEW ---- */
+  if (initLoading || loading) {
+    return <LoadingScreen message={loading ? "Processing..." : "Loading transactions..."} />;
   }
 
   return (
@@ -1085,6 +1156,16 @@ const Transactions = ({ showSnackbar }) => {
           <Typography variant="subtitle1" fontWeight={600}>
             All Transactions
           </Typography>
+          {selectedIds.length === 0 && (
+            <Button
+              variant="outlined"
+              color="secondary"
+              size="small"
+              onClick={handleBackfillTransactions}
+            >
+              Fix Missing IDs
+            </Button>
+          )}
           <Box sx={{ flexGrow: 1 }} />
           {selectedIds.length > 0 && (
             <>
@@ -1118,6 +1199,7 @@ const Transactions = ({ showSnackbar }) => {
             <TableHead>
               <TableRow>
                 <TableCell padding="checkbox" />
+                <TableCell>ID</TableCell>
                 <TableCell>Time</TableCell>
                 <TableCell>Item</TableCell>
                 <TableCell align="right">Qty</TableCell>
@@ -1154,6 +1236,9 @@ const Transactions = ({ showSnackbar }) => {
                         checked={selectedIds.includes(r.id)}
                         onChange={() => toggleSelect(r.id)}
                       />
+                    </TableCell>
+                    <TableCell sx={{ fontFamily: "monospace", fontWeight: "bold" }}>
+                      {r.displayId || r.id?.slice(-6).toUpperCase()}
                     </TableCell>
                     <TableCell>{fmtDateTime(r.timestamp)}</TableCell>
                     <TableCell>{r.item}</TableCell>

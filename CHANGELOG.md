@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.8] - 2026-02-13
+
+### Fixed
+- **POS Transaction IDs**: Resolved an issue where new items added to an *existing* order were not generating "TX-" IDs.
+- **POS UI Flow**: Fixed checkout dialog not closing and change dialog not appearing after updating an order.
+- **POS Feedback**: Added a loading indicator ("Processing...") during order updates to provide visual feedback.
+- **ID Consistency**: Enhanced system to consistently use "TX-" for general transactions/debts and "EXP-" for expenses.
+- **Stability**: Fixed `ReferenceError` crashes in POS and Transactions components.
+
 ## [0.1.7] - 2026-02-12
 
 ### Added

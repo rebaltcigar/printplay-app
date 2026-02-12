@@ -9,6 +9,7 @@ import HistoryIcon from '@mui/icons-material/History'; // For audits
 import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, addDoc } from 'firebase/firestore';
 import { db, auth } from '../../firebase';
 import { fmtPeso } from '../../utils/analytics'; // Ensure this exists or reimplement
+import { generateDisplayId } from '../../utils/idGenerator';
 
 export default function InventoryManagement({ showSnackbar }) {
     const [items, setItems] = useState([]);
@@ -80,7 +81,9 @@ export default function InventoryManagement({ showSnackbar }) {
 
             // 2. Create "Inventory Purchase" Transaction (Asset)
             // This effectively logs the "Buy" action
+            const displayId = await generateDisplayId("expenses", "EXP");
             await addDoc(collection(db, 'transactions'), {
+                displayId,
                 item: `Restock: ${item.serviceName}`,
                 quantity: qty,
                 price: unit, // Unit Cost

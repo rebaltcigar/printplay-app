@@ -5,6 +5,7 @@ import {
 } from '@mui/material';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
+import { generateDisplayId } from '../utils/idGenerator';
 
 export default function ExpenseDialog({ open, onClose, user, activeShiftId, expenseTypes, staffOptions, showSnackbar }) {
     const [form, setForm] = useState({
@@ -43,7 +44,9 @@ export default function ExpenseDialog({ open, onClose, user, activeShiftId, expe
         }
 
         try {
+            const displayId = await generateDisplayId("expenses", "EXP");
             await addDoc(collection(db, 'transactions'), {
+                displayId,
                 item: "Expenses",
                 expenseType: form.type,
                 expenseStaffId: form.staffId || null,
@@ -56,6 +59,7 @@ export default function ExpenseDialog({ open, onClose, user, activeShiftId, expe
                 staffEmail: user.email,
                 shiftId: activeShiftId,
                 category: 'Credit',
+                financialCategory: 'OPEX',
                 notes: form.notes || "",
                 isDeleted: false
             });

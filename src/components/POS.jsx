@@ -61,6 +61,8 @@ import {
 // Helpers
 import { openDrawer } from '../utils/drawerService';
 import { generateOrderNumber, createOrderObject } from '../utils/orderService';
+
+import { generateDisplayId, generateBatchIds } from '../utils/idGenerator';
 import { normalizeReceiptData, safePrint } from '../utils/receiptHelper'; // ADDED
 import { ServiceInvoice } from './ServiceInvoice'; // ADDED
 import { normalizeInvoiceData, safePrintInvoice } from '../utils/invoiceHelper'; // ADDED
@@ -486,7 +488,12 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
 
       setIsLoading(true); // START LOADING
       try {
+        const displayId = item === 'Expenses'
+          ? await generateDisplayId("expenses", "EXP")
+          : await generateDisplayId("transactions", "TX"); // For Debts
+
         await addDoc(collection(db, 'transactions'), {
+          displayId,
           item,
           expenseType: item === 'Expenses' ? expenseType : null,
           expenseStaffId: expenseStaffId || null,
@@ -629,10 +636,15 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
       };
 
       await addDoc(collection(db, 'orders'), fullOrder);
+
+      // Generate Batch IDs for line items
+      const txIds = await generateBatchIds("transactions", "TX", currentOrder.items.length);
+
       const batch = writeBatch(db);
-      currentOrder.items.forEach(item => {
+      currentOrder.items.forEach((item, index) => {
         const txRef = doc(collection(db, 'transactions'));
         batch.set(txRef, {
+          displayId: txIds[index],
           item: item.serviceName,
           price: Number(item.price),
           costPrice: Number(item.costPrice || 0), // SAVE COST
@@ -835,11 +847,20 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
   const actuallyUpdateOrder = async (paymentData, shouldPrint = false) => {
     const order = currentOrder;
     if (!order.isExisting) return;
+    setIsLoading(true); // START LOADING
     try {
       const batch = writeBatch(db);
       const finalItems = [];
 
-      // 1. Process Items (Add & Update)
+      // 1. Pre-generate IDs for new items
+      const newItemsCount = order.items.filter(i => !i.transactionId).length;
+      let newIds = [];
+      if (newItemsCount > 0) {
+        newIds = await generateBatchIds("transactions", "TX", newItemsCount);
+      }
+      let newIdIndex = 0;
+
+      // 2. Process Items (Add & Update)
       for (const item of order.items) {
         const itemData = {
           item: item.name || item.serviceName,
@@ -859,8 +880,12 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
           });
         } else {
           const ref = doc(collection(db, 'transactions'));
+          // Use pre-generated ID
+          const displayId = newIds[newIdIndex++] || `TEMP-${Date.now()}`;
+
           batch.set(ref, {
             ...itemData,
+            displayId, // Assigned here
             timestamp: serverTimestamp(),
             staffEmail: user.email,
             customerName: order.customer?.fullName || 'Walk-in',
@@ -868,6 +893,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
             shiftId: activeShiftId,
             orderNumber: order.orderNumber,
             category: 'Revenue',
+            financialCategory: 'Revenue', // Explicit
             paymentMethod: paymentData.paymentMethod,
             paymentDetails: paymentData.paymentDetails || {}, // ADDED
             isDeleted: false
@@ -916,6 +942,12 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
         }
       }).catch(console.warn);
 
+      if (paymentData.paymentMethod === 'Cash' || paymentData.change > 0) {
+        setLastChange(paymentData.change);
+        setChangeDialogOpen(true);
+      }
+      setOpenCheckout(false);
+
       if (shouldPrint) {
         handlePrintExistingOrder({
           ...order,
@@ -934,12 +966,14 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
         setOrders(newOrders);
         setActiveTab(Math.max(0, activeTab - 1));
       }
-      setSuccessMessage("Order has been updated successfully.");
-      setUpdateSuccessDialog(true);
+      showSnackbar("Order has been updated successfully.", "success");
+
 
     } catch (e) {
       console.error("Update failed:", e);
       showSnackbar("Update failed.", 'error');
+    } finally {
+      setIsLoading(false); // STOP LOADING
     }
   };
 
@@ -1848,6 +1882,11 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
           {snackbar.message}
         </Alert>
       </Snackbar>
+
+
+
+
+
 
       {/* GLOBAL LOADING BACKDROP */}
       {isLoading && <LoadingScreen overlay={true} message="Processing..." />}

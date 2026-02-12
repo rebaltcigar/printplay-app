@@ -37,7 +37,9 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import HistoryIcon from "@mui/icons-material/History";
 import ClearIcon from "@mui/icons-material/Clear";
 import CommentIcon from "@mui/icons-material/Comment";
+
 import LinkOffIcon from "@mui/icons-material/LinkOff";
+import FileDownloadIcon from "@mui/icons-material/FileDownload";
 
 import { db, auth } from "../firebase";
 import {
@@ -56,6 +58,7 @@ import {
   // --- NEW: Import FieldValue for atomic operations ---
   FieldValue,
 } from "firebase/firestore";
+import { generateDisplayId } from "../utils/idGenerator";
 
 
 import CustomerDialog from "./CustomerDialog";
@@ -90,12 +93,14 @@ const fromDatetimeLocal = (s) => new Date(s);
 export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }) {
   // ----- form state (left) -----
   const [item, setItem] = useState("");
+  const [quantity, setQuantity] = useState("");
+  const [price, setPrice] = useState("");
+  // ... other existing state ...
   const [expenseType, setExpenseType] = useState("");
   const [expenseStaffId, setExpenseStaffId] = useState("");
   const [expenseStaffName, setExpenseStaffName] = useState("");
   const [expenseStaffEmail, setExpenseStaffEmail] = useState("");
-  const [quantity, setQuantity] = useState("");
-  const [price, setPrice] = useState("");
+
   const [notes, setNotes] = useState("");
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const itemInputRef = useRef(null);
@@ -385,8 +390,13 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
               ? shift.startTime
               : new Date();
 
+        const displayId = item === "Expenses"
+          ? await generateDisplayId("expenses", "EXP")
+          : await generateDisplayId("transactions", "TX");
+
         await addDoc(collection(db, "transactions"), {
           ...data,
+          displayId,
           shiftId: shift.id,
           staffEmail: shift.staffEmail,
           addedByAdmin: true,
@@ -579,6 +589,79 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
   };
 
 
+
+
+
+  const handleExportCSV = () => {
+    if (!transactions.length) return;
+
+    // 1. Define Headers
+    const headers = [
+      "Date",
+      "Time",
+      "Item",
+      "Type",
+      "Quantity",
+      "Price",
+      "Total",
+      "Details/Notes",
+      "Staff/Customer",
+      "Added By",
+      "Edited By"
+    ];
+
+    // 2. Map Data
+    const rows = transactions.map((tx) => {
+      const date = tx.timestamp?.seconds
+        ? new Date(tx.timestamp.seconds * 1000).toLocaleDateString()
+        : "";
+      const time = tx.timestamp?.seconds
+        ? new Date(tx.timestamp.seconds * 1000).toLocaleTimeString()
+        : "";
+
+      const type = tx.item === "Expenses" ? "Expense" : "Service";
+
+      // Escape generic notes/details for CSV
+      const notes = (tx.notes || "").replace(/"/g, '""');
+
+      // Identifier logic similar to identifierText helper
+      let identifier = "";
+      if (tx.item === "Expenses") {
+        identifier = `${tx.expenseType || ""} ${tx.expenseStaffName ? "(" + tx.expenseStaffName + ")" : ""}`;
+      } else if (tx.customerName) {
+        identifier = tx.customerName;
+      }
+
+      // Return array of values
+      return [
+        `"${date}"`,
+        `"${time}"`,
+        `"${tx.item || ""}"`,
+        `"${type}"`,
+        tx.quantity || 0,
+        tx.price || 0,
+        tx.total || 0,
+        `"${notes}"`,
+        `"${identifier}"`,
+        `"${tx.addedBy || ""}"`,
+        `"${tx.editedBy || ""}"`
+      ].join(",");
+    });
+
+    // 3. Construct CSV Content
+    const csvContent = [headers.join(","), ...rows].join("\n");
+
+    // 4. Create Blob and Download
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `shift_${shift.id || "export"}_transactions.csv`);
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   const servicesTotal = useMemo(
     () =>
@@ -813,7 +896,8 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
         display: "flex",
         flexDirection: "column",
         gap: 2,
-        minHeight: "100%",
+        height: "100%",
+        overflow: "hidden",
       }}
     >
       <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
@@ -845,6 +929,8 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
           gap: 2,
           alignItems: "stretch",
           minHeight: 0,
+          flex: 1,
+          overflow: "hidden",
         }}
       >
         <Box
@@ -926,9 +1012,14 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
                 </Button>
               </Box>
             </Tooltip>
+            <Tooltip title="Export to CSV">
+              <IconButton size="small" onClick={handleExportCSV} sx={{ ml: 1 }}>
+                <FileDownloadIcon />
+              </IconButton>
+            </Tooltip>
           </Box>
 
-          <TableContainer sx={{ flex: 1, minHeight: 0 }}>
+          <TableContainer sx={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
             <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>
@@ -1060,8 +1151,9 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
           display: { xs: "flex", sm: "none" },
           flexDirection: "column",
           gap: 1.25,
-          minHeight: "70vh",
+          minHeight: 0,
           flex: 1,
+          overflow: "hidden",
         }}
       >
         <Card ref={txControlsRef} sx={{ p: 1.25 }}>
@@ -1143,6 +1235,15 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
               >
                 Delete Selected
               </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<FileDownloadIcon />}
+                onClick={handleExportCSV}
+                fullWidth
+              >
+                Export CSV
+              </Button>
             </Stack>
           </Collapse>
         </Card>
@@ -1153,7 +1254,7 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
             minHeight: 0,
             display: "flex",
             flexDirection: "column",
-            height: "66vh",
+
           }}
         >
           <Box
@@ -1164,7 +1265,7 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
             </Typography>
           </Box>
 
-          <TableContainer sx={{ flex: 1, minHeight: 0 }}>
+          <TableContainer sx={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
             <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>

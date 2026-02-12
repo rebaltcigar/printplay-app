@@ -64,7 +64,7 @@ import {
 
   tsFromYMD,
 } from "../../utils/payrollHelpers";
-import { generateDisplayId } from "../../utils/idGenerator";
+import { generateDisplayId, generateBatchIds } from "../../utils/idGenerator";
 
 export default function RunPayroll({
   user,
@@ -956,6 +956,7 @@ export default function RunPayroll({
       // Map<lineId, crossDeduction[]>
       const extraDeductionsByLineId = new Map();
       const materializedLines = [];
+      const pendingTransactions = []; // List to hold transactions before batch write (for ID generation)
 
       const periodStartTS = runData.periodStart;
       const periodEndTS = runData.periodEnd;
@@ -1295,12 +1296,11 @@ export default function RunPayroll({
 
         // --- POST TRANSACTIONS ---
 
-        // 1. Post Pay Additions (Bonuses) - Always dated on Pay Date usually
-        // These are Expenses for the business.
-        // FIX: Only post separate additions if we are in PER-SHIFT mode.
-        // In PER-STAFF mode, the "Net Pay" transaction already includes these additions.
+        // --- PREPARE TRANSACTIONS (Collected for Batch ID Generation) ---
+        // Instead of writing immediately, we push to a list
+        // 1. Pay Additions
         if (m.additionTotal > 0 && expenseModeToUse === "per-shift") {
-          txBatch.set(doc(collection(db, "transactions")), {
+          pendingTransactions.push({
             item: "Expenses",
             expenseType: "Salary",
             expenseStaffId: m.staffUid,
@@ -1322,7 +1322,7 @@ export default function RunPayroll({
         }
 
         if (expenseModeToUse === "per-shift") {
-          // per shift logic for salary
+          // per shift logic
           m.shifts.forEach((s) => {
             const shiftGross = Number(
               (((s.minutes || 0) / 60) * Number(m.rate || 0)).toFixed(2)
@@ -1331,13 +1331,10 @@ export default function RunPayroll({
               .filter((d) => d.id === s.id)
               .reduce((sum, d) => sum + Number(d.amount || 0), 0);
 
-            // Note: Additions are not usually per-shift, so we don't include them in per-shift calculation here
-            // We just posted them separately above.
-
             const shiftNet = Number((shiftGross - shiftDeductions).toFixed(2));
             if (shiftGross === 0 && shiftDeductions === 0) return;
 
-            txBatch.set(doc(collection(db, "transactions")), {
+            pendingTransactions.push({
               item: "Expenses",
               expenseType: "Salary",
               expenseStaffId: m.staffUid,
@@ -1346,13 +1343,7 @@ export default function RunPayroll({
               quantity: 1,
               price: shiftNet,
               total: shiftNet,
-              notes: `Payroll [${toYMD_PHT_fromTS(
-                periodStartTS
-              )} — ${toYMD_PHT_fromTS(
-                periodEndTS
-              )}] | Shift: ${s.label} | Gross: ${peso(
-                shiftGross
-              )} | Net: ${peso(shiftNet)}`,
+              notes: `Payroll [${toYMD_PHT_fromTS(periodStartTS)} — ${toYMD_PHT_fromTS(periodEndTS)}] | Shift: ${s.label} | Gross: ${peso(shiftGross)} | Net: ${peso(shiftNet)}`,
               shiftId: null,
               source: `payroll_run:${id}`,
               payrollRunId: id,
@@ -1364,7 +1355,7 @@ export default function RunPayroll({
             });
           });
 
-          // Calculate non-shift deductions based on manual + cross-staff
+          // Non-shift deductions
           const nonShiftDeds = deductionItems.filter(
             (d) => !m.shifts.find((s) => s.id === d.id)
           );
@@ -1374,18 +1365,16 @@ export default function RunPayroll({
               0
             );
             if (extraTotal > 0) {
-              txBatch.set(doc(collection(db, "transactions")), {
+              pendingTransactions.push({
                 item: "Expenses",
                 expenseType: "Salary",
                 expenseStaffId: m.staffUid,
                 expenseStaffName: m.staffName,
                 expenseStaffEmail: m.staffEmail,
                 quantity: 1,
-                price: extraTotal * -1, // These are deductions, so post as negative
+                price: extraTotal * -1,
                 total: extraTotal * -1,
-                notes: `Payroll manual / cross-staff deductions [${toYMD_PHT_fromTS(
-                  periodStartTS
-                )} — ${toYMD_PHT_fromTS(periodEndTS)}]`,
+                notes: `Payroll manual / cross-staff deductions [${toYMD_PHT_fromTS(periodStartTS)} — ${toYMD_PHT_fromTS(periodEndTS)}]`,
                 shiftId: null,
                 source: `payroll_run:${id}`,
                 payrollRunId: id,
@@ -1398,9 +1387,8 @@ export default function RunPayroll({
             }
           }
         } else {
-          // per staff only (Standard Net Pay posting)
-          // Net Pay already includes Additions and Deductions
-          txBatch.set(doc(collection(db, "transactions")), {
+          // per staff
+          pendingTransactions.push({
             item: "Expenses",
             expenseType: "Salary",
             expenseStaffId: m.staffUid,
@@ -1409,11 +1397,7 @@ export default function RunPayroll({
             quantity: 1,
             price: netPay,
             total: netPay,
-            notes: `Payroll [${toYMD_PHT_fromTS(
-              periodStartTS
-            )} — ${toYMD_PHT_fromTS(periodEndTS)}] | Gross: ${peso(
-              m.grossPay
-            )} | Adds: ${peso(m.additionTotal)} | Net: ${peso(netPay)}`,
+            notes: `Payroll [${toYMD_PHT_fromTS(periodStartTS)} — ${toYMD_PHT_fromTS(periodEndTS)}] | Gross: ${peso(m.grossPay)} | Adds: ${peso(m.additionTotal)} | Net: ${peso(netPay)}`,
             shiftId: null,
             source: `payroll_run:${id}`,
             payrollRunId: id,
@@ -1439,6 +1423,18 @@ export default function RunPayroll({
             crossStaffTotal,
           net: runTotals.net + netPay,
         };
+      }
+
+      // --- BATCH GENERATE IDS AND COMMIT PENDING TRANSACTIONS ---
+      if (pendingTransactions.length > 0) {
+        updateBusy(`Generating IDs for ${pendingTransactions.length} expenses...`);
+        const expIds = await generateBatchIds("expenses", "EXP", pendingTransactions.length);
+
+        pendingTransactions.forEach((tx, idx) => {
+          const newRef = doc(collection(db, "transactions"));
+          tx.displayId = expIds[idx];
+          txBatch.set(newRef, tx);
+        });
       }
 
       updateBusy("Updating run status...");

@@ -17,6 +17,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase";
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
+import { generateDisplayId } from "../utils/idGenerator";
 
 function formatPeso(n) {
   const val = Number(n || 0);
@@ -212,8 +213,10 @@ export default function AdminDebtLookupDialog({ open, onClose, presetCustomer, s
 
     try {
       if (mode === "add") {
+        const displayId = await generateDisplayId("transactions", "TX");
         await addDoc(collection(db, "transactions"), {
           ...payload,
+          displayId,
           isEdited: false,
           addedByAdmin: true,
           createdAt: serverTimestamp(),

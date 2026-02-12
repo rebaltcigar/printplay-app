@@ -51,7 +51,9 @@ import {
   deleteDoc,
   limit,
   startAfter,
+
 } from "firebase/firestore";
+import { generateDisplayId } from "../utils/idGenerator";
 import { db } from "../firebase";
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 import LoadingScreen from "./common/LoadingScreen"; // NEW IMPORT
@@ -463,7 +465,9 @@ export default function ExpenseManagement({ user, showSnackbar }) {
     const selectedStaff = staffOptions.find((s) => s.id === formStaffId) || null;
 
     // 1. Create the base document
+    const displayId = await generateDisplayId("expenses", "EXP");
     const expenseDoc = {
+      displayId,
       item: "Expenses",
       expenseType: formType,
       expenseStaffId: selectedStaff ? selectedStaff.id : null,
@@ -966,7 +970,8 @@ export default function ExpenseManagement({ user, showSnackbar }) {
             <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>
-                  <TableCell>Date / Time</TableCell>
+                  <TableCell>ID</TableCell>
+                  <TableCell>Date</TableCell>
                   <TableCell>Item</TableCell>
                   <TableCell align="right">Qty</TableCell>
                   <TableCell align="right">Price</TableCell>
@@ -991,6 +996,9 @@ export default function ExpenseManagement({ user, showSnackbar }) {
                 ) : (
                   filteredRows.map((r) => (
                     <TableRow key={r.id} hover selected={!!r.isDeleted}>
+                      <TableCell sx={{ fontFamily: 'monospace' }}>
+                        {r.displayId || r.id.slice(-6).toUpperCase()}
+                      </TableCell>
                       <TableCell>{r._dateTime}</TableCell>
                       <TableCell>
                         Expenses{" "}

@@ -250,6 +250,8 @@ const Shifts = ({ showSnackbar }) => {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [shiftToDelete, setShiftToDelete] = useState(null);
 
+  const [isBackfilling, setIsBackfilling] = useState(false); // New state
+
   const [deleteMode, setDeleteMode] = useState("unlink");
 
   // Consolidation Dialog
@@ -617,6 +619,39 @@ const Shifts = ({ showSnackbar }) => {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleBackfillIDs = async () => {
+    if (!confirm("This will generate SHIFT-XXXX IDs for all shifts that are missing them. Continue?")) return;
+    setIsBackfilling(true);
+    try {
+      const q = query(collection(db, "shifts"));
+      const snap = await getDocs(q);
+      let count = 0;
+      // Process sequentially to ensure order (though order depends on query, roughly)
+      // To keep them chronological, we should sort by startTime
+      const sortedDocs = snap.docs.sort((a, b) => {
+        const tA = a.data().startTime?.seconds || 0;
+        const tB = b.data().startTime?.seconds || 0;
+        return tA - tB;
+      });
+
+      for (const d of sortedDocs) {
+        const data = d.data();
+        if (!data.displayId) {
+          const newId = await generateDisplayId("shifts", "SHIFT");
+          await updateDoc(d.ref, { displayId: newId });
+          count++;
+        }
+      }
+      showSnackbar?.(`Backfilled IDs for ${count} shifts.`, 'success');
+    } catch (e) {
+      console.error("Backfill failed:", e);
+      showSnackbar?.("Backfill failed. Check console.", 'error');
+    } finally {
+      setIsBackfilling(false);
+    }
   };
 
   const handleAddShift = async () => {
@@ -827,6 +862,14 @@ const Shifts = ({ showSnackbar }) => {
             <Button variant="outlined" onClick={handleExportToCSV} disabled={filteredShifts.length === 0}>
               Export CSV
             </Button>
+            <Button
+              variant="outlined"
+              color="warning"
+              onClick={handleBackfillIDs}
+              disabled={isBackfilling}
+            >
+              {isBackfilling ? "Fixing..." : "Fix Missing IDs"}
+            </Button>
             <Button variant="contained" startIcon={<AddIcon />} onClick={() => setAddOpen(true)}>
               Add Shift
             </Button>
@@ -915,6 +958,7 @@ const Shifts = ({ showSnackbar }) => {
           <Table size={isMobile ? "small" : "medium"} stickyHeader>
             <TableHead>
               <TableRow>
+                <TableCell sx={{ whiteSpace: "nowrap" }}>ID</TableCell>
                 <TableCell sx={{ whiteSpace: "nowrap" }}>Date</TableCell>
                 <TableCell sx={{ display: { xs: "none", sm: "table-cell" } }}>Shift</TableCell>
                 <TableCell>Staff</TableCell>
@@ -958,6 +1002,9 @@ const Shifts = ({ showSnackbar }) => {
                       setViewingShift(s);
                     }}
                   >
+                    <TableCell sx={{ whiteSpace: "nowrap", fontFamily: "monospace" }}>
+                      {s.displayId || s.id.slice(-6)}
+                    </TableCell>
                     <TableCell sx={{ whiteSpace: "nowrap" }}>
                       {isActiveRow && (
                         <Tooltip title="Active shift">
@@ -976,9 +1023,6 @@ const Shifts = ({ showSnackbar }) => {
                         </Tooltip>
                       )}
                       {s.startTime ? new Date(s.startTime.seconds * 1000).toLocaleDateString() : "N/A"}
-                      <Typography variant="caption" display="block" color="text.secondary" sx={{ fontSize: "0.7rem" }}>
-                        {s.displayId || s.id.slice(-6)}
-                      </Typography>
                       <Box sx={{ display: { xs: "block", sm: "none" } }}>
                         <Chip size="small" label={s.shiftPeriod || "—"} sx={{ mt: 0.5, fontSize: 10 }} variant="outlined" />
                       </Box>
@@ -1052,7 +1096,7 @@ const Shifts = ({ showSnackbar }) => {
             </TableBody>
             <TableFooter>
               <TableRow sx={{ "& > *": { fontWeight: "bold" } }}>
-                <TableCell colSpan={isMobile ? 2 : 3}>Totals</TableCell>
+                <TableCell colSpan={isMobile ? 3 : 4}>Totals</TableCell>
                 <TableCell align="right">{fmtPeso(grand.sales)}</TableCell>
                 <TableCell align="right">{fmtPeso(grand.expenses)}</TableCell>
                 <TableCell align="right">{fmtPeso(grand.system)}</TableCell>
@@ -1100,6 +1144,7 @@ const Shifts = ({ showSnackbar }) => {
           <Table size="small" stickyHeader>
             <TableHead>
               <TableRow>
+                <TableCell>ID</TableCell>
                 <TableCell>Date</TableCell>
                 <TableCell sx={{ pl: { xs: 1, sm: 2 } }}>Shift</TableCell>
                 <TableCell>Staff</TableCell>
@@ -1128,6 +1173,9 @@ const Shifts = ({ showSnackbar }) => {
                       setViewingShift(s);
                     }}
                   >
+                    <TableCell sx={{ fontFamily: "monospace" }}>
+                      {s.displayId || s.id.slice(-6)}
+                    </TableCell>
                     <TableCell>
                       {isActiveRow && (
                         <Tooltip title="Active shift">
@@ -1146,9 +1194,6 @@ const Shifts = ({ showSnackbar }) => {
                         </Tooltip>
                       )}
                       {s.startTime ? new Date(s.startTime.seconds * 1000).toLocaleDateString() : "N/A"}
-                      <Typography variant="caption" display="block" color="text.secondary" sx={{ fontSize: "0.7rem" }}>
-                        {s.displayId || s.id.slice(-6)}
-                      </Typography>
                     </TableCell>
                     <TableCell sx={{ pl: { xs: 1, sm: 2 }, whiteSpace: "nowrap" }}>{s.shiftPeriod}</TableCell>
                     <TableCell sx={{ maxWidth: 220 }}><Typography noWrap>{userMap[s.staffEmail] || s.staffEmail}</Typography></TableCell>
@@ -1176,7 +1221,7 @@ const Shifts = ({ showSnackbar }) => {
                 );
               })}
               <TableRow>
-                <TableCell colSpan={3}><strong>Totals</strong></TableCell>
+                <TableCell colSpan={4}><strong>Totals</strong></TableCell>
                 <TableCell align="right"><strong>{fmtPeso(grand.pcRental)}</strong></TableCell>
                 {serviceNames.map((h) => (<TableCell key={h} align="right"><strong>{fmtPeso(perServiceTotals[h] || 0)}</strong></TableCell>))}
                 <TableCell align="right"><strong>{fmtPeso(grand.sales || 0)}</strong></TableCell>

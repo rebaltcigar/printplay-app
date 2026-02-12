@@ -29,6 +29,7 @@ import {
   collection,
   serverTimestamp,
 } from "firebase/firestore";
+import { generateDisplayId } from "./utils/idGenerator";
 
 import darkTheme from "./theme";
 
@@ -155,7 +156,10 @@ export default function App() {
     }
 
     // Create shift
+    // Create shift
+    const displayId = await generateDisplayId("shifts", "SHIFT");
     const shiftData = {
+      displayId,
       staffEmail: cred.user.email,
       shiftPeriod,
       startTime: serverTimestamp(),
