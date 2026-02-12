@@ -32,6 +32,9 @@ export default function Settings({ user, showSnackbar, isActive = true }) {
                 {/* Expense Types */}
                 <Route path="expensetypes" element={<ExpenseSettings showSnackbar={showSnackbar} />} />
 
+                {/* ID System */}
+                <Route path="ids" element={<StoreSettings section="ids" user={user} showSnackbar={showSnackbar} />} />
+
                 {/* Data Core */}
                 <Route path="datacore" element={<DataAggregator showSnackbar={showSnackbar} />} />
 

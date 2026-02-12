@@ -58,7 +58,7 @@ export default function ReportsLayout({ children }) {
                             <ListItemButton
                                 key={item.id}
                                 selected={active}
-                                onClick={() => navigate(item.path)}
+                                onClick={() => navigate(`/admin/reports/${item.path}`)}
                             >
                                 <ListItemIcon sx={{ minWidth: 40, color: active ? 'primary.main' : 'inherit' }}>
                                     {item.icon}

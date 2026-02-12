@@ -250,7 +250,7 @@ const Shifts = ({ showSnackbar }) => {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [shiftToDelete, setShiftToDelete] = useState(null);
 
-  const [isBackfilling, setIsBackfilling] = useState(false); // New state
+
 
   const [deleteMode, setDeleteMode] = useState("unlink");
 
@@ -622,37 +622,7 @@ const Shifts = ({ showSnackbar }) => {
     URL.revokeObjectURL(url);
   };
 
-  const handleBackfillIDs = async () => {
-    if (!confirm("This will generate SHIFT-XXXX IDs for all shifts that are missing them. Continue?")) return;
-    setIsBackfilling(true);
-    try {
-      const q = query(collection(db, "shifts"));
-      const snap = await getDocs(q);
-      let count = 0;
-      // Process sequentially to ensure order (though order depends on query, roughly)
-      // To keep them chronological, we should sort by startTime
-      const sortedDocs = snap.docs.sort((a, b) => {
-        const tA = a.data().startTime?.seconds || 0;
-        const tB = b.data().startTime?.seconds || 0;
-        return tA - tB;
-      });
 
-      for (const d of sortedDocs) {
-        const data = d.data();
-        if (!data.displayId) {
-          const newId = await generateDisplayId("shifts", "SHIFT");
-          await updateDoc(d.ref, { displayId: newId });
-          count++;
-        }
-      }
-      showSnackbar?.(`Backfilled IDs for ${count} shifts.`, 'success');
-    } catch (e) {
-      console.error("Backfill failed:", e);
-      showSnackbar?.("Backfill failed. Check console.", 'error');
-    } finally {
-      setIsBackfilling(false);
-    }
-  };
 
   const handleAddShift = async () => {
     try {
@@ -862,14 +832,7 @@ const Shifts = ({ showSnackbar }) => {
             <Button variant="outlined" onClick={handleExportToCSV} disabled={filteredShifts.length === 0}>
               Export CSV
             </Button>
-            <Button
-              variant="outlined"
-              color="warning"
-              onClick={handleBackfillIDs}
-              disabled={isBackfilling}
-            >
-              {isBackfilling ? "Fixing..." : "Fix Missing IDs"}
-            </Button>
+
             <Button variant="contained" startIcon={<AddIcon />} onClick={() => setAddOpen(true)}>
               Add Shift
             </Button>

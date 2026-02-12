@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.9] - 2026-02-13
+
+### Added
+- **Pagination Loading Bars**: Added top-aligned `LinearProgress` indicators to the Transaction table (both Web and Mobile) to provide visual feedback during background data fetching.
+- **"Load More" Button**: Implemented a "Load More" button at the bottom of the Transaction list for efficient navigation of large datasets in both Web and Mobile views.
+- **Settings Loading State**: Added a loading indicator to Store Settings to improve user feedback during long-running tasks like shift ID backfilling.
+
+### Changed
+- **Loading Screen Aesthetics**: Enhanced the global `LoadingScreen` with a subtle glow effect (`boxShadow`) on the progress bar for a more premium, modern feel.
+- **Transaction Pagination Logic**: Refined `attachStream` and `fetchNextPage` in `Transactions.jsx` to ensure consistent loading states and better support for "All Time" views.
+
+### Fixed
+- **Transaction Loading Persistence**: Resolved the issue where the loading screen would not disappear when fetching wide date ranges in the Transactions component.
+- **Shift Audit Table Styling**: Fixed a React warning and improved text wrapping for long service names in the Shift Audit view.
+
 ## [0.1.8] - 2026-02-13
 
 ### Fixed

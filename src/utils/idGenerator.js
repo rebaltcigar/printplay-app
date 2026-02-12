@@ -1,4 +1,4 @@
-import { doc, runTransaction } from "firebase/firestore";
+import { doc, runTransaction, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 
 /**
@@ -6,11 +6,26 @@ import { db } from "../firebase";
  * Uses a 'counters' collection in Firestore to maintain atomicity.
  * 
  * @param {string} counterName The name of the counter doc (e.g. 'shifts', 'payroll', 'expenses')
- * @param {string} prefix The prefix for the ID (e.g. 'SHIFT', 'PAY', 'EXP')
+ * @param {string} defaultPrefix The prefix for the ID if not found in settings
  * @param {number} padding Number of digits (default 6)
  * @returns {Promise<string>} The formatted ID
  */
-export const generateDisplayId = async (counterName, prefix = "ID", padding = 6) => {
+export const generateDisplayId = async (counterName, defaultPrefix = "ID", padding = 6) => {
+    // 1. Resolve Prefix from Settings
+    let prefix = defaultPrefix;
+    try {
+        const configRef = doc(db, 'settings', 'config');
+        const configSnap = await getDoc(configRef);
+        if (configSnap.exists()) {
+            const data = configSnap.data();
+            if (data.idPrefixes && data.idPrefixes[counterName]) {
+                prefix = data.idPrefixes[counterName];
+            }
+        }
+    } catch (e) {
+        console.warn("Failed to fetch ID prefix config, using default:", e);
+    }
+
     const counterRef = doc(db, "counters", counterName);
 
     try {
@@ -41,13 +56,28 @@ export const generateDisplayId = async (counterName, prefix = "ID", padding = 6)
  * Much more efficient for migration scripts.
  * 
  * @param {string} counterName 
- * @param {string} prefix 
+ * @param {string} defaultPrefix 
  * @param {number} count Number of IDs to reserve
  * @param {number} padding 
  * @returns {Promise<string[]>} Array of generated IDs
  */
-export const generateBatchIds = async (counterName, prefix, count, padding = 6) => {
+export const generateBatchIds = async (counterName, defaultPrefix, count, padding = 6) => {
     if (count <= 0) return [];
+
+    // 1. Resolve Prefix from Settings
+    let prefix = defaultPrefix;
+    try {
+        const configRef = doc(db, 'settings', 'config');
+        const configSnap = await getDoc(configRef);
+        if (configSnap.exists()) {
+            const data = configSnap.data();
+            if (data.idPrefixes && data.idPrefixes[counterName]) {
+                prefix = data.idPrefixes[counterName];
+            }
+        }
+    } catch (e) {
+        console.warn("Failed to fetch ID prefix config, using default:", e);
+    }
 
     const counterRef = doc(db, "counters", counterName);
 

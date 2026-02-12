@@ -123,7 +123,7 @@ export default function ShiftAudit() {
                                                 />
                                             ) : "-"}
                                         </TableCell>
-                                        <TableCell sx={{ maxWidth: 200 }} noWrap>
+                                        <TableCell sx={{ maxWidth: 200, whiteSpace: "nowrap" }}>
                                             {s.endNote || s.notes || "-"}
                                         </TableCell>
                                     </TableRow>

@@ -340,7 +340,7 @@ export default function AdminDashboard({ user, onLogout }) {
         <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
           <Routes>
             <Route index element={<AdminHome user={user} showSnackbar={showSnackbar} />} />
-            <Route path="reports" element={
+            <Route path="reports/*" element={
               <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
                 <Reports isActive={true} />
               </Box>
@@ -385,7 +385,7 @@ export default function AdminDashboard({ user, onLogout }) {
                 <Payroll showSnackbar={showSnackbar} />
               </Box>
             } />
-            <Route path="settings" element={
+            <Route path="settings/*" element={
               <Box sx={{ p: 0, height: '100%', overflow: 'hidden' }}>
                 <Settings user={user} showSnackbar={showSnackbar} isActive={true} />
               </Box>

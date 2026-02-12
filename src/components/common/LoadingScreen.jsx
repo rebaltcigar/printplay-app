@@ -28,10 +28,15 @@ export default function LoadingScreen({ message = "Loading...", overlay = false 
         <Box sx={sxProps}>
             <Box sx={{ width: '100%', maxWidth: 300, textAlign: 'center' }}>
                 <LinearProgress
+                    variant="indeterminate"
                     sx={{
                         height: 6,
                         borderRadius: 3,
-                        bgcolor: 'rgba(255,255,255,0.1)'
+                        bgcolor: 'rgba(255,255,255,0.1)',
+                        '& .MuiLinearProgress-bar': {
+                            borderRadius: 3,
+                            boxShadow: (theme) => `0 0 10px ${theme.palette.primary.main}`
+                        }
                     }}
                 />
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 2, fontWeight: 500, letterSpacing: 0.5 }}>

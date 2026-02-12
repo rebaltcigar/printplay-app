@@ -30,7 +30,9 @@ import {
   Collapse,
   useMediaQuery,
   useTheme,
-  Chip, // Added for Order # display
+  Chip,
+  LinearProgress,
+  CircularProgress,
 } from "@mui/material";
 import DownloadIcon from "@mui/icons-material/Download";
 import ClearAllIcon from "@mui/icons-material/ClearAll";
@@ -296,9 +298,9 @@ const Transactions = ({ showSnackbar }) => {
 
     if (mode === "all" || isWideRange) {
       // PAGINATED MODE (One-time fetch)
-      setLiveMode("archive");
+      setLiveMode(mode === "all" ? "all" : "archive");
       setTx([]); // Clear current
-      await fetchNextPage(true);
+      await fetchNextPage(true, mode === "all");
       setInitLoading(false); // Stop loading
     } else {
       // LIVE MODE (Snapshot)
@@ -325,7 +327,7 @@ const Transactions = ({ showSnackbar }) => {
     }
   };
 
-  const fetchNextPage = async (isReset = false) => {
+  const fetchNextPage = async (isReset = false, forceAll = false) => {
     setLoadingMore(true);
     try {
       let constraints = [
@@ -333,10 +335,8 @@ const Transactions = ({ showSnackbar }) => {
         limit(50)
       ];
 
-      // Date Constraints (unless "all time" explicit mode, but even then limit is good)
-      // If liveMode is 'archive' and NOT 'all', we respect dates?
-      // Actually 'all' just means "Ignore Dates".
-      if (liveMode !== "all" && liveMode !== "archive_all") { // Custom logic
+      // Date Constraints
+      if (!forceAll && liveMode !== "all" && liveMode !== "archive_all") {
         const s = new Date(start); s.setHours(0, 0, 0, 0);
         const e = new Date(end); e.setHours(23, 59, 59, 999);
         constraints.push(where("timestamp", ">=", s));
@@ -482,72 +482,7 @@ const Transactions = ({ showSnackbar }) => {
     attachStream("month");
   };
 
-  const handleBackfillTransactions = async () => {
-    if (!window.confirm("This will generate TX-XXXXXX (for sales) and EXP-XXXXXX (for expenses) IDs for ALL transactions that are missing them. Continue?")) return;
 
-    setLoading(true);
-    try {
-      const q = query(collection(db, "transactions"));
-      const snap = await getDocs(q);
-
-      const missingExpenses = [];
-      const missingTx = [];
-
-      snap.docs.forEach(d => {
-        const data = d.data();
-        if (!data.displayId) {
-          if (data.item === 'Expenses') missingExpenses.push(d);
-          else missingTx.push(d);
-        }
-      });
-
-      let countExp = 0;
-      let countTx = 0;
-
-      // 1. Sort by timestamp for chronological assignment
-      const sortFn = (a, b) => (a.data().timestamp?.seconds || 0) - (b.data().timestamp?.seconds || 0);
-      missingExpenses.sort(sortFn);
-      missingTx.sort(sortFn);
-
-      // 2. Generate Batches
-      const expIds = await generateBatchIds("expenses", "EXP", missingExpenses.length);
-      const txIds = await generateBatchIds("transactions", "TX", missingTx.length);
-
-      const batchLimit = 500;
-      let batch = writeBatch(db);
-      let ops = 0;
-
-      const commitBatch = async () => {
-        await batch.commit();
-        batch = writeBatch(db);
-        ops = 0;
-      };
-
-      // 3. Assign IDs
-      for (let i = 0; i < missingExpenses.length; i++) {
-        batch.update(missingExpenses[i].ref, { displayId: expIds[i] });
-        ops++;
-        countExp++;
-        if (ops >= batchLimit) await commitBatch();
-      }
-
-      for (let i = 0; i < missingTx.length; i++) {
-        batch.update(missingTx[i].ref, { displayId: txIds[i] });
-        ops++;
-        countTx++;
-        if (ops >= batchLimit) await commitBatch();
-      }
-
-      if (ops > 0) await commitBatch();
-
-      showSnackbar?.(`Backfilled: ${countExp} Expenses, ${countTx} Transactions.`, 'success');
-    } catch (e) {
-      console.error("Backfill failed:", e);
-      showSnackbar?.("Backfill failed. Check console.", 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   /* ---- Reprint Handler (NEW) ---- */
   const handleReprint = async (row) => {
@@ -1147,8 +1082,21 @@ const Transactions = ({ showSnackbar }) => {
           minWidth: 0,
           display: { xs: "none", sm: "flex" }, // unchanged on web
           flexDirection: "column",
+          position: "relative"
         }}
       >
+        {loadingMore && (
+          <LinearProgress
+            sx={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              height: 3,
+              zIndex: 10
+            }}
+          />
+        )}
         {/* Bulk toolbar */}
         <Box
           sx={{ p: 2, pt: 1, display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}
@@ -1156,16 +1104,7 @@ const Transactions = ({ showSnackbar }) => {
           <Typography variant="subtitle1" fontWeight={600}>
             All Transactions
           </Typography>
-          {selectedIds.length === 0 && (
-            <Button
-              variant="outlined"
-              color="secondary"
-              size="small"
-              onClick={handleBackfillTransactions}
-            >
-              Fix Missing IDs
-            </Button>
-          )}
+
           <Box sx={{ flexGrow: 1 }} />
           {selectedIds.length > 0 && (
             <>
@@ -1339,6 +1278,20 @@ const Transactions = ({ showSnackbar }) => {
             </TableBody>
           </Table>
         </TableContainer>
+
+        {hasMore && liveMode !== "month" && (
+          <Box sx={{ p: 2, display: 'flex', justifyContent: 'center', borderTop: '1px solid', borderColor: 'divider' }}>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => fetchNextPage(false, liveMode === "all")}
+              disabled={loadingMore}
+              startIcon={loadingMore ? <CircularProgress size={16} color="inherit" /> : null}
+            >
+              {loadingMore ? "Loading..." : "Load More Transactions"}
+            </Button>
+          </Box>
+        )}
       </Paper>
 
       {/* --------- MOBILE LAYOUT --------- */}
@@ -1630,6 +1583,18 @@ const Transactions = ({ showSnackbar }) => {
             zIndex: 0,
           }}
         >
+          {loadingMore && (
+            <LinearProgress
+              sx={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                height: 3,
+                zIndex: 10
+              }}
+            />
+          )}
           <Box sx={{ p: 1, pt: 1, display: "flex", alignItems: "center", gap: 1 }}>
             <Typography variant="subtitle1" fontWeight={600}>
               Transactions
@@ -1771,6 +1736,20 @@ const Transactions = ({ showSnackbar }) => {
               </TableBody>
             </Table>
           </TableContainer>
+
+          {hasMore && liveMode !== "month" && (
+            <Box sx={{ p: 2, display: 'flex', justifyContent: 'center', borderTop: '1px solid', borderColor: 'divider' }}>
+              <Button
+                variant="outlined"
+                fullWidth
+                onClick={() => fetchNextPage(false, liveMode === "all")}
+                disabled={loadingMore}
+                startIcon={loadingMore ? <CircularProgress size={16} color="inherit" /> : null}
+              >
+                {loadingMore ? "Loading..." : "Load More"}
+              </Button>
+            </Box>
+          )}
         </Paper>
       </Box>
 
