@@ -6,14 +6,31 @@ import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import PieChartIcon from '@mui/icons-material/PieChart';
 import PeopleIcon from '@mui/icons-material/People';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'; // For Audit/Shifts
+import { useNavigate, useLocation } from 'react-router-dom';
 
-export default function ReportsLayout({ currentView, onViewChange, children }) {
+export default function ReportsLayout({ children }) {
+    const navigate = useNavigate();
+    const location = useLocation();
+
     const menuItems = [
-        { id: 'financial', label: 'Financials (P&L)', icon: <AttachMoneyIcon /> },
-        { id: 'sales', label: 'Sales Analysis', icon: <PieChartIcon /> },
-        { id: 'staff', label: 'Staff Performance', icon: <PeopleIcon /> },
-        { id: 'shifts', label: 'Shift Audit', icon: <ReceiptLongIcon /> },
+        { id: 'financial', path: '', label: 'Financials (P&L)', icon: <AttachMoneyIcon /> }, // default
+        { id: 'sales', path: 'sales', label: 'Sales Analysis', icon: <PieChartIcon /> },
+        { id: 'staff', path: 'staff', label: 'Staff Performance', icon: <PeopleIcon /> },
+        { id: 'shifts', path: 'shifts', label: 'Shift Audit', icon: <ReceiptLongIcon /> },
     ];
+
+    const isSelected = (itemPath) => {
+        // Simple logic: if path is empty, check if we are exactly at /admin/reports or /admin/reports/
+        // otherwise check if pathname ends with itemPath
+        // A robust way:
+        const currentPath = location.pathname.replace(/\/$/, ''); // remove trailing slash
+        const basePath = '/admin/reports';
+
+        if (itemPath === '') {
+            return currentPath === basePath;
+        }
+        return currentPath === `${basePath}/${itemPath}`;
+    };
 
     return (
         <Box sx={{ display: 'flex', height: '100%', overflow: 'hidden', bgcolor: 'background.default' }}>
@@ -35,24 +52,27 @@ export default function ReportsLayout({ currentView, onViewChange, children }) {
                 </Box>
                 <Divider />
                 <List sx={{ pt: 0 }}>
-                    {menuItems.map((item) => (
-                        <ListItemButton
-                            key={item.id}
-                            selected={currentView === item.id}
-                            onClick={() => onViewChange(item.id)}
-                        >
-                            <ListItemIcon sx={{ minWidth: 40, color: currentView === item.id ? 'primary.main' : 'inherit' }}>
-                                {item.icon}
-                            </ListItemIcon>
-                            <ListItemText
-                                primary={item.label}
-                                primaryTypographyProps={{
-                                    fontWeight: currentView === item.id ? 600 : 400,
-                                    color: currentView === item.id ? 'primary.main' : 'inherit'
-                                }}
-                            />
-                        </ListItemButton>
-                    ))}
+                    {menuItems.map((item) => {
+                        const active = isSelected(item.path);
+                        return (
+                            <ListItemButton
+                                key={item.id}
+                                selected={active}
+                                onClick={() => navigate(item.path)}
+                            >
+                                <ListItemIcon sx={{ minWidth: 40, color: active ? 'primary.main' : 'inherit' }}>
+                                    {item.icon}
+                                </ListItemIcon>
+                                <ListItemText
+                                    primary={item.label}
+                                    primaryTypographyProps={{
+                                        fontWeight: active ? 600 : 400,
+                                        color: active ? 'primary.main' : 'inherit'
+                                    }}
+                                />
+                            </ListItemButton>
+                        );
+                    })}
                 </List>
             </Paper>
 

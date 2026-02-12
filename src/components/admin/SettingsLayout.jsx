@@ -8,17 +8,31 @@ import DescriptionIcon from "@mui/icons-material/Description";
 import LockIcon from "@mui/icons-material/Lock";
 import StorageIcon from "@mui/icons-material/Storage";
 import ListAltIcon from "@mui/icons-material/ListAlt";
+import { useNavigate, useLocation } from 'react-router-dom';
 
-export default function SettingsLayout({ currentView, onViewChange, children }) {
+export default function SettingsLayout({ children }) {
+    const navigate = useNavigate();
+    const location = useLocation();
+
     const menuItems = [
-        { id: 'store', label: 'Store Profile', icon: <StoreIcon /> },
-        { id: 'pos', label: 'POS Config', icon: <PointOfSaleIcon /> },
-        { id: 'receipt', label: 'Receipt Settings', icon: <DescriptionIcon /> },
-        { id: 'security', label: 'Security & Biometrics', icon: <LockIcon /> },
-        { id: 'hardware', label: 'Hardware & Hotkeys', icon: <ComputerIcon /> },
-        { id: 'expensetypes', label: 'Expense Types', icon: <ListAltIcon /> },
-        { id: 'datacore', label: 'Data Core', icon: <StorageIcon /> },
+        { id: 'store', path: '', label: 'Store Profile', icon: <StoreIcon /> },
+        { id: 'pos', path: 'pos', label: 'POS Config', icon: <PointOfSaleIcon /> },
+        { id: 'receipt', path: 'receipt', label: 'Receipt Settings', icon: <DescriptionIcon /> },
+        { id: 'security', path: 'security', label: 'Security & Biometrics', icon: <LockIcon /> },
+        { id: 'hardware', path: 'hardware', label: 'Hardware & Hotkeys', icon: <ComputerIcon /> },
+        { id: 'expensetypes', path: 'expensetypes', label: 'Expense Types', icon: <ListAltIcon /> },
+        { id: 'datacore', path: 'datacore', label: 'Data Core', icon: <StorageIcon /> },
     ];
+
+    const isSelected = (itemPath) => {
+        const currentPath = location.pathname.replace(/\/$/, '');
+        const basePath = '/admin/settings';
+
+        if (itemPath === '') {
+            return currentPath === basePath;
+        }
+        return currentPath === `${basePath}/${itemPath}`;
+    };
 
     return (
         <Box sx={{ display: 'flex', height: '100%', overflow: 'hidden', bgcolor: 'background.default' }}>
@@ -40,25 +54,28 @@ export default function SettingsLayout({ currentView, onViewChange, children }) 
                 </Box>
                 <Divider />
                 <List sx={{ pt: 0, overflowY: 'auto', flex: 1 }}>
-                    {menuItems.map((item) => (
-                        <ListItemButton
-                            key={item.id}
-                            selected={currentView === item.id}
-                            onClick={() => onViewChange(item.id)}
-                        >
-                            <ListItemIcon sx={{ minWidth: 40, color: currentView === item.id ? 'primary.main' : 'inherit' }}>
-                                {item.icon}
-                            </ListItemIcon>
-                            <ListItemText
-                                primary={item.label}
-                                primaryTypographyProps={{
-                                    fontWeight: currentView === item.id ? 600 : 400,
-                                    fontSize: '0.875rem',
-                                    color: currentView === item.id ? 'primary.main' : 'inherit'
-                                }}
-                            />
-                        </ListItemButton>
-                    ))}
+                    {menuItems.map((item) => {
+                        const active = isSelected(item.path);
+                        return (
+                            <ListItemButton
+                                key={item.id}
+                                selected={active}
+                                onClick={() => navigate(item.path)}
+                            >
+                                <ListItemIcon sx={{ minWidth: 40, color: active ? 'primary.main' : 'inherit' }}>
+                                    {item.icon}
+                                </ListItemIcon>
+                                <ListItemText
+                                    primary={item.label}
+                                    primaryTypographyProps={{
+                                        fontWeight: active ? 600 : 400,
+                                        fontSize: '0.875rem',
+                                        color: active ? 'primary.main' : 'inherit'
+                                    }}
+                                />
+                            </ListItemButton>
+                        );
+                    })}
                 </List>
             </Paper>
 

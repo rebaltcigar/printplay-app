@@ -63,7 +63,7 @@ import { SimpleReceipt } from "./SimpleReceipt"; // RESTORED
 import { normalizeReceiptData, safePrint } from "../utils/receiptHelper";
 import { ServiceInvoice } from "./ServiceInvoice"; // NEW
 import { normalizeInvoiceData, safePrintInvoice } from "../utils/invoiceHelper"; // NEW
-import AdminLoading from './common/AdminLoading';
+import LoadingScreen from './common/LoadingScreen';
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 
 const startOfMonth = (d = new Date()) =>
@@ -872,7 +872,7 @@ const Transactions = ({ showSnackbar }) => {
 
   /* ---- VIEW ---- */
   if (initLoading) {
-    return <AdminLoading message="Loading transactions..." />;
+    return <LoadingScreen message="Loading transactions..." />;
   }
 
   return (

@@ -9,7 +9,7 @@ import {
   Autocomplete, Snackbar, Alert, Backdrop, CircularProgress // ADDED
 } from '@mui/material';
 import html2canvas from 'html2canvas';
-import { useTheme, createTheme, ThemeProvider } from '@mui/material/styles';
+import { useTheme } from '@mui/material/styles';
 
 // Icons
 import MenuIcon from '@mui/icons-material/Menu';
@@ -64,53 +64,16 @@ import { generateOrderNumber, createOrderObject } from '../utils/orderService';
 import { normalizeReceiptData, safePrint } from '../utils/receiptHelper'; // ADDED
 import { ServiceInvoice } from './ServiceInvoice'; // ADDED
 import { normalizeInvoiceData, safePrintInvoice } from '../utils/invoiceHelper'; // ADDED
+import LoadingScreen from './common/LoadingScreen';
 
 import logo from '/icon.ico';
 
 // Helper for currency display
 const currency = (num) => `₱${Number(num || 0).toFixed(2)}`;
 
-// --- DEFINING THEME LOCALLY TO FORCE DARK/RED COLORS ---
-const darkTheme = createTheme({
-  palette: {
-    mode: 'dark',
-    primary: {
-      main: '#d10000', // Red Primary
-    },
-    background: {
-      default: '#000000', // Pure Black Background
-      paper: '#0a0a0a',   // Off-Black Panels
-    },
-    text: {
-      primary: '#ffffff',
-      secondary: '#e0e0e0',
-    },
-    divider: '#333333',
-  },
-  typography: {
-    fontFamily: "'Inter', sans-serif",
-  },
-  components: {
-    MuiPaper: {
-      styleOverrides: {
-        root: {
-          backgroundImage: 'none', // Remove default MUI gradients
-        },
-      },
-    },
-    MuiAppBar: {
-      styleOverrides: {
-        root: {
-          backgroundColor: '#0a0a0a',
-          backgroundImage: 'none',
-          borderBottom: '1px solid #333333',
-        }
-      }
-    }
-  },
-});
 
-function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
+
+function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
@@ -191,7 +154,7 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
           setPrintOrder(null);
           setPrintShiftData(null);
           isPrintingLocal.current = false;
-        }, "Dashboard");
+        }, "POS");
       }, 500);
     }
     return () => clearTimeout(timer);
@@ -1021,6 +984,7 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
   // =========================================================================
   // RENDER
   // =========================================================================
+  if (!user || !activeShiftId) return <LoadingScreen message="Initializing POS..." />;
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', bgcolor: 'background.default', color: 'text.primary' }}>
 
@@ -1886,22 +1850,10 @@ function DashboardContent({ user, userRole, activeShiftId, shiftPeriod }) {
       </Snackbar>
 
       {/* GLOBAL LOADING BACKDROP */}
-      <Backdrop
-        sx={{ color: '#fff', zIndex: (theme) => theme.zIndex.drawer + 9999 }}
-        open={isLoading}
-      >
-        <CircularProgress color="inherit" />
-      </Backdrop>
+      {isLoading && <LoadingScreen overlay={true} message="Processing..." />}
     </Box >
   );
 }
 
 // Wrapper to export
-export default function Dashboard(props) {
-  return (
-    <ThemeProvider theme={darkTheme}>
-      <CssBaseline />
-      <DashboardContent {...props} />
-    </ThemeProvider>
-  );
-}
+export default POSContent;

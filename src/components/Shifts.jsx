@@ -42,7 +42,7 @@ import EditIcon from "@mui/icons-material/Edit";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow"; // Resume icon
 
 import AssignmentTurnedInIcon from "@mui/icons-material/AssignmentTurnedIn"; // Consolidation Icon
-import AdminLoading from "./common/AdminLoading"; // NEW IMPORT
+import LoadingScreen from "./common/LoadingScreen"; // NEW IMPORT
 import ShiftDetailView from "./ShiftDetailView";
 import ShiftConsolidationDialog from "./ShiftConsolidationDialog";
 import { db } from "../firebase";
@@ -735,7 +735,7 @@ const Shifts = ({ showSnackbar }) => {
   }
 
   if (loading) {
-    return <AdminLoading message="Loading shifts..." />;
+    return <LoadingScreen message="Loading shifts..." />;
   }
 
   return (

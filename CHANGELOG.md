@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.7] - 2026-02-12
+
+### Added
+- **Universal Dark Theme**: Implemented a consistent dark theme across the entire application, including POS, Admin Dashboard, and all dialogs, utilizing a centralized `src/theme.js` configuration.
+- **Universal Loading Screen**: Replaced the legacy `AdminLoading` component with a universal `LoadingScreen` that supports both initial page loads and overlay/busy states.
+- **Client-Side Routing**: Implemented `react-router-dom` for robust client-side routing, establishing a clear separation between the Staff POS (`/pos`) and Admin Console (`/admin`).
+
+### Changed
+- **POS Integration**: The POS interface now correctly uses the global theme and `LoadingScreen` for a seamless user experience.
+- **Staff Workflow**: Staff members without an active shift are now correctly prompted to "Start Shift" on the login screen instead of entering a redirect loop.
+
+### Fixed
+- **Infinite Redirect Loop**: Resolved a critical issue where staff users without an active shift were trapped in a redirect loop between `/pos` and `/login`.
+- **Theme Consistency**: Fixed an issue where the POS interface was falling back to a lighter theme; it now correctly inherits the intended "darker/red" manufacturing color scheme.
+
 ## [0.1.6] - 2026-02-12
 
 ### Added

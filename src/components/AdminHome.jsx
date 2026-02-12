@@ -21,7 +21,7 @@ import StaffLeaderboardPanel from "./dashboard/StaffLeaderboardPanel";
 import SalesBreakdownPanel from "./dashboard/SalesBreakdownPanel";
 import ExpenseBreakdownPanel from "./dashboard/ExpenseBreakdownPanel";
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
-import AdminLoading from "./common/AdminLoading"; // NEW IMPORT
+import LoadingScreen from "./common/LoadingScreen"; // NEW IMPORT
 
 
 /* small helper */
@@ -302,7 +302,7 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
 
   /* ============ RENDER ============ */
   if (analyticsLoading) {
-    return <AdminLoading message="Analyzing business data..." />;
+    return <LoadingScreen message="Analyzing business data..." />;
   }
 
   return (

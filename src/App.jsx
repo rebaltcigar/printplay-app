@@ -7,9 +7,12 @@ import {
   Typography,
 } from "@mui/material";
 
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+
 import Login from "./components/Login.jsx";
-import Dashboard from "./components/Dashboard.jsx";
+import POS from "./components/POS.jsx";
 import AdminDashboard from "./components/AdminDashboard.jsx";
+import LoadingScreen from "./components/common/LoadingScreen";
 import { AnalyticsProvider } from "./contexts/AnalyticsContext";
 
 import { auth, db } from "./firebase";
@@ -27,16 +30,7 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 
-// ------------------ THEME ------------------
-const darkTheme = createTheme({
-  palette: {
-    mode: "dark",
-    primary: { main: "#f44336" },
-  },
-  typography: {
-    fontFamily: "'Inter', sans-serif",
-  },
-});
+import darkTheme from "./theme";
 
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
@@ -213,52 +207,92 @@ export default function App() {
   };
 
   // ------------------ RENDER ------------------
-  const renderContent = () => {
-    if (isLoading) return <Typography>Loading...</Typography>;
 
-    if (currentUser && userRole === "superadmin") {
-      return (
-        <Box sx={{ width: "100%", height: "100%", display: "flex" }}>
-          <AnalyticsProvider>
-            <AdminDashboard user={currentUser} onLogout={handleAdminLogout} />
-          </AnalyticsProvider>
-        </Box>
-      );
-    }
-
-    if (currentUser && userRole === "staff" && activeShiftId) {
-      return (
-        <Dashboard
-          user={currentUser}
-          userRole={userRole} // <--- ADDED THIS PROP
-          activeShiftId={activeShiftId}
-          shiftPeriod={activeShiftPeriod}
-        />
-      );
-    }
-
-    // Default: Login screen
+  if (isLoading) {
     return (
-      <Login onLogin={handleStaffLogin} onAdminLogin={handleAdminLogin} />
+      <ThemeProvider theme={darkTheme}>
+        <CssBaseline />
+        <Box sx={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.default' }}>
+          {/* We can use the existing AdminLoading or just a spinner */}
+          <Typography variant="h6" color="text.secondary">Initializing Application...</Typography>
+        </Box>
+      </ThemeProvider>
     );
-  };
+  }
 
   return (
     <ThemeProvider theme={darkTheme}>
       <CssBaseline />
-      <Box
-        sx={{
-          minHeight: "100vh",
-          width: "100%",
-          display: "flex",
-          justifyContent:
-            currentUser && userRole === "superadmin" ? "flex-start" : "center",
-          alignItems:
-            currentUser && userRole === "superadmin" ? "stretch" : "center",
-        }}
-      >
-        {renderContent()}
-      </Box>
+      <BrowserRouter>
+        <Routes>
+          {/* Public / Login Route */}
+          <Route path="/login" element={
+            !currentUser || (userRole === 'staff' && !activeShiftId) ? (
+              <Box
+                sx={{
+                  minHeight: "100vh",
+                  width: "100%",
+                  display: "flex",
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+              >
+                <Login onLogin={handleStaffLogin} onAdminLogin={handleAdminLogin} />
+              </Box>
+            ) : (
+              // If already logged in (and valid state), redirect based on role
+              <Navigate to={userRole === 'superadmin' ? "/admin" : "/pos"} replace />
+            )
+          } />
+
+          {/* Staff POS Route */}
+          <Route path="/pos" element={
+            currentUser && userRole === 'staff' ? (
+              activeShiftId ? (
+                <POS
+                  user={currentUser}
+                  userRole={userRole}
+                  activeShiftId={activeShiftId}
+                  shiftPeriod={activeShiftPeriod}
+                />
+              ) : (
+                // Staff logged in but no active shift? Should logically be on login screen to start shift
+                // OR we could have a "Shift Start" intermediate page. 
+                // For now, existing logic was: if no active shift, show Login.
+                // So if we are here, and no active shift, we redirect to login to start one.
+                <Navigate to="/login" replace />
+              )
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          } />
+
+          {/* Admin Routes */}
+          <Route path="/admin/*" element={
+            currentUser && userRole === 'superadmin' ? (
+              <Box sx={{ width: "100%", height: "100%", display: "flex" }}>
+                <AnalyticsProvider>
+                  <AdminDashboard user={currentUser} onLogout={handleAdminLogout} />
+                </AnalyticsProvider>
+              </Box>
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          } />
+
+          {/* Root Redirect */}
+          <Route path="/" element={
+            currentUser ? (
+              <Navigate to={userRole === 'superadmin' ? "/admin" : "/pos"} replace />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          } />
+
+          {/* Catch all */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
     </ThemeProvider>
   );
 }

@@ -54,7 +54,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase";
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
-import AdminLoading from "./common/AdminLoading"; // NEW IMPORT
+import LoadingScreen from "./common/LoadingScreen"; // NEW IMPORT
 
 const EXPENSE_TYPES_ALL = [
   "Supplies",
@@ -822,7 +822,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
 
   /** ===================== RENDER ===================== */
   if (loading) {
-    return <AdminLoading message="Loading expenses..." />;
+    return <LoadingScreen message="Loading expenses..." />;
   }
 
   return (
@@ -1337,20 +1337,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
       </Dialog>
 
       {/* ================== GLOBAL LOADER ================== */}
-      <Backdrop
-        open={busy}
-        sx={{
-          zIndex: (theme) => theme.zIndex.modal + 20,
-          display: "flex",
-          flexDirection: "column",
-          gap: 1.5,
-        }}
-      >
-        <CircularProgress />
-        <Typography sx={{ color: "#fff" }}>
-          {busyMsg || "Working... please wait"}
-        </Typography>
-      </Backdrop>
+      {busy && <LoadingScreen overlay={true} message={busyMsg || "Working..."} />}
 
       <ConfirmationReasonDialog
         open={confirmDialog.open}
