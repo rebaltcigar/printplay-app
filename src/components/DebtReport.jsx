@@ -34,6 +34,7 @@ import {
 import { db } from "../firebase";
 import AdminDebtLookupDialog from "../components/AdminDebtLookupDialog";
 import ConfirmationReasonDialog from "../components/ConfirmationReasonDialog";
+import PageHeader from "./common/PageHeader";
 
 function toDateOnlyString(d) {
   const dt = new Date(d);
@@ -283,40 +284,40 @@ export default function DebtManagement({ user, showSnackbar }) {
   }, [rows]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <Box sx={{ p: 2, height: "100%", display: "flex", flexDirection: "column", gap: 2 }}>
-      {/* Header / Filters */}
-      <Paper sx={{ p: 2 }}>
-        <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems="center">
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            Debts (Admin)
-          </Typography>
-          <TextField
-            type="date"
-            label="Start"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            InputLabelProps={{ shrink: true }}
-            size="small"
-          />
-          <TextField
-            type="date"
-            label="End"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            InputLabelProps={{ shrink: true }}
-            size="small"
-          />
-          <Button
-            variant="contained"
-            onClick={() => {
-              setPresetCustomer(null);
-              setDlgOpen(true);
-            }}
-          >
-            Open Debt Manager
-          </Button>
-        </Stack>
-      </Paper>
+    <Box sx={{ p: 3, height: "100%", display: "flex", flexDirection: "column", gap: 2 }}>
+      <PageHeader
+        title="Debt Management"
+        subtitle="Track customer balances and record payments."
+        actions={
+          <Stack direction="row" spacing={2} alignItems="center">
+            <TextField
+              type="date"
+              label="Start"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              size="small"
+            />
+            <TextField
+              type="date"
+              label="End"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              size="small"
+            />
+            <Button
+              variant="contained"
+              onClick={() => {
+                setPresetCustomer(null);
+                setDlgOpen(true);
+              }}
+            >
+              Open Debt Manager
+            </Button>
+          </Stack>
+        }
+      />
 
       {/* Content: two columns — Balances + Transactions */}
       <Box

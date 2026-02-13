@@ -20,6 +20,7 @@ import { db } from '../../firebase';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { getRange, fmtPeso } from '../../utils/analytics';
 import dayjs from 'dayjs';
+import PageHeader from '../common/PageHeader';
 
 export default function ShiftAudit() {
     const [preset, setPreset] = useState("thisMonth");
@@ -46,24 +47,26 @@ export default function ShiftAudit() {
 
     return (
         <Box sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <Paper sx={{ p: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
-                <Typography variant="h6">Shift Audit (Drawer Log)</Typography>
-                <Box sx={{ flexGrow: 1 }} />
-                <FormControl size="small" sx={{ minWidth: 150 }}>
-                    <InputLabel>Period</InputLabel>
-                    <Select value={preset} label="Period" onChange={(e) => setPreset(e.target.value)}>
-                        <MenuItem value="today">Today</MenuItem>
-                        <MenuItem value="yesterday">Yesterday</MenuItem>
-                        <MenuItem value="thisWeek">This Week</MenuItem>
-                        <MenuItem value="lastWeek">Last Week</MenuItem>
-                        <MenuItem value="thisMonth">This Month</MenuItem>
-                        <MenuItem value="lastMonth">Last Month</MenuItem>
-                        <MenuItem value="thisYear">This Year</MenuItem>
-                        <MenuItem value="lastYear">Last Year</MenuItem>
-                        <MenuItem value="allTime">All Time</MenuItem>
-                    </Select>
-                </FormControl>
-            </Paper>
+            <PageHeader
+                title="Shift Audit"
+                subtitle="Track drawer discrepancies and cash handling across shifts."
+                actions={
+                    <FormControl size="small" sx={{ minWidth: 150 }}>
+                        <InputLabel>Period</InputLabel>
+                        <Select value={preset} label="Period" onChange={(e) => setPreset(e.target.value)}>
+                            <MenuItem value="today">Today</MenuItem>
+                            <MenuItem value="yesterday">Yesterday</MenuItem>
+                            <MenuItem value="thisWeek">This Week</MenuItem>
+                            <MenuItem value="lastWeek">Last Week</MenuItem>
+                            <MenuItem value="thisMonth">This Month</MenuItem>
+                            <MenuItem value="lastMonth">Last Month</MenuItem>
+                            <MenuItem value="thisYear">This Year</MenuItem>
+                            <MenuItem value="lastYear">Last Year</MenuItem>
+                            <MenuItem value="allTime">All Time</MenuItem>
+                        </Select>
+                    </FormControl>
+                }
+            />
 
             <TableContainer component={Paper} sx={{ flex: 1 }}>
                 <Table stickyHeader size="small">

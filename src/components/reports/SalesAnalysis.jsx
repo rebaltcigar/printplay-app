@@ -35,6 +35,7 @@ import {
     fmtPeso
 } from '../../utils/analytics';
 import { useAnalytics } from '../../contexts/AnalyticsContext';
+import PageHeader from '../common/PageHeader';
 
 const COLORS = ["#007bff", "#28a745", "#ffc107", "#dc3545", "#6610f2", "#e83e8c", "#17a2b8"];
 
@@ -119,25 +120,26 @@ export default function SalesAnalysis() {
 
     return (
         <Box sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {/* HEADER */}
-            <Paper sx={{ p: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
-                <Typography variant="h6">Sales Analysis</Typography>
-                <Box sx={{ flexGrow: 1 }} />
-                <FormControl size="small" sx={{ minWidth: 150 }}>
-                    <InputLabel>Period</InputLabel>
-                    <Select value={preset} label="Period" onChange={(e) => setPreset(e.target.value)}>
-                        <MenuItem value="today">Today</MenuItem>
-                        <MenuItem value="yesterday">Yesterday</MenuItem>
-                        <MenuItem value="thisWeek">This Week</MenuItem>
-                        <MenuItem value="lastWeek">Last Week</MenuItem>
-                        <MenuItem value="thisMonth">This Month</MenuItem>
-                        <MenuItem value="lastMonth">Last Month</MenuItem>
-                        <MenuItem value="thisYear">This Year</MenuItem>
-                        <MenuItem value="lastYear">Last Year</MenuItem>
-                        <MenuItem value="allTime">All Time</MenuItem>
-                    </Select>
-                </FormControl>
-            </Paper>
+            <PageHeader
+                title="Sales Analysis"
+                subtitle="Detailed breakdown of top-selling items and category distribution."
+                actions={
+                    <FormControl size="small" sx={{ minWidth: 150 }}>
+                        <InputLabel>Period</InputLabel>
+                        <Select value={preset} label="Period" onChange={(e) => setPreset(e.target.value)}>
+                            <MenuItem value="today">Today</MenuItem>
+                            <MenuItem value="yesterday">Yesterday</MenuItem>
+                            <MenuItem value="thisWeek">This Week</MenuItem>
+                            <MenuItem value="lastWeek">Last Week</MenuItem>
+                            <MenuItem value="thisMonth">This Month</MenuItem>
+                            <MenuItem value="lastMonth">Last Month</MenuItem>
+                            <MenuItem value="thisYear">This Year</MenuItem>
+                            <MenuItem value="lastYear">Last Year</MenuItem>
+                            <MenuItem value="allTime">All Time</MenuItem>
+                        </Select>
+                    </FormControl>
+                }
+            />
 
             <Grid container spacing={2} sx={{ flex: 1, minHeight: 0 }}>
 

@@ -8,8 +8,9 @@ import AddIcon from '@mui/icons-material/Add';
 import HistoryIcon from '@mui/icons-material/History'; // For audits
 import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, addDoc } from 'firebase/firestore';
 import { db, auth } from '../../firebase';
-import { fmtPeso } from '../../utils/analytics'; // Ensure this exists or reimplement
+import { fmtPeso } from '../../utils/analytics';
 import { generateDisplayId } from '../../utils/idGenerator';
+import PageHeader from '../common/PageHeader';
 
 export default function InventoryManagement({ showSnackbar }) {
     const [items, setItems] = useState([]);
@@ -99,8 +100,8 @@ export default function InventoryManagement({ showSnackbar }) {
             showSnackbar?.(`Restocked ${item.serviceName}. New Cost: ${fmtPeso(newAverageCost)}`, 'success');
             setRestockDialog({ open: false, item: null });
         } catch (e) {
-            console.error(e);
-            showSnackbar?.('Restock failed', 'error');
+            console.error('Restock failed:', e);
+            showSnackbar?.('Failed to update inventory', 'error');
         }
     };
 
@@ -121,20 +122,19 @@ export default function InventoryManagement({ showSnackbar }) {
     };
 
     return (
-        <Box sx={{ p: 2 }}>
-            <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
-                <Box>
-                    <Typography variant="h5" fontWeight="bold">Inventory Management</Typography>
-                    <Typography variant="body2" color="text.secondary">
-                        Manage retail stock, supplies, and track inventory value.
-                    </Typography>
-                </Box>
-                {/* <Button variant="outlined" startIcon={<HistoryIcon />}>Audit Logs</Button> */}
-            </Stack>
+        <Box sx={{ p: 3 }}>
+            <PageHeader
+                title="Inventory Management"
+                subtitle="Track stock levels and perform restocking for retail goods."
+                actions={
+                    <Button variant="contained" startIcon={<HistoryIcon />} onClick={() => { }}>
+                        Audit History
+                    </Button>
+                }
+            />
 
-            {/* KPI Cards (Optional Future) */}
             <Grid container spacing={2} sx={{ mb: 3 }}>
-                <Grid size={{ xs: 12, sm: 4 }}>
+                <Grid item xs={12} sm={4}>
                     <Card sx={{ p: 2 }}>
                         <Typography variant="caption" color="text.secondary">Total Inventory Value</Typography>
                         <Typography variant="h6" fontWeight="bold">
@@ -262,6 +262,6 @@ export default function InventoryManagement({ showSnackbar }) {
                     <Button variant="contained" onClick={handlePerformRestock}>Confirm Restock</Button>
                 </DialogActions>
             </Dialog>
-        </Box>
+        </Box >
     );
 }

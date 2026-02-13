@@ -13,7 +13,8 @@ import {
     collection, addDoc, updateDoc, deleteDoc, doc, query, where, onSnapshot, serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../../firebase';
-import ConfirmationReasonDialog from '../ConfirmationReasonDialog'; // Assuming relative path, adjust if needed
+import ConfirmationReasonDialog from '../ConfirmationReasonDialog';
+import PageHeader from '../common/PageHeader';
 
 export default function ExpenseSettings({ showSnackbar }) {
     const [types, setTypes] = useState([]);
@@ -121,17 +122,15 @@ export default function ExpenseSettings({ showSnackbar }) {
 
     return (
         <Box sx={{ maxWidth: 800, mx: 'auto', p: 2 }}>
-            <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
-                <Box>
-                    <Typography variant="h5" fontWeight="bold">Expense Configuration</Typography>
-                    <Typography variant="body2" color="text.secondary">
-                        Define types of obligations (OPEX) and assets (CAPEX).
-                    </Typography>
-                </Box>
-                <Button variant="contained" startIcon={<AddIcon />} onClick={() => handleOpen()}>
-                    Add Type
-                </Button>
-            </Stack>
+            <PageHeader
+                title="Expense Configuration"
+                subtitle="Define types of obligations (OPEX) and assets (CAPEX)."
+                actions={
+                    <Button variant="contained" startIcon={<AddIcon />} onClick={() => handleOpen()}>
+                        Add Type
+                    </Button>
+                }
+            />
 
             <Card>
                 <TableContainer>

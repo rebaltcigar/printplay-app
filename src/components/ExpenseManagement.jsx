@@ -56,7 +56,8 @@ import {
 import { generateDisplayId } from "../utils/idGenerator";
 import { db } from "../firebase";
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
-import LoadingScreen from "./common/LoadingScreen"; // NEW IMPORT
+import LoadingScreen from "./common/LoadingScreen";
+import PageHeader from "./common/PageHeader";
 
 const EXPENSE_TYPES_ALL = [
   "Supplies",
@@ -837,8 +838,13 @@ export default function ExpenseManagement({ user, showSnackbar }) {
         height: "100%",
         width: "100%",
         minHeight: 0,
+        p: 3
       }}
     >
+      <PageHeader
+        title="Expense Management"
+        subtitle="Record and track business expenditures."
+      />
       {/* --- DESKTOP / WEB --- */}
       <Box
         sx={{

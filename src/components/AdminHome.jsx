@@ -11,8 +11,10 @@ import { useAnalytics } from "../contexts/AnalyticsContext"; // Context hook
 import {
   buildServiceMap,
   txAmount,
+  classifyTx,
   buildTrendSeries,
   fmtPeso,
+  normalize,
 } from "../utils/analytics";
 
 import TrendSection from "./dashboard/TrendSection";
@@ -21,7 +23,8 @@ import StaffLeaderboardPanel from "./dashboard/StaffLeaderboardPanel";
 import SalesBreakdownPanel from "./dashboard/SalesBreakdownPanel";
 import ExpenseBreakdownPanel from "./dashboard/ExpenseBreakdownPanel";
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
-import LoadingScreen from "./common/LoadingScreen"; // NEW IMPORT
+import LoadingScreen from "./common/LoadingScreen";
+import PageHeader from "./common/PageHeader";
 
 
 /* small helper */
@@ -147,6 +150,9 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
 
     // Sum Transactions
     filteredTxValid.forEach((t) => {
+      const itemName = normalize(t.item);
+      const isPcRental = itemName === 'pc rental';
+
       const amt = txAmount(t);
       const isExp =
         t.category === "credit" ||
@@ -162,7 +168,7 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
       } else if (isDebtPaid) {
         debtsCollected += amt;
       } else if (isExp) {
-        // check capital
+        // ... (keep capital check)
         const isCap =
           (t.expenseType || "").toLowerCase().includes("asset") ||
           (t.notes || "").toLowerCase().includes("capex") ||
@@ -172,7 +178,10 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
           expenses += Math.abs(amt);
         }
       } else {
-        sales += amt;
+        // EXCLUDE PC Rental from transaction sum as it comes from shift.pcRentalTotal
+        if (!isPcRental) {
+          sales += amt;
+        }
       }
     });
 
@@ -205,46 +214,33 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
   const leaderboardRows = useMemo(() => {
     const map = {};
 
-    // We iterate over the shifts currently in scope (filtered by date range)
+    // 1. Initialize with PC Rental from shifts
     shiftsScope.forEach(shift => {
-      // Use staffEmail from shift, fallback to 'Unknown'
       const staff = shift.staffEmail || "Unknown";
-
-      // Calculate total sales for this shift
-      // cashTotal usually represents the declared cash, but we want the actual calculated sales ideally.
-      // 'totalSales' field might exist if we verified Shift schema.
-      // If not, we might need to rely on what shiftsScope provides.
-      // Assuming 'expectedCash' ~ Sales + StartingCash + Inputs - Expenses
-      // Better to check if we store 'totalSales' or similar in shift doc.
-      // If not, we might fail if we don't have it.
-      // Let's assume we want to sum 'expectedCash' - 'startingCash' - 'cashInputs' + 'expenses'???
-      // Actually, 'totalSales' is often stored or 'computedTotals.sales'. 
-      // Let's check what came back in shift.
-      // For now, let's look at `pcRentalTotal` + `soldItemsTotal` (if they exist).
-
-      // FALLBACK: Use the helper in AnalyticsContext that might have enriched this?
-      // No, raw shift data usually.
-
-      // Let's use `grossSales` if available, or fallback to 0.
-      // In `Shifts.jsx` it seems we compute it on the fly often.
-      // But looking at stored data in typical implementations:
-      // We'll trust `salesTotal` or `grossSales` if present. 
-      // If not present, we might need to rely on the *transactions* but filtered by shift ID.
-      // BUT user specifically asked: "pull the sales data of each shift they are assigned to based on the date filters"
-
-      // Calculated in EndShiftDialog as: servicesTotal + pcRentalTotal
-      const services = Number(shift.servicesTotal || 0);
-      const rental = Number(shift.pcRentalTotal || 0);
-      const sales = services + rental;
-
       if (!map[staff]) map[staff] = 0;
-      map[staff] += sales;
+      map[staff] += Number(shift.pcRentalTotal || 0);
+    });
+
+    // 2. Add service sales from live transactions
+    filteredTxValid.forEach(tx => {
+      const staff = tx.staffEmail || "Unknown";
+      const itemName = normalize(tx.item);
+      const isPcRental = itemName === 'pc rental';
+
+      const cls = classifyTx(tx, serviceMap);
+      if (cls === 'sale' || cls === 'unknownSale') {
+        // EXCLUDE PC Rental from transaction sum as it comes from shift.pcRentalTotal
+        if (!isPcRental) {
+          if (!map[staff]) map[staff] = 0;
+          map[staff] += txAmount(tx);
+        }
+      }
     });
 
     return Object.entries(map)
       .map(([staff, sales]) => ({ staff, sales }))
       .sort((a, b) => b.sales - a.sales);
-  }, [shiftsScope]);
+  }, [shiftsScope, filteredTxValid, serviceMap]);
 
 
   /* ============ ACTIONS ============ */
@@ -273,30 +269,51 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
 
   const handleSoftDeleteTx = async (tx) => {
     if (!tx?.id) return;
-    try {
-      const ref = doc(db, "transactions", tx.id);
-      await updateDoc(ref, {
-        isDeleted: true,
-        deletedAt: serverTimestamp(),
-        deletedBy: user.email,
-      });
-      showSnackbar("Transaction deleted (soft)", "success");
-    } catch (err) {
-      console.error(err);
-      showSnackbar("Failed to delete", "error");
-    }
+    setConfirmDialog({
+      open: true,
+      title: "Delete Transaction? (Soft)",
+      message: `Are you sure you want to delete ${tx.item} (${currency(txAmount(tx))})? This will preserve the record for audit but exclude it from totals.`,
+      requireReason: true,
+      confirmText: "Delete",
+      confirmColor: "error",
+      onConfirm: async (reason) => {
+        try {
+          const ref = doc(db, "transactions", tx.id);
+          await updateDoc(ref, {
+            isDeleted: true,
+            deletedAt: serverTimestamp(),
+            deletedBy: user.email,
+            deleteReason: reason,
+          });
+          showSnackbar("Transaction deleted (soft)", "success");
+        } catch (err) {
+          console.error(err);
+          showSnackbar("Failed to delete", "error");
+        }
+      }
+    });
   };
 
   const handleHardDeleteTx = async (tx) => {
     if (!tx?.id) return;
-    if (!window.confirm("Are you sure you want to permanently delete this transaction? This cannot be undone.")) return;
-    try {
-      await deleteDoc(doc(db, "transactions", tx.id));
-      showSnackbar("Transaction permanently deleted", "success");
-    } catch (err) {
-      console.error(err);
-      showSnackbar("Failed to delete", "error");
-    }
+    setConfirmDialog({
+      open: true,
+      title: "PERMANENT Delete?",
+      message: `DANGER: Permanently delete ${tx.item} (${currency(txAmount(tx))})? This CANNOT be undone and will be removed from all logs.`,
+      requireReason: true,
+      confirmText: "Hard Delete",
+      confirmColor: "error",
+      onConfirm: async (reason) => {
+        try {
+          // Log the hard delete intent before doing it? (Optional, but let's just delete)
+          await deleteDoc(doc(db, "transactions", tx.id));
+          showSnackbar("Transaction permanently deleted", "success");
+        } catch (err) {
+          console.error(err);
+          showSnackbar("Failed to hard delete", "error");
+        }
+      }
+    });
   };
 
 
@@ -315,50 +332,29 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
         bgcolor: "background.default",
       }}
     >
-      {/* HEADER CONTROLS */}
-      <Box
-        sx={{
-          p: 2,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-          bgcolor: "background.paper",
-        }}
-      >
-        <Stack
-          direction={{ xs: "column", sm: "row" }}
-          spacing={2}
-          alignItems="center"
-          justifyContent="space-between"
-        >
-          <Box>
-            <Typography variant="h6" fontWeight="bold">
-              Dashboard
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              Overview & Analytics
-            </Typography>
-          </Box>
-
-          <Stack direction="row" spacing={2} alignItems="center">
-
-            <Box sx={{ flexGrow: 1 }} />
-
-            <FormControl size="small" sx={{ minWidth: 160 }}>
-              <InputLabel>Time Range</InputLabel>
-              <Select value={preset} onChange={(e) => setPreset(e.target.value)}>
-                <MenuItem value="today">Today</MenuItem>
-                <MenuItem value="yesterday">Yesterday</MenuItem>
-                <MenuItem value="thisWeek">This Week</MenuItem>
-                <MenuItem value="lastWeek">Last Week</MenuItem>
-                <MenuItem value="thisMonth">This Month</MenuItem>
-                <MenuItem value="lastMonth">Last Month</MenuItem>
-                <MenuItem value="thisYear">This Year</MenuItem>
-                <MenuItem value="lastYear">Last Year</MenuItem>
-                <MenuItem value="allTime">All Time</MenuItem>
-              </Select>
-            </FormControl>
-          </Stack>
-        </Stack>
+      <Box sx={{ p: 3, pb: 0 }}>
+        <PageHeader
+          title="Dashboard"
+          subtitle="Overview & Analytics"
+          actions={
+            <Stack direction="row" spacing={2} alignItems="center">
+              <FormControl size="small" sx={{ minWidth: 160 }}>
+                <InputLabel>Time Range</InputLabel>
+                <Select value={preset} onChange={(e) => setPreset(e.target.value)}>
+                  <MenuItem value="today">Today</MenuItem>
+                  <MenuItem value="yesterday">Yesterday</MenuItem>
+                  <MenuItem value="thisWeek">This Week</MenuItem>
+                  <MenuItem value="lastWeek">Last Week</MenuItem>
+                  <MenuItem value="thisMonth">This Month</MenuItem>
+                  <MenuItem value="lastMonth">Last Month</MenuItem>
+                  <MenuItem value="thisYear">This Year</MenuItem>
+                  <MenuItem value="lastYear">Last Year</MenuItem>
+                  <MenuItem value="allTime">All Time</MenuItem>
+                </Select>
+              </FormControl>
+            </Stack>
+          }
+        />
       </Box>
 
       {/* SCROLLABLE CONTENT */}

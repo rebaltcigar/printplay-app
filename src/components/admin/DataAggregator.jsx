@@ -8,6 +8,7 @@ import {
 } from 'firebase/firestore';
 import dayjs from 'dayjs';
 import { txAmount } from '../../utils/analytics';
+import PageHeader from '../common/PageHeader';
 
 export default function DataAggregator({ showSnackbar }) {
     const [processing, setProcessing] = useState(false);
@@ -158,31 +159,35 @@ export default function DataAggregator({ showSnackbar }) {
     };
 
     return (
-        <Paper sx={{ p: 3 }}>
-            <Typography variant="h6" gutterBottom>Data Aggregation</Typography>
-            <Typography variant="body2" color="text.secondary" paragraph>
-                Re-scan all historical transactions and generate optimized daily statistics.
-                Run this when you deploy new reports or if stats seem out of sync.
-            </Typography>
+        <Box sx={{ p: 3 }}>
+            <PageHeader
+                title="Data Core"
+                subtitle="Re-scan historical transactions and rebuild daily statistics."
+            />
+            <Paper sx={{ p: 3 }}>
+                <Typography variant="body2" color="text.secondary" paragraph>
+                    Run this when you deploy new reports or if stats seem out of sync.
+                </Typography>
 
-            {error && (
-                <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>
-            )}
+                {error && (
+                    <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>
+                )}
 
-            {processing && (
-                <Stack spacing={1} sx={{ mb: 2 }}>
-                    <Typography variant="caption">{status}</Typography>
-                    <LinearProgress />
-                </Stack>
-            )}
+                {processing && (
+                    <Stack spacing={1} sx={{ mb: 2 }}>
+                        <Typography variant="caption">{status}</Typography>
+                        <LinearProgress />
+                    </Stack>
+                )}
 
-            <Button
-                variant="contained"
-                onClick={startAggregation}
-                disabled={processing}
-            >
-                {processing ? "Running..." : "Regenerate Aggregates"}
-            </Button>
-        </Paper>
+                <Button
+                    variant="contained"
+                    onClick={startAggregation}
+                    disabled={processing}
+                >
+                    {processing ? "Running..." : "Regenerate Aggregates"}
+                </Button>
+            </Paper>
+        </Box >
     );
 }

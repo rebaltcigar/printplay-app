@@ -45,6 +45,7 @@ import AssignmentTurnedInIcon from "@mui/icons-material/AssignmentTurnedIn"; // 
 import LoadingScreen from "./common/LoadingScreen"; // NEW IMPORT
 import ShiftDetailView from "./ShiftDetailView";
 import ShiftConsolidationDialog from "./ShiftConsolidationDialog";
+import PageHeader from "./common/PageHeader";
 import { db } from "../firebase";
 import {
   collection,
@@ -758,16 +759,31 @@ const Shifts = ({ showSnackbar }) => {
   }
 
   return (
-    <Box sx={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
+    <Box sx={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", p: 3 }}>
+      <PageHeader
+        title="Shifts"
+        subtitle="Monitor and manage staff shifts and cash reconciliation."
+        actions={
+          <Stack direction="row" spacing={1} alignItems="center">
+            {!isMobile && (
+              <ToggleButtonGroup value={view} exclusive onChange={(e, v) => v && setView(v)} size="small">
+                <ToggleButton value="summary">Summary</ToggleButton>
+                <ToggleButton value="detailed">Detailed</ToggleButton>
+              </ToggleButtonGroup>
+            )}
+            <Button variant="contained" startIcon={<AddIcon />} onClick={() => setAddOpen(true)} size="small">
+              Add Shift
+            </Button>
+            <Button variant="outlined" onClick={handleExportToCSV} disabled={filteredShifts.length === 0} size="small">
+              Export CSV
+            </Button>
+          </Stack>
+        }
+      />
+
       {!isMobile ? (
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2, flexWrap: "wrap" }}>
-          <ToggleButtonGroup value={view} exclusive onChange={(e, v) => v && setView(v)} size="small">
-            <ToggleButton value="summary">Summary</ToggleButton>
-            <ToggleButton value="detailed">Detailed</ToggleButton>
-          </ToggleButtonGroup>
-          <Box sx={{ flexGrow: 1 }} />
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
-            {/* --- UPDATED: Filter Controls --- */}
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 3, flexWrap: "wrap", p: 2, bgcolor: "background.paper", borderRadius: 1, border: "1px solid", borderColor: "divider" }}>
+          <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap alignItems="center" sx={{ width: "100%" }}>
             <FormControl size="small" sx={{ minWidth: 150 }}>
               <InputLabel>Staff</InputLabel>
               <Select
@@ -816,7 +832,7 @@ const Shifts = ({ showSnackbar }) => {
                 ))}
               </Select>
             </FormControl>
-            <FormGroup row sx={{ pl: 1 }}>
+            <FormGroup row>
               <FormControlLabel
                 control={<Checkbox checked={filterShowShort} onChange={(e) => setFilterShowShort(e.target.checked)} size="small" />}
                 label={<Typography variant="body2">Short</Typography>}
@@ -826,7 +842,7 @@ const Shifts = ({ showSnackbar }) => {
                 label={<Typography variant="body2">Overage</Typography>}
               />
             </FormGroup>
-            {/* --- End of Updated Filters --- */}
+            <Box sx={{ flexGrow: 1 }} />
             <TextField
               label="Start Date"
               type="date"
@@ -843,29 +859,11 @@ const Shifts = ({ showSnackbar }) => {
               onChange={(e) => setEndDate(e.target.value)}
               InputLabelProps={{ shrink: true }}
             />
-            <Button variant="outlined" onClick={handleExportToCSV} disabled={filteredShifts.length === 0}>
-              Export CSV
-            </Button>
-
-            <Button variant="contained" startIcon={<AddIcon />} onClick={() => setAddOpen(true)}>
-              Add Shift
-            </Button>
           </Stack>
         </Box>
       ) : (
         <Card elevation={0} sx={{ p: 2.25, mb: 1.5, border: (t) => `1px solid ${t.palette.divider}`, borderRadius: 2 }}>
           <Stack spacing={1.75}>
-            <ToggleButtonGroup
-              value={view}
-              exclusive
-              onChange={(e, v) => v && setView(v)}
-              size="small"
-              fullWidth
-              sx={{ "& .MuiToggleButton-root": { py: 1.1, fontWeight: 600 } }}
-            >
-              <ToggleButton value="summary">Summary</ToggleButton>
-              <ToggleButton value="detailed">Detailed</ToggleButton>
-            </ToggleButtonGroup>
             {/* --- UPDATED: Mobile Filter Controls --- */}
             <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1.75 }}>
               <FormControl size="small" fullWidth>
@@ -917,14 +915,6 @@ const Shifts = ({ showSnackbar }) => {
             <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1.75 }}>
               <TextField label="Start" type="date" size="small" value={startDate} onChange={(e) => setStartDate(e.target.value)} InputLabelProps={{ shrink: true }} />
               <TextField label="End" type="date" size="small" value={endDate} onChange={(e) => setEndDate(e.target.value)} InputLabelProps={{ shrink: true }} />
-            </Box>
-            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1.75 }}>
-              <Button variant="contained" startIcon={<AddIcon />} onClick={() => setAddOpen(true)} size="small" sx={{ py: 1.1 }}>
-                Add
-              </Button>
-              <Button variant="outlined" onClick={handleExportToCSV} disabled={filteredShifts.length === 0} size="small" sx={{ py: 1.1 }}>
-                Export
-              </Button>
             </Box>
           </Stack>
         </Card>

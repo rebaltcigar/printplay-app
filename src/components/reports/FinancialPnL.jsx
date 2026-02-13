@@ -46,6 +46,7 @@ import {
 import dayjs from 'dayjs';
 import { useAnalytics } from '../../contexts/AnalyticsContext';
 import { safePrint } from '../../utils/receiptHelper';
+import PageHeader from '../common/PageHeader';
 
 export default function FinancialPnL() {
     // --- Context ---
@@ -161,26 +162,29 @@ export default function FinancialPnL() {
     return (
         <Box sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column', gap: 2 }}>
 
-            {/* FILTER BAR */}
-            <Paper sx={{ p: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
-                <Typography variant="h6">Financial P&L</Typography>
-                <Box sx={{ flexGrow: 1 }} />
-                <FormControl size="small" sx={{ minWidth: 150 }}>
-                    <InputLabel>Period</InputLabel>
-                    <Select value={preset} label="Period" onChange={(e) => setPreset(e.target.value)}>
-                        <MenuItem value="today">Today</MenuItem>
-                        <MenuItem value="yesterday">Yesterday</MenuItem>
-                        <MenuItem value="thisWeek">This Week</MenuItem>
-                        <MenuItem value="lastWeek">Last Week</MenuItem>
-                        <MenuItem value="thisMonth">This Month</MenuItem>
-                        <MenuItem value="lastMonth">Last Month</MenuItem>
-                        <MenuItem value="thisYear">This Year</MenuItem>
-                        <MenuItem value="lastYear">Last Year</MenuItem>
-                        <MenuItem value="allTime">All Time</MenuItem>
-                    </Select>
-                </FormControl>
-                <Button variant="outlined" onClick={() => safePrint(null, "FinancialPnL")}>Print / PDF</Button>
-            </Paper>
+            <PageHeader
+                title="Profit & Loss"
+                subtitle="Financial performance summary across revenue, COGS, and expenses."
+                actions={
+                    <Stack direction="row" spacing={2} alignItems="center">
+                        <FormControl size="small" sx={{ minWidth: 150 }}>
+                            <InputLabel>Date Range</InputLabel>
+                            <Select
+                                value={preset}
+                                label="Date Range"
+                                onChange={(e) => setPreset(e.target.value)}
+                            >
+                                <MenuItem value="thisMonth">This Month</MenuItem>
+                                <MenuItem value="lastMonth">Last Month</MenuItem>
+                                <MenuItem value="last90">Last 90 Days</MenuItem>
+                                <MenuItem value="ytd">Year to Date (YTD)</MenuItem>
+                                <MenuItem value="all">All Time</MenuItem>
+                            </Select>
+                        </FormControl>
+                        <Button variant="outlined" onClick={() => safePrint(null, "FinancialPnL")}>Print / PDF</Button>
+                    </Stack>
+                }
+            />
 
             {/* SUMMARY CARDS */}
             <Grid container spacing={2}>

@@ -11,6 +11,7 @@ import {
 import { db, storage } from '../../firebase';
 import { registerFingerprint } from '../../utils/biometrics';
 import { generateDisplayId, generateBatchIds } from '../../utils/idGenerator';
+import PageHeader from '../common/PageHeader';
 
 export default function StoreSettings({ section, showSnackbar, user }) {
     const [loading, setLoading] = useState(false);
@@ -216,10 +217,7 @@ export default function StoreSettings({ section, showSnackbar, user }) {
     };
 
     const renderHeader = (title, subtitle) => (
-        <Box sx={{ mb: 3 }}>
-            <Typography variant="h5" fontWeight="bold">{title}</Typography>
-            <Typography variant="body2" color="text.secondary">{subtitle}</Typography>
-        </Box>
+        <PageHeader title={title} subtitle={subtitle} />
     );
 
     const handleFileChange = async (e) => {

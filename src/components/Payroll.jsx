@@ -4,7 +4,8 @@ import { Box, Card, Tab, Tabs } from "@mui/material";
 import RunPayroll from "../components/payroll/RunPayroll";
 import AllRuns from "../components/payroll/AllRuns";
 import PayRates from "../components/payroll/PayRates";
-import PaystubDialog from "../components/Paystub"; // same as your old import
+import PaystubDialog from "../components/Paystub";
+import PageHeader from "./common/PageHeader";
 
 export default function Payroll({ user, showSnackbar }) {
   const [tab, setTab] = useState(0);
@@ -20,7 +21,11 @@ export default function Payroll({ user, showSnackbar }) {
   };
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 2, p: 3 }}>
+      <PageHeader
+        title="Payroll"
+        subtitle="Manage staff salaries, pay rates, and generate paystubs."
+      />
       <Card sx={{ p: 1 }}>
         <Tabs
           value={tab}

@@ -16,6 +16,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../../firebase';
 import ConfirmationReasonDialog from '../ConfirmationReasonDialog';
+import PageHeader from '../common/PageHeader';
 
 export default function ServiceCatalog({ showSnackbar }) {
   const [items, setItems] = useState([]);
@@ -258,25 +259,25 @@ export default function ServiceCatalog({ showSnackbar }) {
 
   return (
     <Box>
-      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
-        <Box>
-          <Typography variant="h5">Service & Product Catalog</Typography>
-          <Typography variant="body2" color="text.secondary">Manage items available for sale in POS.</Typography>
-        </Box>
-        <Stack direction="row" spacing={1}>
-          {editOrderMode ? (
-            <>
-              <Button variant="outlined" onClick={() => setEditOrderMode(false)}>Cancel</Button>
-              <Button variant="contained" startIcon={<SaveIcon />} onClick={saveReorder}>Save Order</Button>
-            </>
-          ) : (
-            <>
-              <Button variant="outlined" startIcon={<ReorderIcon />} onClick={startReorder}>Edit Order</Button>
-              <Button variant="contained" startIcon={<AddIcon />} onClick={resetAndOpen}>Add Item</Button>
-            </>
-          )}
-        </Stack>
-      </Stack>
+      <PageHeader
+        title="Service & Product Catalog"
+        subtitle="Manage items available for sale in POS."
+        actions={
+          <Stack direction="row" spacing={1}>
+            {editOrderMode ? (
+              <>
+                <Button variant="outlined" onClick={() => setEditOrderMode(false)}>Cancel</Button>
+                <Button variant="contained" startIcon={<SaveIcon />} onClick={saveReorder}>Save Order</Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outlined" startIcon={<ReorderIcon />} onClick={startReorder}>Edit Order</Button>
+                <Button variant="contained" startIcon={<AddIcon />} onClick={resetAndOpen}>Add Item</Button>
+              </>
+            )}
+          </Stack>
+        }
+      />
 
       <Card>
         <CardContent>
@@ -416,6 +417,6 @@ export default function ServiceCatalog({ showSnackbar }) {
         confirmText={confirmDialog.confirmText}
         confirmColor={confirmDialog.confirmColor}
       />
-    </Box>
+    </Box >
   );
 }

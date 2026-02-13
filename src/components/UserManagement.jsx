@@ -12,8 +12,10 @@ import {
   TableCell,
   TableContainer,
   IconButton,
-  Tooltip
+  Tooltip,
+  Stack
 } from "@mui/material";
+import PageHeader from "./common/PageHeader";
 import FingerprintIcon from '@mui/icons-material/Fingerprint';
 import { collection, getDocs, orderBy, query, doc, updateDoc } from "firebase/firestore";
 import { db } from "../firebase";
@@ -75,12 +77,13 @@ export default function UserManagement({ showSnackbar }) {
   };
 
   return (
-    <Box sx={{ width: "100%" }}>
+    <Box sx={{ width: "100%", p: 3 }}>
+      <PageHeader
+        title="User Management"
+        subtitle="Manage staff accounts and biometric enrollment."
+      />
       {/* ----- WEB / DESKTOP ----- */}
       <Card sx={{ p: 2, display: { xs: "none", sm: "block" } }}>
-        <Typography variant="h6" gutterBottom>
-          Users
-        </Typography>
         <Divider sx={{ mb: 2 }} />
         <TableContainer component={Paper} sx={{ maxHeight: 520 }}>
           <Table stickyHeader size="small">

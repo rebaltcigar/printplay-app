@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
  
+## [0.1.11] - 2026-02-13
+
+### Added
+- **Order Management Hub**: Dedicated interface for tracking, searching, and filtering all customer orders with detailed status history.
+- **Order & Item Restoration**: Implemented a robust "Restore" capability for voided orders and individual items, including full audit logging of reasons and staff details.
+- **Cross-Component Synchronization**: Real-time sales reflection on the Dashboard's Staff Leaderboard and KPI cards using live transaction aggregation.
+- **Universal Standardized Headers**: Implemented a unified `PageHeader` component across all administrative and reporting views for a premium, consistent UI/UX.
+
+### Changed
+- **Audit Compliance**: Mandated reason tracking for all administrative deletions and edits across the Dashboard and Order Management modules.
+- **Leaderboard Logic**: Switched the Staff Leaderboard from cached shift totals to live transaction sums for immediate accuracy.
+
+### Fixed
+- **Transaction Display IDs**: Ensured newly created transactions from order edits correctly generate sequential `TX-XXXXXX` IDs for consistent shift auditing.
+- **Leaderboard PC Rental Counting**: Fixed potential double-counting of PC Rental in the dashboard by standardizing aggregation logic across all components.
+
 ## [0.1.10] - 2026-02-13
  
 ### Added

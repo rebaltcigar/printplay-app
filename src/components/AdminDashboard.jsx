@@ -58,6 +58,7 @@ import AdminHome from "./AdminHome";
 import Transactions from "./Transactions";
 import Payroll from "./Payroll";
 import Reports from "./Reports";
+import OrderManagement from "./OrderManagement";
 
 export default function AdminDashboard({ user, onLogout }) {
   // Router hooks
@@ -121,6 +122,7 @@ export default function AdminDashboard({ user, onLogout }) {
     { label: "Home", path: "", icon: <HomeIcon /> }, // Index route
     { label: "Reports", path: "reports", icon: <AssessmentIcon /> },
     { label: "Shifts", path: "shifts", icon: <AccessTimeIcon /> },
+    { label: "Orders", path: "orders", icon: <ReceiptIcon /> },
     { label: "Transactions", path: "transactions", icon: <ReceiptLongIcon /> },
     { label: "Expense Log", path: "expenses", icon: <ReceiptIcon /> },
     { label: "Debts", path: "debts", icon: <MoneyOffIcon /> },
@@ -348,6 +350,11 @@ export default function AdminDashboard({ user, onLogout }) {
             <Route path="shifts" element={
               <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
                 <Shifts showSnackbar={showSnackbar} />
+              </Box>
+            } />
+            <Route path="orders" element={
+              <Box sx={{ p: 0, height: '100%', overflow: 'hidden' }}>
+                <OrderManagement showSnackbar={showSnackbar} />
               </Box>
             } />
             <Route path="transactions" element={

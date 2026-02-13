@@ -42,10 +42,14 @@ export const normalizeInvoiceData = (order, options = {}) => {
     // 4. Timestamp
     let timestamp = new Date();
     if (isReprint && order.timestamp) {
-        if (order.timestamp.seconds) {
+        if (order.timestamp.toDate) {
+            timestamp = order.timestamp.toDate();
+        } else if (order.timestamp.seconds) {
             timestamp = new Date(order.timestamp.seconds * 1000);
         } else if (order.timestamp instanceof Date) {
             timestamp = order.timestamp;
+        } else {
+            timestamp = new Date(order.timestamp);
         }
     }
 

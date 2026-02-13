@@ -69,6 +69,7 @@ import { ServiceInvoice } from "./ServiceInvoice"; // NEW
 import { normalizeInvoiceData, safePrintInvoice } from "../utils/invoiceHelper"; // NEW
 import LoadingScreen from './common/LoadingScreen';
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
+import PageHeader from "./common/PageHeader";
 
 const startOfMonth = (d = new Date()) =>
   new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
@@ -1097,41 +1098,43 @@ const Transactions = ({ showSnackbar }) => {
             }}
           />
         )}
-        {/* Bulk toolbar */}
-        <Box
-          sx={{ p: 2, pt: 1, display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}
-        >
-          <Typography variant="subtitle1" fontWeight={600}>
-            All Transactions
-          </Typography>
-
-          <Box sx={{ flexGrow: 1 }} />
-          {selectedIds.length > 0 && (
+        <PageHeader
+          title="Transaction Log"
+          subtitle="Audit trail of all recorded sales and expenses."
+          actions={
             <>
-              <Typography variant="body2">{selectedIds.length} selected</Typography>
-              <Button size="small" variant="outlined" onClick={openBulkDateDialog}>
-                Edit Dates
-              </Button>
-              <Button size="small" variant="outlined" color="warning" onClick={bulkSoftDelete}>
-                Soft Delete Selected
-              </Button>
-              <Button size="small" variant="contained" color="error" onClick={bulkHardDelete}>
-                Hard Delete Selected
-              </Button>
-              <Button size="small" onClick={clearSelection}>
-                Clear Selection
-              </Button>
+              {selectedIds.length > 0 && (
+                <Stack direction="row" spacing={1}>
+                  <Typography variant="body2" sx={{ alignSelf: 'center', mr: 1 }}>{selectedIds.length} selected</Typography>
+                  <Button size="small" variant="outlined" onClick={openBulkDateDialog}>
+                    Edit Dates
+                  </Button>
+                  <Button size="small" variant="outlined" color="warning" onClick={bulkSoftDelete}>
+                    Soft Delete
+                  </Button>
+                  <Button size="small" variant="contained" color="error" onClick={bulkHardDelete}>
+                    Hard Delete
+                  </Button>
+                  <Button size="small" onClick={clearSelection}>
+                    Clear
+                  </Button>
+                </Stack>
+              )}
+              {selectedIds.length === 0 && (
+                <Stack direction="row" spacing={1}>
+                  <Typography variant="body2" sx={{ alignSelf: 'center', opacity: 0.7, mr: 1 }}>
+                    {rows.length.toLocaleString()} rows
+                  </Typography>
+                  {rows.length > 0 && (
+                    <Button size="small" onClick={selectAllVisible}>
+                      Select All
+                    </Button>
+                  )}
+                </Stack>
+              )}
             </>
-          )}
-          {selectedIds.length === 0 && rows.length > 0 && (
-            <Button size="small" onClick={selectAllVisible}>
-              Select All Visible
-            </Button>
-          )}
-          <Typography variant="body2" sx={{ opacity: 0.7, ml: "auto" }}>
-            {rows.length.toLocaleString()} rows
-          </Typography>
-        </Box>
+          }
+        />
 
         <TableContainer sx={{ flex: 1, minHeight: 0 }}>
           <Table size="small" stickyHeader>
