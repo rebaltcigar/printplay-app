@@ -55,7 +55,7 @@ export default function ShiftConsolidationDialog({
     );
 
     const cashTransactions = useMemo(() =>
-        transactions.filter(t => (t.paymentMethod === 'Cash' || !t.paymentMethod) && t.item !== 'Expenses'),
+        transactions.filter(t => (t.paymentMethod === 'Cash' || !t.paymentMethod) && t.item !== 'Expenses' && t.item !== 'PC Rental'),
         [transactions]
     );
 
@@ -71,7 +71,16 @@ export default function ShiftConsolidationDialog({
         [cashTransactions]
     );
 
-    const expectedCash = cashSalesTotal - expensesTotal + (Number(shift?.pcRentalTotal || 0));
+    // Calculate Non-Cash PC Rental to deduct from the Manual Input
+    const pcNonCashTotal = useMemo(() => {
+        return transactions
+            .filter(t => t.item === 'PC Rental' && (t.paymentMethod === 'GCash' || t.paymentMethod === 'Charge'))
+            .reduce((acc, t) => acc + (t.total || 0), 0);
+    }, [transactions]);
+
+    const pcRentalCash = Math.max(0, (Number(shift?.pcRentalTotal || 0) - pcNonCashTotal));
+
+    const expectedCash = cashSalesTotal - expensesTotal + pcRentalCash;
 
 
     // --- CASE 2: GCash ---
@@ -208,7 +217,7 @@ export default function ShiftConsolidationDialog({
                                 </Box>
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                                     <Typography variant="body2">PC Rental (Cash)</Typography>
-                                    <Typography variant="body2">₱{Number(shift?.pcRentalTotal || 0).toLocaleString()}</Typography>
+                                    <Typography variant="body2">₱{pcRentalCash.toLocaleString()}</Typography>
                                 </Box>
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', color: 'error.main' }}>
                                     <Typography variant="body2">Expenses (Cash)</Typography>

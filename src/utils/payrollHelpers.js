@@ -91,6 +91,20 @@ export const sumDenominations = (denoms = {}) => {
 
 /** compute shortage for a shift */
 export const shortageForShift = (shift) => {
+  // 1. New Logic: If shift has explicit totalCash saved (Shift v2)
+  if (shift?.totalCash !== undefined) {
+    // Expected Cash = (Total Cash Sales) - (Cash Expenses)
+    // Note: We assume all reported expenses are paid in CASH unless specified otherwise.
+    // If expenses are paid via GCash, they should technically not be deducted here,
+    // but current app logic treats 'expensesTotal' as a generic deduction from drawer.
+    // Ideally, we'd filter expenses by payment method too, but for now:
+    const expectedCash = Number(shift.totalCash || 0) - Number(shift.expensesTotal || 0);
+    const actualCash = sumDenominations(shift?.denominations || {});
+    const delta = expectedCash - actualCash;
+    return delta > 0 ? Number(delta.toFixed(2)) : 0;
+  }
+
+  // 2. Legacy Logic: Fallback for old shifts
   const systemTotal = Number(shift?.systemTotal || 0);
   const denomTotal = sumDenominations(shift?.denominations || {});
   const delta = systemTotal - denomTotal;

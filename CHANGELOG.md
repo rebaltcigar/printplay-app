@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
  
+## [0.1.12] - 2026-02-16
+
+### Added
+- **Migration Tool**: Added a "Fix Data" tool in the Shifts panel to retroactive calculate cash/gcash/ar totals for effective payroll shortage calculation.
+- **Universal Loader**: Implemented a full-screen loading overlay for critical actions like saving expenses.
+
+### Fixed
+- **Payroll Shortage Calculation**: Updated logic to correctly calculate "Expected Cash" by excluding GCash and PayLater transactions, ensuring accurate shortage detection.
+- **Consolidation Logic**: Fixed an issue where PC Rental transactions were double-counted in the Shift Consolidation view.
+
 ## [0.1.11] - 2026-02-13
 
 ### Added

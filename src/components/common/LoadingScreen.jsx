@@ -14,7 +14,7 @@ export default function LoadingScreen({ message = "Loading...", overlay = false 
         zIndex: overlay ? 9999 : "auto",
         transition: 'all 0.3s ease',
         ...(overlay && {
-            position: 'absolute',
+            position: 'fixed', // UPDATED: Changed from absolute to fixed to cover full window
             top: 0,
             left: 0,
             right: 0,

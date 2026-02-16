@@ -42,9 +42,11 @@ import EditIcon from "@mui/icons-material/Edit";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow"; // Resume icon
 
 import AssignmentTurnedInIcon from "@mui/icons-material/AssignmentTurnedIn"; // Consolidation Icon
+import BuildIcon from "@mui/icons-material/Build"; // Fix Icon
 import LoadingScreen from "./common/LoadingScreen"; // NEW IMPORT
 import ShiftDetailView from "./ShiftDetailView";
 import ShiftConsolidationDialog from "./ShiftConsolidationDialog";
+import ShiftCleanupDialog from "./admin/ShiftCleanupDialog"; // Fixed import path
 import PageHeader from "./common/PageHeader";
 import { db } from "../firebase";
 import {
@@ -276,6 +278,8 @@ const Shifts = ({ showSnackbar }) => {
 
   const [txAggByShift, setTxAggByShift] = useState({});
   const txUnsubsRef = useRef({});
+
+  const [cleanupOpen, setCleanupOpen] = useState(false); // NEW STATE
 
   const [currentShift, setCurrentShift] = useState(null);
   const isAnyShiftActive = !!(currentShift && currentShift.activeShiftId);
@@ -776,6 +780,9 @@ const Shifts = ({ showSnackbar }) => {
             </Button>
             <Button variant="outlined" onClick={handleExportToCSV} disabled={filteredShifts.length === 0} size="small">
               Export CSV
+            </Button>
+            <Button variant="outlined" color="warning" startIcon={<BuildIcon />} onClick={() => setCleanupOpen(true)} size="small">
+              Fix Data
             </Button>
           </Stack>
         }
@@ -1293,7 +1300,13 @@ const Shifts = ({ showSnackbar }) => {
         transactions={consolidationTx}
         showSnackbar={showSnackbar}
       />
+
+      <ShiftCleanupDialog
+        open={cleanupOpen}
+        onClose={() => setCleanupOpen(false)}
+        showSnackbar={showSnackbar}
+      />
     </Box>
   );
 };
-export default React.memo(Shifts);
+export default Shifts;

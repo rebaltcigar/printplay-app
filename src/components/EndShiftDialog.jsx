@@ -144,6 +144,9 @@ export default function EndShiftDialog({
             servicesTotal,
             expensesTotal,
             systemTotal: finalTotal,
+            totalCash,     // NEW: Required,
+            totalGcash,    // NEW: Required
+            totalAr,       // NEW: Required
             endTime: serverTimestamp()
         };
 

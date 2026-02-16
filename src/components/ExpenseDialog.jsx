@@ -6,6 +6,7 @@ import {
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { generateDisplayId } from '../utils/idGenerator';
+import LoadingScreen from './common/LoadingScreen';
 
 export default function ExpenseDialog({ open, onClose, user, activeShiftId, expenseTypes, staffOptions, showSnackbar }) {
     const [form, setForm] = useState({
@@ -16,6 +17,7 @@ export default function ExpenseDialog({ open, onClose, user, activeShiftId, expe
         amount: '',
         notes: ''
     });
+    const [loading, setLoading] = useState(false);
 
     // Reset form when opening
     useEffect(() => {
@@ -44,6 +46,7 @@ export default function ExpenseDialog({ open, onClose, user, activeShiftId, expe
         }
 
         try {
+            setLoading(true);
             const displayId = await generateDisplayId("expenses", "EXP");
             await addDoc(collection(db, 'transactions'), {
                 displayId,
@@ -69,6 +72,8 @@ export default function ExpenseDialog({ open, onClose, user, activeShiftId, expe
         } catch (e) {
             console.error(e);
             showSnackbar?.("Failed to save expense.", 'error');
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -128,9 +133,11 @@ export default function ExpenseDialog({ open, onClose, user, activeShiftId, expe
                 </Stack>
             </DialogContent>
             <DialogActions>
-                <Button onClick={onClose}>Cancel</Button>
-                <Button variant="contained" color="error" onClick={handleSave}>Save Expense</Button>
+                <Button onClick={onClose} disabled={loading}>Cancel</Button>
+                <Button variant="contained" color="error" onClick={handleSave} disabled={loading}>Save Expense</Button>
             </DialogActions>
+
+            {loading && <LoadingScreen overlay={true} message="Saving expense..." />}
         </Dialog>
     );
 }
