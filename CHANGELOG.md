@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
  
+## [0.1.13] - 2026-02-16
+
+### Removed
+- **Migration Tool**: Removed the "Fix Data" tool after successful production migration.
+
 ## [0.1.12] - 2026-02-16
 
 ### Added
