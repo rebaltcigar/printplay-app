@@ -154,6 +154,12 @@ export default function App() {
       e.code = "role/invalid-staff";
       throw e;
     }
+    if (userSnap.data()?.suspended === true) {
+      await signOut(auth).catch(() => { });
+      const e = new Error("This account has been suspended. Please contact your administrator.");
+      e.code = "auth/account-suspended";
+      throw e;
+    }
 
     // Create shift
     // Create shift

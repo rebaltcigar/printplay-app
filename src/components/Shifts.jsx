@@ -346,13 +346,7 @@ const Shifts = ({ showSnackbar }) => {
         const totalSales = serviceSales + pc;
         const netTotal = totalSales - expenses;
 
-        let expectedCash = 0;
-        if (s.breakdown) {
-          expectedCash = (s.breakdown?.cash || 0) - expenses;
-        } else {
-          expectedCash = (Number(agg.cashSales || 0) + pc) - expenses;
-        }
-
+        const expectedCash = computeExpectedCash(s, agg);
         const difference = onHand !== null ? onHand - expectedCash : null;
 
         return [
@@ -726,13 +720,7 @@ const Shifts = ({ showSnackbar }) => {
                 const totalSales = serviceSales + pc;
                 const netTotal = totalSales - expenses;
 
-                let expectedCash = 0;
-                if (s.breakdown) {
-                  expectedCash = (s.breakdown?.cash || 0) - expenses;
-                } else {
-                  expectedCash = (Number(agg.cashSales || 0) + pc) - expenses;
-                }
-
+                const expectedCash = computeExpectedCash(s, agg);
                 const difference = onHand === null ? null : onHand - expectedCash;
 
                 return (

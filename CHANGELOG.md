@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
  
+## [0.1.19] - 2026-03-04
+
+### Added
+- **User Management — Add User**: Create new Firebase Auth accounts directly from the admin panel using a secondary app instance (admin session is never interrupted). A Firestore user doc is written immediately with name, role, and `suspended: false`.
+- **User Management — Edit User**: Update a user's full name and role (Staff / Super Admin) via an edit dialog. Email is shown read-only since it is tied to Firebase Auth.
+- **User Management — Reset Password**: Sends a Firebase password-reset email to the user's address with a single click.
+- **User Management — Suspend / Activate**: Toggle a `suspended` field on the Firestore user doc. Suspended staff are blocked at login immediately with a clear error message.
+- **User Management — Delete (soft)**: Marks the user doc `deleted: true`, hiding them from the system. A note in the UI explains that their Firebase Auth account must be removed separately from Firebase Console.
+- **User Management — Search & Filter**: Search by name or email (client-side) and filter by role (All / Staff / Super Admin) via a toggle button group.
+- **Login guard for suspended accounts**: Staff login in `App.jsx` now checks `suspended === true` after the role check and throws `auth/account-suspended`, which `Login.jsx` displays as a friendly error message.
+
+### Changed
+- **`UserManagement.jsx`**: Full redesign — replaced the minimal read-only list with a full CRUD interface. Switched data source from one-shot `getDocs` to real-time `onSnapshot` so the list updates live. Biometric enrollment button retained.
+- **`firebase.js`**: Exports `firebaseConfig` to allow the secondary auth app instance used for user creation.
+- **`Login.jsx`**: `humanizeAuthError` now maps `auth/account-suspended` to a user-friendly message.
+
+### Fixed
+- **Shifts table — incorrect shortage for GCash / Charge transactions**: The "Difference" column in the Shifts admin table was showing a false shortage equal to the GCash or Charge amount when a non-cash payment was logged against a PC Rental session. Root cause: two code paths (JSX table render and CSV export) in `Shifts.jsx` duplicated the expected-cash formula without calling the shared `computeExpectedCash()` utility, so `pcNonCashSales` was never deducted from `pcRentalTotal`. Both replaced with a single `computeExpectedCash(s, agg)` call. EndShiftDialog, ShiftConsolidationDialog, and Payroll were already correct.
+
 ## [0.1.18] - 2026-03-04
 
 ### Added

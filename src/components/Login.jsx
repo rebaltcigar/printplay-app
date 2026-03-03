@@ -86,6 +86,11 @@ function humanizeAuthError(err, { adminMode }) {
     return "You don’t have admin access. Please use the regular staff login.";
   }
 
+  // Suspended account
+  if (rawCode === "auth/account-suspended" || rawMsg.includes("suspended")) {
+    return "This account has been suspended. Please contact your administrator.";
+  }
+
   // Permission/forbidden fallback
   if (rawCode.startsWith("forbidden/") || rawCode === "permission-denied") {
     return adminMode
