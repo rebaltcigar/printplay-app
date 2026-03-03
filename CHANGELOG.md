@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
  
+## [0.1.14] - 2026-03-03
+
+### Added
+- **Transactions Page**: Added "Load All Filtered" and "Load All Transactions" buttons to quickly fetch wide date ranges or the entire database without pagination.
+ 
 ## [0.1.13] - 2026-02-16
 
 ### Removed

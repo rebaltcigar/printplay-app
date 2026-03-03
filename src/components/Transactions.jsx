@@ -371,6 +371,49 @@ const Transactions = ({ showSnackbar }) => {
     }
   };
 
+  /* ---- Fetch ALL rows without limits ---- */
+  const fetchAllTransactions = async (forceAllTime = false) => {
+    setLoadingMore(true);
+    setInitLoading(true);
+    setLiveMode("archive_all");
+    
+    // Cleanup any existing real-time listener
+    if (unsubRef.current) {
+      unsubRef.current();
+      unsubRef.current = null;
+    }
+
+    try {
+      let constraints = [
+        orderBy("timestamp", "desc"),
+      ];
+
+      if (!forceAllTime) {
+        const s = new Date(start); s.setHours(0, 0, 0, 0);
+        const e = new Date(end); e.setHours(23, 59, 59, 999);
+        constraints.push(where("timestamp", ">=", s));
+        constraints.push(where("timestamp", "<=", e));
+      }
+
+      const q = query(collection(db, "transactions"), ...constraints);
+      const snap = await getDocs(q);
+      
+      const newRows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      
+      setTx(newRows);
+      setLastDoc(null);
+      setHasMore(false); // No more pages since we fetched everything
+
+      showSnackbar?.(`Loaded ${newRows.length} transactions.`, 'success');
+    } catch (err) {
+      console.error("Fetch All error", err);
+      showSnackbar?.("Failed to load all transactions.", "error");
+    } finally {
+      setLoadingMore(false);
+      setInitLoading(false);
+    }
+  };
+
   useEffect(() => {
     attachStream("month");
     setLiveMode("month");
@@ -915,14 +958,14 @@ const Transactions = ({ showSnackbar }) => {
         <Divider />
 
         {/* Date range */}
-        <Stack spacing={1.5} sx={{ opacity: liveMode === "all" ? 0.5 : 1 }}>
+        <Stack spacing={1.5} sx={{ opacity: liveMode === "all" || liveMode === "archive_all" ? 0.5 : 1 }}>
           <TextField
             label="Start"
             type="date"
             value={start}
             onChange={(e) => setStart(e.target.value)}
             InputLabelProps={{ shrink: true }}
-            disabled={liveMode === "all"}
+            disabled={liveMode === "all" || liveMode === "archive_all"}
             fullWidth
           />
           <TextField
@@ -931,11 +974,11 @@ const Transactions = ({ showSnackbar }) => {
             value={end}
             onChange={(e) => setEnd(e.target.value)}
             InputLabelProps={{ shrink: true }}
-            disabled={liveMode === "all"}
+            disabled={liveMode === "all" || liveMode === "archive_all"}
             fullWidth
           />
-          <Stack direction="row" spacing={1}>
-            {liveMode === "archive" || liveMode === "all" ? (
+          <Stack direction="column" spacing={1}>
+            {liveMode === "archive" || liveMode === "all" || liveMode === "archive_all" ? (
               <Button
                 startIcon={<RefreshIcon />}
                 variant="outlined"
@@ -945,15 +988,38 @@ const Transactions = ({ showSnackbar }) => {
                 Back to Live
               </Button>
             ) : (
-              <Button
-                startIcon={<ClearAllIcon />}
-                variant="outlined"
-                color="warning"
-                onClick={() => attachStream("all")}
-                fullWidth
-              >
-                Load Archive
-              </Button>
+              <>
+                <Button
+                  startIcon={<ClearAllIcon />}
+                  variant="outlined"
+                  color="warning"
+                  onClick={() => attachStream("all")}
+                  fullWidth
+                >
+                  Load Archive (Paginated)
+                </Button>
+                <Button
+                  startIcon={<DownloadIcon />} // Reusing an icon, or you could use a different one
+                  variant="contained"
+                  color="secondary"
+                  onClick={() => fetchAllTransactions(false)}
+                  fullWidth
+                  size="small"
+                  sx={{ mt: 1 }}
+                >
+                  Load All Filtered
+                </Button>
+                <Button
+                  startIcon={<ClearAllIcon />}
+                  variant="contained"
+                  color="warning"
+                  onClick={() => fetchAllTransactions(true)}
+                  fullWidth
+                  size="small"
+                >
+                  Load ALL TRANSACTIONS
+                </Button>
+              </>
             )}
           </Stack>
         </Stack>
@@ -1329,14 +1395,14 @@ const Transactions = ({ showSnackbar }) => {
           </Box>
           <Collapse in={datesOpen} unmountOnExit={false} timeout={250} sx={{ overflow: "visible" }}>
             <Box sx={{ pt: 1 }}>
-              <Stack spacing={1.25} sx={{ opacity: liveMode === "all" ? 0.6 : 1 }}>
+              <Stack spacing={1.25} sx={{ opacity: liveMode === "all" || liveMode === "archive_all" ? 0.6 : 1 }}>
                 <TextField
                   label="Start"
                   type="date"
                   value={start}
                   onChange={(e) => setStart(e.target.value)}
                   InputLabelProps={{ shrink: true }}
-                  disabled={liveMode === "all"}
+                  disabled={liveMode === "all" || liveMode === "archive_all"}
                   fullWidth
                   size="small"
                 />
@@ -1346,32 +1412,52 @@ const Transactions = ({ showSnackbar }) => {
                   value={end}
                   onChange={(e) => setEnd(e.target.value)}
                   InputLabelProps={{ shrink: true }}
-                  disabled={liveMode === "all"}
+                  disabled={liveMode === "all" || liveMode === "archive_all"}
                   fullWidth
                   size="small"
                 />
-                <Stack direction="row" spacing={1}>
-                  {liveMode === "all" ? (
+                <Stack direction="column" spacing={1}>
+                  {liveMode === "all" || liveMode === "archive_all" || liveMode === "archive" ? (
                     <Button
                       startIcon={<RefreshIcon />}
                       variant="outlined"
-                      onClick={backToMonth}
+                      onClick={() => attachStream("month")}
                       fullWidth
                       size="small"
                     >
                       Back to Month
                     </Button>
                   ) : (
-                    <Button
-                      startIcon={<ClearAllIcon />}
-                      variant="outlined"
-                      color="warning"
-                      onClick={() => attachStream("all")}
-                      fullWidth
-                      size="small"
-                    >
-                      Load Archive
-                    </Button>
+                    <>
+                      <Button
+                        startIcon={<ClearAllIcon />}
+                        variant="outlined"
+                        color="warning"
+                        onClick={() => attachStream("all")}
+                        fullWidth
+                        size="small"
+                      >
+                        Load Archive
+                      </Button>
+                      <Button
+                        variant="contained"
+                        color="secondary"
+                        onClick={() => fetchAllTransactions(false)}
+                        fullWidth
+                        size="small"
+                      >
+                        Load All Filtered
+                      </Button>
+                      <Button
+                        variant="contained"
+                        color="warning"
+                        onClick={() => fetchAllTransactions(true)}
+                        fullWidth
+                        size="small"
+                      >
+                        Load ALL TRANSACTIONS
+                      </Button>
+                    </>
                   )}
                 </Stack>
               </Stack>
