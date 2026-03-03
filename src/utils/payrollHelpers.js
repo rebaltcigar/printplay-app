@@ -3,6 +3,9 @@
 // Single source of truth for all payroll calculation helpers.
 
 import { Timestamp } from "firebase/firestore";
+// sumDenominations is the canonical implementation — single source of truth
+export { sumDenominations } from "./shiftFinancials";
+
 
 // ---------------------------------------------------------------------------
 // Time
@@ -128,24 +131,6 @@ export const resolveHourlyRate = (payroll, asOfDate) => {
   if (picked?.rate != null) return Number(picked.rate);
   if (payroll.defaultRate != null) return Number(payroll.defaultRate);
   return 0;
-};
-
-// ---------------------------------------------------------------------------
-// Denomination / Shortage
-// ---------------------------------------------------------------------------
-
-/** Sum a denominations object (e.g. { bill_1000: 2, coin_5: 3 } → 2005) */
-export const sumDenominations = (denoms = {}) => {
-  let total = 0;
-  for (const [k, v] of Object.entries(denoms || {})) {
-    const m = /^([bc]|bill|coin)_(\d+(?:\.\d+)?)$/i.exec(k);
-    if (!m) continue;
-    const face = Number(m[2]);
-    const count = Number(v || 0);
-    if (!isFinite(face) || !isFinite(count)) continue;
-    total += face * count;
-  }
-  return Number(total.toFixed(2));
 };
 
 /** Compute cash shortage for a shift */

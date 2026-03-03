@@ -68,161 +68,9 @@ import { generateDisplayId } from "../utils/idGenerator";
 
 // shared peso formatter (commas, no decimals; UI-only)
 import { fmtPeso } from "../utils/analytics";
+import { aggregateShiftTransactions, sumDenominations, computeExpectedCash } from "../utils/shiftFinancials";
+import { useStaffList } from "../hooks/useStaffList";
 
-/* -------------------- helpers -------------------- */
-const SHIFT_PERIODS = ["Morning", "Afternoon", "Evening"];
-
-const pad2 = (n) => String(n).padStart(2, "0");
-const ymd = (d) =>
-  `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-
-const calculateOnHand = (denominations) => {
-  if (!denominations || typeof denominations !== "object" || Object.keys(denominations).length === 0) {
-    return null;
-  }
-
-  let total = 0;
-  for (const key in denominations) {
-    const valueStr = key.split("_")[1];
-    if (valueStr) {
-      const value = parseFloat(valueStr);
-      const count = Number(denominations[key]);
-      if (!isNaN(value) && !isNaN(count)) {
-        total += value * count;
-      }
-    }
-  }
-  return total;
-};
-
-const thisMonthDefaults = () => {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  const start = new Date(y, m, 1);
-  const end = new Date(y, m + 1, 0);
-  return { startStr: ymd(start), endStr: ymd(end) };
-};
-
-const chunk = (arr, size = 400) => {
-  const out = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-};
-
-const toTimestamp = (val) => {
-  if (!val) return null;
-  let d = new Date(val);
-  if (isNaN(d.getTime())) {
-    const ms = Date.parse(val);
-    if (!isNaN(ms)) d = new Date(ms);
-  }
-  if (isNaN(d.getTime())) throw new Error("Invalid date: " + val);
-  return Timestamp.fromDate(d);
-};
-
-const toLocalInput = (tsOrDate) => {
-  if (!tsOrDate) return "";
-  let d;
-  if (tsOrDate?.seconds != null) d = new Date(tsOrDate.seconds * 1000);
-  else if (tsOrDate instanceof Date) d = tsOrDate;
-  else return "";
-  const pad = (n) => String(n).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  const mm = pad(d.getMonth() + 1);
-  const dd = pad(d.getDate());
-  const hh = pad(d.getHours());
-  const mi = pad(d.getMinutes());
-  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
-};
-
-const normalize = (s) => String(s ?? "").trim().toLowerCase();
-
-/* -------------------- aggregation (spec-compliant) -------------------- */
-const aggregateShiftTransactions = (txList, serviceMeta) => {
-  const nameToCategory = {};
-  for (const s of serviceMeta || []) {
-    const n = normalize(s.name);
-    if (!n) continue;
-    nameToCategory[n] = s.category || "";
-  }
-
-  const serviceTotals = {};
-  let sales = 0;
-  let expenses = 0;
-
-  // Breakdown
-  let cashSales = 0;
-  let gcashSales = 0;
-  let arSales = 0; // Accounts Receivable (Charge)
-
-  for (const tx of txList) {
-    if (!tx || tx.isDeleted === true) continue;
-
-    const itemName = normalize(tx.item);
-    if (!itemName) continue;
-
-    const isPcRental = itemName === "pc rental";
-
-    let cat = nameToCategory[itemName];
-
-    // Fix: If category is unknown, check if it is "Expenses" specifically.
-    // If not "Expenses", and not empty, default to "debit" (Sales) so we don't lose the record.
-    if (!cat) {
-      if (itemName === 'expenses') cat = 'credit';
-      else cat = 'debit';
-    }
-
-    let amt = Number(tx.total);
-    if (!Number.isFinite(amt)) {
-      const price = Number(tx.price);
-      const qty = Number(tx.quantity);
-      amt = Number.isFinite(price) && Number.isFinite(qty) ? price * qty : 0;
-    }
-    if (!Number.isFinite(amt)) amt = 0;
-
-    const displayName =
-      serviceMeta.find((s) => normalize(s.name) === itemName)?.name ||
-      tx.item ||
-      "Unknown";
-
-    // Always track per-service totals (even PC Rental for audit)
-    serviceTotals[displayName] = (serviceTotals[displayName] || 0) + amt;
-
-    if (normalize(cat) === "debit") {
-      // EXCLUDE PC Rental from base sales sum because it's added manually later
-      if (!isPcRental) {
-        sales += amt;
-      }
-
-      // Payment Method Breakdown
-      if (tx.paymentMethod === 'GCash') gcashSales += amt;
-      else if (tx.paymentMethod === 'Charge') arSales += amt;
-      else {
-        // Only add to cash sales if NOT PC Rental
-        // (Cash PC Rental is covered by the manual end-shift entry)
-        if (!isPcRental) {
-          cashSales += amt;
-        }
-      }
-    }
-    else if (normalize(cat) === "credit") {
-      expenses += amt;
-    }
-  }
-
-  const systemTotal = sales - Number(expenses);
-
-  return {
-    serviceTotals,
-    sales,
-    expenses,
-    systemTotal,
-    cashSales,
-    gcashSales,
-    arSales
-  };
-};
 
 /* -------------------- component -------------------- */
 const Shifts = ({ showSnackbar }) => {
@@ -230,10 +78,12 @@ const Shifts = ({ showSnackbar }) => {
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
 
   const [shifts, setShifts] = useState([]);
-  const [loading, setLoading] = useState(true); // NEW STATE
+  const [loading, setLoading] = useState(true);
   const [services, setServices] = useState([]);
-  const [userMap, setUserMap] = useState({});
   const [viewingShift, setViewingShift] = useState(null);
+
+  // Staff list from shared hook
+  const { staffOptions, userMap } = useStaffList();
 
   const { startStr: defaultStart, endStr: defaultEnd } = thisMonthDefaults();
   const [startDate, setStartDate] = useState(defaultStart);
@@ -252,7 +102,6 @@ const Shifts = ({ showSnackbar }) => {
   const [newShiftPeriod, setNewShiftPeriod] = useState(SHIFT_PERIODS[0]);
   const [newStart, setNewStart] = useState("");
   const [newEnd, setNewEnd] = useState("");
-  const [staffOptions, setStaffOptions] = useState([]);
 
   const [editOpen, setEditOpen] = useState(false);
   const [editShift, setEditShift] = useState(null);
@@ -295,42 +144,25 @@ const Shifts = ({ showSnackbar }) => {
   // --- UPDATED: Memoized array for filtered shifts ---
   const filteredShifts = useMemo(() => {
     return shifts.filter((s) => {
-      // Staff Filter (if array has items, staff must be in the array)
-      if (filterStaff.length > 0 && !filterStaff.includes(s.staffEmail)) {
-        return false;
-      }
+      if (filterStaff.length > 0 && !filterStaff.includes(s.staffEmail)) return false;
+      if (filterShiftPeriod.length > 0 && !filterShiftPeriod.includes(s.shiftPeriod)) return false;
 
-      // Shift Period Filter (if array has items, shift period must be in the array)
-      if (filterShiftPeriod.length > 0 && !filterShiftPeriod.includes(s.shiftPeriod)) {
-        return false;
-      }
-
-      // Difference Filter (based on two checkboxes)
       const agg = txAggByShift[s.id] || {};
-      const onHand = calculateOnHand(s.denominations);
+      const onHand = Object.keys(s.denominations || {}).length === 0
+        ? null
+        : sumDenominations(s.denominations);
+
       if (onHand === null) {
-        // Hide shifts without denominations if either checkbox is unchecked
         if (!filterShowShort || !filterShowOverage) return false;
       } else {
-        // New logic for calculating difference in fitler
-        const pc = Number(s.pcRentalTotal || 0);
-        const expenses = Number(agg.expenses || 0);
-        let expectedCash = 0;
-        if (s.breakdown) {
-          expectedCash = (s.breakdown?.cash || 0) - expenses;
-        } else {
-          expectedCash = (Number(agg.cashSales || 0) + pc) - expenses;
-        }
+        const expectedCash = computeExpectedCash(s, agg);
         const difference = onHand - expectedCash;
         const isShort = difference < 0;
         const isOverage = difference > 0;
-
         if (!filterShowShort && isShort) return false;
         if (!filterShowOverage && isOverage) return false;
-        // If a shift has no difference (is 0), it should only be hidden if BOTH checkboxes are off
         if (!filterShowShort && !filterShowOverage && (isShort || isOverage)) return false;
       }
-
       return true;
     });
   }, [shifts, filterStaff, filterShiftPeriod, filterShowShort, filterShowOverage, txAggByShift]);
@@ -383,30 +215,11 @@ const Shifts = ({ showSnackbar }) => {
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "users"), (snap) => {
-      const map = {};
-      snap.forEach((d) => {
-        const v = d.data();
-        map[v.email] = v.fullName || v.name || v.email;
-      });
-      setUserMap(map);
+      // now handled by useStaffList hook — kept for reference only
     });
     return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    const qRef = query(collection(db, "users"), where("role", "==", "staff"));
-    const unsub = onSnapshot(qRef, (snap) => {
-      const list = snap.docs
-        .map((d) => {
-          const v = d.data() || {};
-          return { email: v.email || "", fullName: v.fullName || v.name || v.displayName || v.email || "Staff" };
-        })
-        .sort((a, b) => (a.fullName || "").localeCompare(b.fullName || "", "en", { sensitivity: "base" }));
-      setStaffOptions(list);
-      if (!newStaffEmail && list.length) setNewStaffEmail(list[0].email);
-    });
-    return () => unsub();
-  }, [newStaffEmail]);
 
   useEffect(() => {
     const qRef = query(collection(db, "services"), orderBy("sortOrder"));
@@ -477,80 +290,34 @@ const Shifts = ({ showSnackbar }) => {
   }, [filteredShifts, serviceNames, txAggByShift]);
 
   const grand = useMemo(() => {
-    let pcRental = 0;
-    let sales = 0;
-    let expenses = 0;
-    let system = 0;
-    let onHand = 0;
+    let pcRental = 0, sales = 0, expenses = 0, system = 0, onHand = 0;
     let shiftsWithDenominations = 0;
+    let totalExpectedCash = 0;
 
     for (const s of filteredShifts) {
       const agg = txAggByShift[s.id];
       const pc = Number(s?.pcRentalTotal || 0);
       pcRental += pc;
 
-      const currentOnHand = calculateOnHand(s.denominations);
-      if (currentOnHand !== null) {
-        onHand += currentOnHand;
+      const denomKeys = Object.keys(s.denominations || {});
+      const onHandVal = denomKeys.length === 0 ? null : sumDenominations(s.denominations);
+      if (onHandVal !== null) {
+        onHand += onHandVal;
         shiftsWithDenominations++;
+        if (agg) {
+          totalExpectedCash += computeExpectedCash(s, agg);
+        }
       }
 
       if (agg) {
         const _expenses = Number(agg.expenses || 0);
         sales += Number(agg.sales || 0) + pc;
         expenses += _expenses;
-        system += (Number(agg.sales || 0) + pc - _expenses);
-
-        // Expected Cash Logic for Grand Total Difference
-        let expectedCashForShift = 0;
-        if (s.breakdown) {
-          // New Logic: Use saved breakdown
-          expectedCashForShift = (s.breakdown?.cash || 0) - _expenses;
-        } else {
-          // Old Logic: Services Cash + PC (assumed cash) - Expenses
-          expectedCashForShift = (Number(agg.cashSales || 0) + pc) - _expenses;
-        }
-
-        // Difference for this shift
-        if (currentOnHand !== null) {
-          // We can accumulate difference strictly, or just do onHand - expectedCash
-          // But grand.difference usually calculates (GrandOnHand - GrandExpectedSystem).
-          // However, strictly speaking, `grand.system` is NET SALES.
-          // If we want `grand.difference` to be meaningful for hybrid shifts, we can't use `grand.system` (which includes gcash/ar).
-          // So we should verify what `grand.system` is being used for in difference calculation.
-          // The old code did: `const difference = onHand - system;` 
-          // This implies `system` was treated as `Expected Cash`.
-          // We need to fix this.
-        }
+        system += Number(agg.sales || 0) + pc - _expenses;
       }
     }
-
-    // Since calculating grand difference is tricky with mixed expected cash definitions, 
-    // let's just sum up individual differences? 
-    // Valid "On Hand" is only present for `shiftsWithDenominations`.
-    // Let's sum Expected Cash for those shifts only.
-    let totalExpectedCash = 0;
-
-    for (const s of filteredShifts) {
-      const agg = txAggByShift[s.id];
-      const onHandVal = calculateOnHand(s.denominations);
-      if (onHandVal !== null && agg) {
-        const pc = Number(s?.pcRentalTotal || 0);
-        const _expenses = Number(agg.expenses || 0);
-
-        if (s.breakdown) {
-          totalExpectedCash += (s.breakdown?.cash || 0) - _expenses;
-        } else {
-          totalExpectedCash += (Number(agg.cashSales || 0) + pc) - _expenses;
-        }
-      }
-    }
-
-    // Recalculate difference based on (Total On Hand - Total Expected Cash)
-    // Note: Use `system` variable above for "Total Net Sales" display
 
     const difference = onHand - totalExpectedCash;
-
     return { pcRental, sales, expenses, system, onHand, difference, shiftsWithDenominations };
   }, [filteredShifts, txAggByShift]);
 

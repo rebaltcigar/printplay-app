@@ -10,6 +10,7 @@ import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import ReceiptIcon from '@mui/icons-material/Receipt';
 import { doc, updateDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../firebase';
+import { sumDenominations } from '../utils/shiftFinancials';
 
 const BILL_DENOMS = [1000, 500, 200, 100, 50, 20];
 const COIN_DENOMS = [20, 10, 5, 1];
@@ -42,17 +43,8 @@ export default function ShiftConsolidationDialog({
     const handleReconChange = (denKey, val) =>
         setRecon((p) => ({ ...p, [denKey]: val }));
 
-    const cashOnHand = useMemo(
-        () =>
-            Object.entries(recon).reduce((sum, [key, count]) => {
-                const denominationValue = Number(key.split("_")[1]);
-                if (!isNaN(denominationValue)) {
-                    return sum + denominationValue * Number(count || 0);
-                }
-                return sum;
-            }, 0),
-        [recon]
-    );
+    const cashOnHand = useMemo(() => sumDenominations(recon), [recon]);
+
 
     const cashTransactions = useMemo(() =>
         transactions.filter(t => (t.paymentMethod === 'Cash' || !t.paymentMethod) && t.item !== 'Expenses' && t.item !== 'PC Rental'),

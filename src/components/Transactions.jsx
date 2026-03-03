@@ -106,10 +106,14 @@ const Transactions = ({ showSnackbar }) => {
   const [servicesFilter, setServicesFilter] = useState([]);
 
   // Option lists
-  const [staffOptions, setStaffOptions] = useState([]); // [{email, name, id}]
-  const [shiftOptions, setShiftOptions] = useState([]); // [{id, label}]
+  // Staff list from shared hook (replaces manual onSnapshot block)
+  const { staffOptions, userMap: _userMap } = useStaffList();
+  const [staffSelectOptions, setStaffSelectOptions] = useState([]);
+  // Keep staffSelectOptions in sync with staffOptions from the hook
+  React.useEffect(() => { setStaffSelectOptions(staffOptions); }, [staffOptions]);
+  const [shiftOptions, setShiftOptions] = useState([]);
   const [serviceItems, setServiceItems] = useState([]);
-  const [expenseServiceItems, setExpenseServiceItems] = useState([]); // State for expense sub-services
+  const [expenseServiceItems, setExpenseServiceItems] = useState([]);
 
   // Data
   const [tx, setTx] = useState([]);
@@ -129,7 +133,6 @@ const Transactions = ({ showSnackbar }) => {
   const [editQuantity, setEditQuantity] = useState("");
   const [editPrice, setEditPrice] = useState("");
   const [editNotes, setEditNotes] = useState("");
-  const [staffSelectOptions, setStaffSelectOptions] = useState([]);
   const [editDate, setEditDate] = useState("");
   const [editTime, setEditTime] = useState("");
 
@@ -170,27 +173,7 @@ const Transactions = ({ showSnackbar }) => {
   const [otherOpen, setOtherOpen] = useState(false);
   const datesRef = useRef(null);
 
-  /* ---- Load staff ---- */
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, "users"), (snap) => {
-      const arr = snap.docs
-        .map((d) => {
-          const v = d.data() || {};
-          return {
-            email: v.email || "",
-            name: v.fullName || v.name || v.displayName || v.email || "",
-            id: d.id,
-          };
-        })
-        .filter((u) => u.email);
-      arr.sort((a, b) =>
-        (a.name || "").localeCompare(b.name || "", "en", { sensitivity: "base" })
-      );
-      setStaffOptions(arr);
-      setStaffSelectOptions(arr);
-    });
-    return () => unsub();
-  }, []);
+  /* Staff loading is handled by useStaffList() hook above */
 
   /* ---- Load shifts ---- */
   useEffect(() => {

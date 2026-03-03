@@ -59,6 +59,7 @@ import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 import LoadingScreen from "./common/LoadingScreen";
 import PageHeader from "./common/PageHeader";
 import { fmtCurrency, toDateInput, downloadCSV } from "../utils/formatters";
+import { useStaffList } from "../hooks/useStaffList";
 
 const EXPENSE_TYPES_ALL = [
   "Supplies",
@@ -102,7 +103,8 @@ export default function ExpenseManagement({ user, showSnackbar }) {
   const [formNotes, setFormNotes] = useState("");
   const [currentlyEditing, setCurrentlyEditing] = useState(null);
 
-  const [staffOptions, setStaffOptions] = useState([]);
+  // Staff list from shared hook (replaces manual getDocs block below)
+  const { staffOptions } = useStaffList();
   const [creditServices, setCreditServices] = useState([]);
   const dateInputRef = useRef(null);
 
@@ -189,33 +191,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
     return combined;
   }, [creditServices]);
 
-  /** ===================== LOAD STAFF OPTIONS ===================== */
-  useEffect(() => {
-    (async () => {
-      try {
-        const qUsers = query(collection(db, "users"), where("role", "==", "staff"));
-        const snap = await getDocs(qUsers);
-        const opts = snap.docs
-          .map((d) => {
-            const data = d.data() || {};
-            return {
-              id: d.id,
-              fullName:
-                data.fullName || data.name || data.displayName || data.email || "Staff",
-              email: data.email || "",
-            };
-          })
-          .sort((a, b) =>
-            (a.fullName || "").localeCompare(b.fullName || "", "en", {
-              sensitivity: "base",
-            })
-          );
-        setStaffOptions(opts);
-      } catch (e) {
-        console.warn("Failed to load staff for expenses", e);
-      }
-    })();
-  }, []);
+  /* Staff loading is handled by useStaffList() hook above */
 
   /** ===================== LOAD EXPENSES (PAGINATION) ===================== */
   const [lastDoc, setLastDoc] = useState(null);

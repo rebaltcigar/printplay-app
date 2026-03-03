@@ -10,6 +10,8 @@ import ErrorIcon from '@mui/icons-material/Error'; // ADDED
 import { fmtCurrency } from '../utils/formatters';
 const currency = fmtCurrency;
 
+import { computeShiftFinancials } from '../utils/shiftFinancials';
+
 export default function EndShiftDialog({
     open,
     onClose,
@@ -21,117 +23,27 @@ export default function EndShiftDialog({
 }) {
     const [pcRental, setPcRental] = useState('');
 
-    const PC_RENTAL_ITEM_NAME = "PC Rental";
-
-    // --- CALCULATIONS (Updated for Hybrid PC Rental) ---
-
-    // 1. Identify Logged PC Rental Transactions
-    const { pcRentalTransactions, otherTransactions } = useMemo(() => {
-        const pc = [];
-        const other = [];
-        transactions.forEach(tx => {
-            if (tx.item === PC_RENTAL_ITEM_NAME) pc.push(tx);
-            else other.push(tx);
-        });
-        return { pcRentalTransactions: pc, otherTransactions: other };
-    }, [transactions]);
-
-    // 2. Tally Logged PC Rental Payment Methods
-    const { loggedPcGcash, loggedPcAr, loggedPcCash } = useMemo(() => {
-        let gcash = 0;
-        let ar = 0;
-        let cash = 0;
-        pcRentalTransactions.forEach(tx => {
-            // Treat null/undefined payment method as Cash (legacy safety)
-            if (tx.paymentMethod === 'GCash') gcash += (tx.total || 0);
-            else if (tx.paymentMethod === 'Charge') ar += (tx.total || 0);
-            else cash += (tx.total || 0);
-        });
-        return { loggedPcGcash: gcash, loggedPcAr: ar, loggedPcCash: cash };
-    }, [pcRentalTransactions]);
-
-    const loggedPcNonCash = loggedPcGcash + loggedPcAr;
-
-    // 3. Standard Services (Excluding PC Rental to avoid double count)
-    const servicesTotal = useMemo(() => {
-        return otherTransactions.reduce((sum, tx) => {
-            if (tx.item !== 'Expenses' && tx.item !== 'New Debt') return sum + (tx.total || 0);
-            return sum;
-        }, 0);
-    }, [otherTransactions]);
-
-    const expensesTotal = useMemo(() => {
-        return otherTransactions.reduce((sum, tx) => {
-            if (tx.item === 'Expenses' || tx.item === 'New Debt') return sum + (tx.total || 0);
-            return sum;
-        }, 0);
-    }, [otherTransactions]);
-
-    // 4. Breakdown of Regular Sales (Excluding PC Rental)
-    const regularCashSales = useMemo(() => {
-        return otherTransactions.reduce((sum, tx) => {
-            if (tx.item !== 'Expenses' && tx.item !== 'New Debt') {
-                if (tx.paymentMethod === 'Cash' || !tx.paymentMethod) return sum + (tx.total || 0);
-            }
-            return sum;
-        }, 0);
-    }, [otherTransactions]);
-
-    const regularGcashSales = useMemo(() => {
-        return otherTransactions.reduce((sum, tx) => {
-            if (tx.item !== 'Expenses' && tx.item !== 'New Debt' && tx.paymentMethod === 'GCash') {
-                return sum + (tx.total || 0);
-            }
-            return sum;
-        }, 0);
-    }, [otherTransactions]);
-
-    const regularArSales = useMemo(() => {
-        return otherTransactions.reduce((sum, tx) => {
-            if (tx.item !== 'Expenses' && tx.item !== 'New Debt' && tx.paymentMethod === 'Charge') {
-                return sum + (tx.total || 0);
-            }
-            return sum;
-        }, 0);
-    }, [otherTransactions]);
-
-    // 5. Final Calculations
     const pcRentalNum = Number(pcRental || 0);
 
-    // The "Cash" portion of the PC Rental is the User Input MINUS any non-cash methods logged.
-    // If the user inputs 1000, and we logged 300 GCash, then 700 must be Cash.
-    // We protect against negatives in display, but logic holds.
-    const impliedPcCash = Math.max(0, pcRentalNum - loggedPcNonCash);
+    // --- ALL FINANCIAL CALCULATIONS from shared utility ---
+    const financials = useMemo(
+        () => computeShiftFinancials(transactions, pcRentalNum),
+        [transactions, pcRentalNum]
+    );
 
-    const totalCash = regularCashSales + impliedPcCash;
-    const totalGcash = regularGcashSales + loggedPcGcash;
-    const totalAr = regularArSales + loggedPcAr;
+    const {
+        servicesTotal,
+        expensesTotal,
+        salesBreakdown,
+        expensesBreakdown,
+        totalCash,
+        totalGcash,
+        totalAr,
+        systemTotal: finalTotal,
+        loggedPcNonCash,
+    } = financials;
 
-    const finalTotal = servicesTotal - expensesTotal + pcRentalNum;
 
-    const salesBreakdown = useMemo(() => {
-        const m = new Map();
-        otherTransactions.forEach(tx => {
-            if (tx.item === 'Expenses' || tx.item === 'New Debt') return;
-            const key = tx.item || '—';
-            m.set(key, (m.get(key) || 0) + Number(tx.total || 0));
-        });
-        return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-    }, [otherTransactions]);
-
-    const expensesBreakdown = useMemo(() => {
-        const m = new Map();
-        otherTransactions.forEach(tx => {
-            if (tx.item === 'Expenses') {
-                const key = `Expense: ${tx.expenseType || 'Other'}`;
-                m.set(key, (m.get(key) || 0) + Number(tx.total || 0));
-            } else if (tx.item === 'New Debt') {
-                const key = 'New Debt';
-                m.set(key, (m.get(key) || 0) + Number(tx.total || 0));
-            }
-        });
-        return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-    }, [otherTransactions]);
 
     // --- ACTION ---
     const handleConfirm = async () => {

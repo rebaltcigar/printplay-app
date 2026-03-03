@@ -67,6 +67,8 @@ import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice
 import { ServiceInvoice } from './ServiceInvoice';
 import LoadingScreen from './common/LoadingScreen';
 import { fmtCurrency } from '../utils/formatters';
+import { usePOSServices } from '../hooks/usePOSServices';
+import { useStaffList } from '../hooks/useStaffList';
 
 import logo from '/icon.ico';
 
@@ -82,8 +84,15 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
   // --- CORE POS STATE ---
   const [activeTab, setActiveTab] = useState(0);
   const [orders, setOrders] = useState([{ id: 1, items: [], customer: null }]);
-  const [services, setServices] = useState([]);
-  const [categories, setCategories] = useState([]);
+
+  // Services and staff from shared hooks (replaces manual useEffect blocks)
+  const { serviceList, expenseTypes: expenseServiceItems, categories } = usePOSServices();
+  // POS legacy uses a combo list: serviceList + 'Paid Debt'
+  const services = [
+    ...serviceList,
+    { id: 'pd', serviceName: 'Paid Debt' },
+  ];
+  const { staffOptions } = useStaffList();
 
   // --- LEGACY INPUT STATE (Left Panel) ---
   const [item, setItem] = useState('');
@@ -104,8 +113,6 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
   const [elapsed, setElapsed] = useState('00:00:00');
   const [transactions, setTransactions] = useState([]);
   const [staffDisplayName, setStaffDisplayName] = useState(user?.email || '');
-  const [staffOptions, setStaffOptions] = useState([]);
-  const [expenseServiceItems, setExpenseServiceItems] = useState([]);
 
   // --- DIALOGS ---
   const [openDrawerDialog, setOpenDrawerDialog] = useState(false);

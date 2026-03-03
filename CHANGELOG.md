@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
  
+## [0.1.17] - 2026-03-04
+
+### Added
+- **Shift Financials Utility** (`src/utils/shiftFinancials.js`): Single source of truth for all shift financial computations. Exports `computeShiftFinancials`, `computeExpectedCash`, `aggregateShiftTransactions`, `sumDenominations`, and `computeDifference`. All shift money math now flows through one place — EndShiftDialog, Shifts admin table, ShiftConsolidationDialog, and payroll all use this.
+- **`usePOSServices` hook** (`src/hooks/usePOSServices.js`): React hook wrapping the Firestore `services` collection subscription with POS-standard filtering (active, non-credit, non-adminOnly, PC Rental always first). Replaces identical 40-line `useEffect` blocks in `POS.jsx` and `OrderManagement.jsx`.
+- **`useStaffList` hook** (`src/hooks/useStaffList.js`): React hook wrapping `onSnapshot(users)`, returning `{ staffOptions, userMap }`. Replaces 6 identical subscriptions across components.
+
+### Changed
+- **`payrollHelpers.js`**: `sumDenominations` is now re-exported from `shiftFinancials.js` — no longer a duplicate implementation.
+- **`EndShiftDialog.jsx`**: Replaced 6 inline financial `useMemo` hooks with a single `computeShiftFinancials()` call.
+- **`ShiftConsolidationDialog.jsx`**: Replaced inline denominations `useMemo` with `sumDenominations()` from shared utility.
+- **`Shifts.jsx`**: Removed local `calculateOnHand()` and `aggregateShiftTransactions()` functions (replaced by shared implementations). Uses `useStaffList` hook.
+- **`ShiftDetailView.jsx`, `POS.jsx`, `OrderManagement.jsx`, `Transactions.jsx`, `ExpenseManagement.jsx`**: All now use `useStaffList` hook for staff/users data.
+- **`POS.jsx`, `OrderManagement.jsx`**: Both now use `usePOSServices` hook for services data — guaranteed identical filtering rules.
+
 ## [0.1.16] - 2026-03-04
 
 ### Added

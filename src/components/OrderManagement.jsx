@@ -38,6 +38,8 @@ import { fmtCurrency, fmtDateTime } from '../utils/formatters';
 
 // currency and fmtDateTime are imported from ../utils/formatters
 const currency = fmtCurrency;
+import { usePOSServices } from '../hooks/usePOSServices';
+import { useStaffList } from '../hooks/useStaffList';
 
 export default function OrderManagement({ showSnackbar }) {
     const theme = useTheme();
@@ -49,9 +51,11 @@ export default function OrderManagement({ showSnackbar }) {
     const [loadingMore, setLoadingMore] = useState(false);
     const [lastDoc, setLastDoc] = useState(null);
     const [hasMore, setHasMore] = useState(true);
-    const [users, setUsers] = useState({}); // {email: fullName}
     const [systemSettings, setSystemSettings] = useState({});
-    const [services, setServices] = useState([]); // List of products/services for selection
+
+    // Services and staff from shared hooks
+    const { serviceList: services } = usePOSServices();
+    const { userMap: users } = useStaffList();
 
     // Filters
     const [searchTerm, setSearchTerm] = useState('');
@@ -84,59 +88,13 @@ export default function OrderManagement({ showSnackbar }) {
         amountTendered: 0,
         editReason: ''
     });
-
-    // 1. Initial Load: Users & Settings
+    // Load settings
     useEffect(() => {
-        const unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
-            const map = {};
-            snap.forEach(d => {
-                const u = d.data();
-                map[u.email] = u.fullName || u.name || u.email;
-            });
-            setUsers(map);
-        });
-
-        const unsubServices = onSnapshot(query(collection(db, "services"), orderBy('sortOrder')), (snap) => {
-            const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-            const expenseParent = items.find(i => i.serviceName === "Expenses");
-            const expenseParentId = expenseParent ? expenseParent.id : null;
-
-            // Filter out expenses and hidden/internal items (Exact POS logic)
-            let list = items.filter(i =>
-                i.active &&
-                i.category !== 'Credit' &&
-                i.serviceName !== 'New Debt' &&
-                i.serviceName !== 'Paid Debt' &&
-                i.id !== expenseParentId &&
-                i.parentServiceId !== expenseParentId &&
-                i.adminOnly === false
-            );
-
-            // Add PC Rental hardcoded if not present (User's prioritization request)
-            if (!list.find(s => s.serviceName === 'PC Rental')) {
-                list.push({ id: 'pcrental_hc', serviceName: 'PC Rental', price: 0 });
-            }
-
-            // Prioritize PC Rental
-            list.sort((a, b) => {
-                if (a.serviceName === 'PC Rental') return -1;
-                if (b.serviceName === 'PC Rental') return 1;
-                return 0; // Keep Firestore sortOrder for others
-            });
-
-            setServices(list);
-        });
-
         getDoc(doc(db, 'settings', 'config')).then(snap => {
             if (snap.exists()) setSystemSettings(snap.data());
         });
-
-        return () => {
-            unsubUsers();
-            unsubServices();
-        };
     }, []);
+
 
     // 2. Fetch Orders Logic
     const fetchOrders = async (isLoadMore = false) => {

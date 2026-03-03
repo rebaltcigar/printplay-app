@@ -61,6 +61,7 @@ import {
 } from "firebase/firestore";
 import { generateDisplayId } from "../utils/idGenerator";
 import { fmtCurrency, toDatetimeLocal, fromDatetimeLocal, identifierText, downloadCSV } from "../utils/formatters";
+import { useStaffList } from "../hooks/useStaffList";
 
 
 import CustomerDialog from "./CustomerDialog";
@@ -95,7 +96,8 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
 
   const [serviceItems, setServiceItems] = useState([]);
   const [expenseServiceItems, setExpenseServiceItems] = useState([]);
-  const [staffOptions, setStaffOptions] = useState([]);
+  // Staff list from shared hook (replaces manual getDocs block in services useEffect)
+  const { staffOptions } = useStaffList();
   const [currentlyEditing, setCurrentlyEditing] = useState(null);
 
   // dialogs
@@ -166,33 +168,6 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
       }
       setExpenseServiceItems(expenseSubServices);
     });
-
-    (async () => {
-      try {
-        const q = query(collection(db, "users"), where("role", "==", "staff"));
-        const snap = await getDocs(q);
-        const opts = snap.docs.map((d) => {
-          const v = d.data() || {};
-          return {
-            id: d.id,
-            fullName: v.fullName || v.name || v.displayName || v.email || "Staff",
-            email: v.email || "",
-          };
-        });
-        opts.sort((a, b) =>
-          (a.fullName || "").localeCompare(b.fullName || "", "en", {
-            sensitivity: "base",
-          })
-        );
-        setStaffOptions(opts);
-      } catch {
-        setStaffOptions([]);
-      }
-    })();
-
-    (async () => {
-      // Removed old reconciliation fetch
-    })();
 
     return () => unsubServices();
   }, [shift.id]);
