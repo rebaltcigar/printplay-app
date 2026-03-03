@@ -67,7 +67,7 @@ import {
 import { generateDisplayId } from "../utils/idGenerator";
 
 // shared peso formatter (commas, no decimals; UI-only)
-import { fmtPeso } from "../utils/analytics";
+import { fmtPeso, normalize } from "../utils/analytics";
 import { aggregateShiftTransactions, sumDenominations, computeExpectedCash } from "../utils/shiftFinancials";
 import { useStaffList } from "../hooks/useStaffList";
 
