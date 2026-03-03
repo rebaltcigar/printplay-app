@@ -71,6 +71,15 @@ import { fmtPeso } from "../utils/analytics";
 import { aggregateShiftTransactions, sumDenominations, computeExpectedCash } from "../utils/shiftFinancials";
 import { useStaffList } from "../hooks/useStaffList";
 
+// Returns { startStr, endStr } for the current month as "YYYY-MM-DD" strings
+const thisMonthDefaults = () => {
+  const now = new Date();
+  const startStr = new Date(now.getFullYear(), now.getMonth(), 1)
+    .toISOString().slice(0, 10);
+  const endStr = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+    .toISOString().slice(0, 10);
+  return { startStr, endStr };
+};
 
 /* -------------------- component -------------------- */
 const Shifts = ({ showSnackbar }) => {

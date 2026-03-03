@@ -267,47 +267,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
   // 1. DATA LOADING & INITIALIZATION
   // =========================================================================
 
-  // Load Services (Legacy + New Categories)
-  useEffect(() => {
-    const q = query(collection(db, 'services'), orderBy('sortOrder'));
-    const unsub = onSnapshot(q, (snap) => {
-      const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-      const expenseParent = items.find(i => i.serviceName === "Expenses");
-      const expenseParentId = expenseParent ? expenseParent.id : null;
-
-      // Main Service List (Exclude Expenses & Hidden)
-      const serviceList = items.filter(i =>
-        i.active &&
-        i.category !== 'Credit' &&
-        i.serviceName !== 'New Debt' && // ADDED
-        i.serviceName !== 'Paid Debt' && // ADDED
-        i.id !== expenseParentId &&
-        i.parentServiceId !== expenseParentId &&
-        i.adminOnly === false
-      );
-
-      // Expense Types (Children of "Expenses") - RESTORED FILTER
-      const expTypes = items.filter(i =>
-        i.parentServiceId === expenseParentId &&
-        i.adminOnly === false
-      );
-
-      // Combine for Legacy Dropdown
-      const comboList = [
-        ...serviceList,
-        // { id: 'nd', serviceName: 'New Debt' }, // DEPRECATED: Use 'Charge' at checkout
-        { id: 'pd', serviceName: 'Paid Debt' } // Keep 'Paid Debt' for accepting payments for now
-      ];
-
-      const uniqueCats = [...new Set(serviceList.map(i => i.category || 'Other'))].sort();
-
-      setServices(comboList);
-      setCategories(uniqueCats);
-      setExpenseServiceItems(expTypes);
-    });
-    return () => unsub();
-  }, []);
 
   // Load Shift Orders
   useEffect(() => {
@@ -324,26 +284,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
     return () => unsub();
   }, [activeShiftId]);
 
-  // Load Staff
-  useEffect(() => {
-    const loadStaff = async () => {
-      try {
-        const q = query(collection(db, 'users'), where('role', '==', 'staff'));
-        const snap = await getDocs(q);
-        const opts = snap.docs.map(d => {
-          const data = d.data() || {};
-          return {
-            id: d.id,
-            fullName: data.fullName || data.name || data.displayName || data.email || 'Staff',
-            email: data.email || '',
-          };
-        });
-        opts.sort((a, b) => (a.fullName || '').localeCompare(b.fullName || '', 'en', { sensitivity: 'base' }));
-        setStaffOptions(opts);
-      } catch { setStaffOptions([]); }
-    };
-    loadStaff();
-  }, []);
+
 
   // Shift Timer
   useEffect(() => {
