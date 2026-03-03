@@ -7,7 +7,8 @@ import { updateDoc, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import ErrorIcon from '@mui/icons-material/Error'; // ADDED
 
-const currency = (num) => `₱${Number(num || 0).toFixed(2)}`;
+import { fmtCurrency } from '../utils/formatters';
+const currency = fmtCurrency;
 
 export default function EndShiftDialog({
     open,

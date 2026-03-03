@@ -46,8 +46,9 @@ export const generateDisplayId = async (counterName, defaultPrefix = "ID", paddi
         return `${prefix}-${String(newId).padStart(padding, "0")}`;
     } catch (error) {
         console.error(`Error generating ID for ${counterName}:`, error);
-        // Fallback: use timestamp if transaction fails (rare, but prevents app crash)
-        return `${prefix}-${Date.now().toString().slice(-padding)}`;
+        // Fallback: use timestamp + random suffix if transaction fails (rare, prevents crash)
+        const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
+        return `${prefix}-ERR-${Date.now()}-${rand}`;
     }
 };
 

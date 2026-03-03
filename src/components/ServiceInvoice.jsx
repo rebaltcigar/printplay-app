@@ -2,8 +2,10 @@ import React from 'react';
 import ReactDOM from 'react-dom';
 import { Box, Typography, Divider, Table, TableHead, TableBody, TableRow, TableCell } from '@mui/material';
 
-// Helper for currency format
-const currency = (num) => `₱${Number(num || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+import { fmtCurrency } from '../utils/formatters';
+
+// currency alias — consistent with the rest of the app
+const currency = fmtCurrency;
 
 export const ServiceInvoice = ({ order, settings }) => {
     if (!order) return null;

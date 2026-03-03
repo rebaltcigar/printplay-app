@@ -62,61 +62,35 @@ import {
 } from "firebase/firestore";
 import { generateDisplayId, generateBatchIds } from "../utils/idGenerator";
 import { db, auth } from "../firebase";
-import { SimpleReceipt } from "./SimpleReceipt"; // RESTORED
-
-import { normalizeReceiptData, safePrint } from "../utils/receiptHelper";
-import { ServiceInvoice } from "./ServiceInvoice"; // NEW
-import { normalizeInvoiceData, safePrintInvoice } from "../utils/invoiceHelper"; // NEW
+import { SimpleReceipt } from "./SimpleReceipt";
+import { ServiceInvoice } from "./ServiceInvoice";
+import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice } from "../utils/printHelper";
 import LoadingScreen from './common/LoadingScreen';
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 import PageHeader from "./common/PageHeader";
+import {
+  fmtCurrency,
+  toDateInput,
+  toDatetimeLocal,
+  fromDatetimeLocal,
+  fmtDateTime,
+  identifierText,
+  startOfMonth,
+  endOfMonth,
+  downloadCSV,
+} from "../utils/formatters";
 
-const startOfMonth = (d = new Date()) =>
-  new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
-const endOfMonth = (d = new Date()) =>
-  new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
-
-const toDateInput = (d) => {
-  const x = new Date(d);
-  const yyyy = x.getFullYear();
-  const mm = String(x.getMonth() + 1).padStart(2, "0");
-  const dd = String(x.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-};
-
+// Local helpers removed — now imported from ../utils/formatters
+// toTimeInput remains here as it is not in formatters.js
 const toTimeInput = (d) => {
   const x = new Date(d);
-  const HH = String(x.getHours()).padStart(2, "0");
-  const MM = String(x.getMinutes()).padStart(2, "0");
+  const HH = String(x.getHours()).padStart(2, '0');
+  const MM = String(x.getMinutes()).padStart(2, '0');
   return `${HH}:${MM}`;
 };
 
-const toDatetimeLocal = (d) => {
-  const x = new Date(d);
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}T${pad(
-    x.getHours()
-  )}:${pad(x.getMinutes())}`;
-};
-const fromDatetimeLocal = (s) => new Date(s);
-
-const fmtDateTime = (ts) => {
-  if (!ts) return "";
-  if (ts.seconds) return new Date(ts.seconds * 1000).toLocaleString();
-  if (ts instanceof Date) return ts.toLocaleString();
-  return "";
-};
-
-const identifierText = (tx) => {
-  if (tx.item === "Expenses") {
-    const staffChunk = tx.expenseStaffName ? ` · ${tx.expenseStaffName}` : "";
-    return `${tx.expenseType || ""}${staffChunk}`;
-  }
-  if (tx.customerName) return tx.customerName;
-  return "—";
-};
-
-const currency = (n) => `₱${Number(n || 0).toFixed(2)}`;
+// currency alias for local usage
+const currency = fmtCurrency;
 
 /* ---------- component ---------- */
 const Transactions = ({ showSnackbar }) => {
@@ -376,7 +350,7 @@ const Transactions = ({ showSnackbar }) => {
     setLoadingMore(true);
     setInitLoading(true);
     setLiveMode("archive_all");
-    
+
     // Cleanup any existing real-time listener
     if (unsubRef.current) {
       unsubRef.current();
@@ -397,9 +371,9 @@ const Transactions = ({ showSnackbar }) => {
 
       const q = query(collection(db, "transactions"), ...constraints);
       const snap = await getDocs(q);
-      
+
       const newRows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      
+
       setTx(newRows);
       setLastDoc(null);
       setHasMore(false); // No more pages since we fetched everything
@@ -457,26 +431,11 @@ const Transactions = ({ showSnackbar }) => {
 
   /* ---- Actions ---- */
   const exportCSV = () => {
-    // ... (Keep exportCSV content same, just keep the function signature)
     const headers = [
-      "Timestamp",
-      "Item",
-      "Qty",
-      "Price",
-      "Total",
-      "Identifier",
-      "Notes",
-      "Staff Email",
-      "Shift ID",
-      "Added By Admin",
-      "Source",
-      "Is Deleted",
-      "Deleted By",
-      "Delete Reason",
-      "Edited",
-      "Edited By",
-      "Edit Reason",
-      "Last Updated At",
+      "Timestamp", "Item", "Qty", "Price", "Total", "Identifier",
+      "Notes", "Staff Email", "Shift ID", "Added By Admin", "Source",
+      "Is Deleted", "Deleted By", "Delete Reason", "Edited", "Edited By",
+      "Edit Reason", "Last Updated At",
     ];
     const lines = [headers.join(",")];
     rows.forEach((r) => {
@@ -502,16 +461,10 @@ const Transactions = ({ showSnackbar }) => {
       ];
       lines.push(line.join(","));
     });
-    const csv = lines.join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `transactions_${liveMode === "all" ? "ALL" : `${start}_to_${end}`}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadCSV(
+      lines.join("\n"),
+      `transactions_${liveMode === "all" ? "ALL" : `${start}_to_${end}`}.csv`
+    );
   };
 
   const resetFilters = () => {

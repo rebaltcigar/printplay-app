@@ -63,15 +63,15 @@ import { openDrawer } from '../utils/drawerService';
 import { generateOrderNumber, createOrderObject } from '../utils/orderService';
 
 import { generateDisplayId, generateBatchIds } from '../utils/idGenerator';
-import { normalizeReceiptData, safePrint } from '../utils/receiptHelper'; // ADDED
-import { ServiceInvoice } from './ServiceInvoice'; // ADDED
-import { normalizeInvoiceData, safePrintInvoice } from '../utils/invoiceHelper'; // ADDED
+import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice } from '../utils/printHelper';
+import { ServiceInvoice } from './ServiceInvoice';
 import LoadingScreen from './common/LoadingScreen';
+import { fmtCurrency } from '../utils/formatters';
 
 import logo from '/icon.ico';
 
-// Helper for currency display
-const currency = (num) => `₱${Number(num || 0).toFixed(2)}`;
+// Helper for currency display — imported from shared formatters
+const currency = fmtCurrency;
 
 
 

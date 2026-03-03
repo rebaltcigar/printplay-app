@@ -17,7 +17,8 @@ import OrderCustomerDialog from './OrderCustomerDialog';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, doc, updateDoc, writeBatch, serverTimestamp, orderBy } from 'firebase/firestore';
 
-const currency = (num) => `₱${Number(num || 0).toFixed(2)}`;
+import { fmtCurrency } from '../utils/formatters';
+const currency = fmtCurrency;
 
 export default function OrderDetailsDialog({ open, onClose, order, onUpdate, onPrint, showSnackbar }) {
     const [transactions, setTransactions] = useState([]);

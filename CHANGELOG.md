@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
  
+## [0.1.16] - 2026-03-04
+
+### Added
+- **Shared Formatters Utility** (`src/utils/formatters.js`): Centralized all currency formatting, date helpers (`toDateInput`, `toDatetimeLocal`, `fmtDateTime`), `identifierText`, and `downloadCSV` into a single utility module to eliminate redundant local definitions across components.
+- **Unified Print Helper** (`src/utils/printHelper.js`): Merged `receiptHelper.js` and `invoiceHelper.js` into a single file with a unified `normalizeOrderData` function and a shared print lock. Old export names retained as backward-compatible aliases.
+
+### Changed
+- **Payroll Utilities Merged**: Consolidated `payroll_util.js` into `payrollHelpers.js`. The standalone `payroll_util.js` file has been removed.
+- **`resolveHourlyRate`**: Now handles both `rateHistory` (old schema) and `effectiveRates` (new schema) field names for safe compatibility during data migrations.
+- **ID Generator Fallback**: Fallback IDs from `idGenerator.js` now include a random suffix to prevent ID collisions during concurrent Firestore transaction failures.
+- **13 Components Refactored**: `Transactions`, `ExpenseManagement`, `ShiftDetailView`, `POS`, `OrderManagement`, `SimpleReceipt`, `ServiceInvoice`, `EndShiftDialog`, `OrderDetailsDialog`, `Shifts`, `AdminHome`, `FinancialPnL`, and `OrderDetailsDialog` all now import from shared utilities instead of defining local copies.
+
+### Fixed
+- **Critical Crash in ExpenseManagement**: Resolved a `ReferenceError: showInfo is not defined` crash that occurred when submitting expense forms with missing required fields (expense type, staff selection, or edit reason). All `showInfo` calls replaced with `showSnackbar`.
+- **Payroll Date Timezone Bug**: `tsFromYMD` in `payrollHelpers.js` now anchors dates to `+08:00` (PHT) to prevent off-by-8-hour payroll period boundary errors on some systems.
+
+### Removed
+- **`src/utils/payroll_util.js`**: Deleted after full merge into `payrollHelpers.js`.
+- **`debug_shifts.js`**: Removed leftover dev-only debug script from the project root.
+
 ## [0.1.15] - 2026-03-04
 
 ### Added

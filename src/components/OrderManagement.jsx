@@ -32,23 +32,12 @@ import LoadingScreen from './common/LoadingScreen';
 import PageHeader from './common/PageHeader';
 import { SimpleReceipt } from './SimpleReceipt';
 import { ServiceInvoice } from './ServiceInvoice';
-import { normalizeReceiptData, safePrint } from '../utils/receiptHelper';
-import { normalizeInvoiceData, safePrintInvoice } from '../utils/invoiceHelper';
+import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice } from '../utils/printHelper';
 import ConfirmationReasonDialog from './ConfirmationReasonDialog';
+import { fmtCurrency, fmtDateTime } from '../utils/formatters';
 
-const currency = (n) => `₱${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-const fmtDateTime = (ts) => {
-    if (!ts) return "---";
-    let d;
-    if (ts.seconds) d = new Date(ts.seconds * 1000);
-    else if (ts instanceof Date) d = ts;
-    else d = new Date(ts);
-    return d.toLocaleString('en-US', {
-        month: 'short', day: 'numeric', year: 'numeric',
-        hour: '2-digit', minute: '2-digit'
-    });
-};
+// currency and fmtDateTime are imported from ../utils/formatters
+const currency = fmtCurrency;
 
 export default function OrderManagement({ showSnackbar }) {
     const theme = useTheme();

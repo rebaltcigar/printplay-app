@@ -60,6 +60,7 @@ import {
   FieldValue,
 } from "firebase/firestore";
 import { generateDisplayId } from "../utils/idGenerator";
+import { fmtCurrency, toDatetimeLocal, fromDatetimeLocal, identifierText, downloadCSV } from "../utils/formatters";
 
 
 import CustomerDialog from "./CustomerDialog";
@@ -69,30 +70,13 @@ import ShiftAuditDebugger from "./ShiftAuditDebugger"; // NEW
 import AssignmentTurnedInIcon from "@mui/icons-material/AssignmentTurnedIn";
 import logo from "/icon.ico";
 
-// UI-only peso formatter (commas, 2 decimals). Does NOT touch what we store.
-const fmtPeso = (n) =>
-  `₱${Number(n || 0).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+// Helpers imported from ../utils/formatters:
+//   fmtCurrency, toDatetimeLocal, fromDatetimeLocal, identifierText, downloadCSV
+// Local alias for readability in this file:
+const fmtPeso = fmtCurrency;
 
-const normalize = (s) => String(s ?? "").trim().toLowerCase(); // NEW HELPER
+const normalize = (s) => String(s ?? "").trim().toLowerCase();
 
-const BILL_DENOMS = [1000, 500, 200, 100, 50, 20];
-const COIN_DENOMS = [20, 10, 5, 1];
-
-/* helpers for datetime-local */
-const toDatetimeLocal = (d) => {
-  const x = new Date(d);
-  const pad = (n) => String(n).padStart(2, "0");
-  const yyyy = x.getFullYear();
-  const mm = pad(x.getMonth() + 1);
-  const dd = pad(x.getDate());
-  const hh = pad(x.getHours());
-  const mi = pad(x.getMinutes());
-  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
-};
-const fromDatetimeLocal = (s) => new Date(s);
 
 export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }) {
   // ----- form state (left) -----
@@ -272,14 +256,7 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
     setOpenCustomerDialog(false);
   };
 
-  const identifierText = (tx) => {
-    if (tx.item === "Expenses") {
-      const staffChunk = tx.expenseStaffName ? ` · ${tx.expenseStaffName}` : "";
-      return `${tx.expenseType || ""}${staffChunk}`;
-    }
-    if (tx.customerName) return tx.customerName;
-    return "—";
-  };
+  // identifierText is imported from ../utils/formatters
 
   useEffect(() => {
     if (!currentlyEditing) return;
@@ -653,19 +630,11 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
       ].join(",");
     });
 
-    // 3. Construct CSV Content
-    const csvContent = [headers.join(","), ...rows].join("\n");
-
-    // 4. Create Blob and Download
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `shift_${shift.id || "export"}_transactions.csv`);
-    link.style.visibility = "hidden";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    // 4. Download
+    downloadCSV(
+      [headers.join(","), ...rows].join("\n"),
+      `shift_${shift.id || "export"}_transactions.csv`
+    );
   };
 
   const servicesTotal = useMemo(

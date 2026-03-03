@@ -58,6 +58,7 @@ import { db } from "../firebase";
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 import LoadingScreen from "./common/LoadingScreen";
 import PageHeader from "./common/PageHeader";
+import { fmtCurrency, toDateInput, downloadCSV } from "../utils/formatters";
 
 const EXPENSE_TYPES_ALL = [
   "Supplies",
@@ -69,14 +70,8 @@ const EXPENSE_TYPES_ALL = [
   "Misc",
 ];
 
-function toDateOnlyString(d) {
-  if (!d) return "";
-  const dt = new Date(d);
-  const yyyy = dt.getFullYear();
-  const mm = String(dt.getMonth() + 1).padStart(2, "0");
-  const dd = String(dt.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
+// toDateOnlyString is now toDateInput from formatters.js
+const toDateOnlyString = toDateInput;
 
 function toDateTimeString(d) {
   if (!d) return "";
@@ -91,13 +86,8 @@ function toDateTimeString(d) {
   });
 }
 
-function toCurrency(n) {
-  const val = Number(n || 0);
-  return `₱${val.toLocaleString("en-US", {
-    maximumFractionDigits: 2,
-    minimumFractionDigits: 2,
-  })}`;
-}
+// toCurrency is now fmtCurrency from formatters.js
+const toCurrency = fmtCurrency;
 
 export default function ExpenseManagement({ user, showSnackbar }) {
   /** ===================== FORM STATE (LEFT) ===================== */
@@ -491,11 +481,11 @@ export default function ExpenseManagement({ user, showSnackbar }) {
     e.preventDefault();
 
     if (!formType) {
-      showInfo("Missing type", "Please select an expense type.");
+      showSnackbar?.("Please select an expense type.", "warning");
       return;
     }
     if ((formType === "Salary" || formType === "Salary Advance") && !formStaffId) {
-      showInfo("Missing staff", "Please select a staff for Salary or Salary Advance.");
+      showSnackbar?.("Please select a staff for Salary or Salary Advance.", "warning");
       return;
     }
 
@@ -553,12 +543,10 @@ export default function ExpenseManagement({ user, showSnackbar }) {
       setFormQuantity("");
       setFormPrice("");
       setFormNotes("");
-      if (showSnackbar) showSnackbar("Expense has been added.", 'success');
-      else showInfo("Saved", "Expense has been added.");
+      showSnackbar?.("Expense has been added.", 'success');
     } catch (err) {
       console.error("Failed to add expense", err);
-      if (showSnackbar) showSnackbar(`Failed to add expense: ${err.message}`, 'error');
-      else showInfo("Error", `Failed to add expense. ${err.message}`);
+      showSnackbar?.(`Failed to add expense: ${err.message}`, 'error');
     } finally {
       stopBusy();
     }
@@ -607,11 +595,11 @@ export default function ExpenseManagement({ user, showSnackbar }) {
     if (!currentlyEditing) return;
 
     if (!formType) {
-      showInfo("Missing type", "Please select an expense type.");
+      showSnackbar?.("Please select an expense type.", "warning");
       return;
     }
     if ((formType === "Salary" || formType === "Salary Advance") && !formStaffId) {
-      showInfo("Missing staff", "Please select a staff for Salary or Salary Advance.");
+      showSnackbar?.("Please select a staff for Salary or Salary Advance.", "warning");
       return;
     }
 
@@ -639,8 +627,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
     const row = dlg.row;
     const reason = dlg.reason?.trim();
     if (!row || !reason) {
-      if (showSnackbar) showSnackbar("Please enter a reason for this edit.", 'warning');
-      else showInfo("Reason required", "Please enter a reason for this edit.");
+      showSnackbar?.("Please enter a reason for this edit.", 'warning');
       return;
     }
 

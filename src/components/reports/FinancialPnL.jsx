@@ -45,7 +45,7 @@ import {
 } from '../../utils/analytics';
 import dayjs from 'dayjs';
 import { useAnalytics } from '../../contexts/AnalyticsContext';
-import { safePrint } from '../../utils/receiptHelper';
+import { safePrint } from '../../utils/printHelper';
 import PageHeader from '../common/PageHeader';
 
 export default function FinancialPnL() {

@@ -3,8 +3,10 @@ import React from 'react';
 import ReactDOM from 'react-dom'; // ADDED for Portal
 import { Box, Typography, Divider, Table, TableBody, TableRow, TableCell } from '@mui/material';
 
-// Helper for currency format
-const currency = (num) => `₱${Number(num || 0).toFixed(2)}`;
+import { fmtCurrency } from '../utils/formatters';
+
+// currency alias for use throughout this file
+const currency = fmtCurrency;
 
 export const SimpleReceipt = ({ order, shiftData, staffName, settings }) => {
   if (!order && !shiftData) return null;
