@@ -3,8 +3,9 @@
 // Single source of truth for all payroll calculation helpers.
 
 import { Timestamp } from "firebase/firestore";
-// sumDenominations is the canonical implementation — single source of truth
-export { sumDenominations } from "./shiftFinancials";
+import { sumDenominations } from "./shiftFinancials";
+export { sumDenominations };
+
 
 
 // ---------------------------------------------------------------------------

@@ -65,6 +65,8 @@ import {
   tsFromYMD,
 } from "../../utils/payrollHelpers";
 import { generateDisplayId, generateBatchIds } from "../../utils/idGenerator";
+import LoadingScreen from "../common/LoadingScreen";
+
 
 export default function RunPayroll({
   user,
@@ -1787,23 +1789,8 @@ export default function RunPayroll({
         </DialogActions>
       </Dialog>
 
-      {/* global loader */}
-
-      {/* global loader */}
-      <Backdrop
-        open={busy}
-        sx={{
-          zIndex: (theme) => theme.zIndex.modal + 10,
-          display: "flex",
-          flexDirection: "column",
-          gap: 2,
-        }}
-      >
-        <CircularProgress />
-        <Typography variant="body1" sx={{ color: "#fff" }}>
-          {busyMsg || "Working..."}
-        </Typography>
-      </Backdrop>
+      {busy && <LoadingScreen message={busyMsg || "Working..."} overlay />}
     </>
+
   );
 }
