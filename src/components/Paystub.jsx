@@ -28,12 +28,32 @@ import html2canvas from "html2canvas";
 // ====== CONFIG ======
 const PAYSLIP_WIDTH = "720px"; // change to "80mm" or "600px" if you like
 
-// Helper to format numbers as currency with the Peso sign
 const formatCurrency = (n) =>
   `₱${Number(n || 0).toLocaleString("en-US", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+
+
+const formatTimeRange = (start, end) => {
+  if (!start?.seconds) return "—";
+  const s = new Date(start.seconds * 1000);
+  const startTime = s.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "Asia/Manila",
+  });
+  if (!end?.seconds) return `${startTime} - (Ongoing)`;
+  const e = new Date(end.seconds * 1000);
+  const endTime = e.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "Asia/Manila",
+  });
+  return `${startTime} - ${endTime} `;
+};
 
 // ---------- Single Paystub ----------
 function Paystub({ stub }) {
@@ -59,7 +79,7 @@ function Paystub({ stub }) {
     const mm = String(payDate.getMonth() + 1).padStart(2, "0");
     const dd = String(payDate.getDate()).padStart(2, "0");
     const yyyy = payDate.getFullYear();
-    const dateString = `${mm}${dd}${yyyy}`;
+    const dateString = `${mm}${dd}${yyyy} `;
     const staffName = (stub.staffName || "Employee").replace(/\s+/g, "_");
     const fileName = `Pay_Stub_${staffName}_${dateString}.png`;
 
@@ -75,13 +95,13 @@ function Paystub({ stub }) {
       document.body.removeChild(link);
     });
   };
-  
+
   // Totals for display
   const grossPay = Number(stub.grossPay || 0);
   const totalAdditions = Number(stub.totalAdditions || 0);
   const totalDeductions = Number(stub.totalDeductions || 0);
   const netPay = Number(stub.netPay || 0);
-  
+
   const hasAdditions = (stub.additionItems && stub.additionItems.length > 0);
 
   return (
@@ -136,13 +156,13 @@ function Paystub({ stub }) {
             <strong>Pay Date:</strong>{" "}
             {stub.payDate?.seconds
               ? new Date(stub.payDate.seconds * 1000).toLocaleDateString(
-                  "en-US",
-                  {
-                    month: "2-digit",
-                    day: "2-digit",
-                    year: "numeric",
-                  }
-                )
+                "en-US",
+                {
+                  month: "2-digit",
+                  day: "2-digit",
+                  year: "numeric",
+                }
+              )
               : "N/A"}
           </Typography>
           {/* optional: period */}
@@ -169,8 +189,12 @@ function Paystub({ stub }) {
             <TableHead>
               <TableRow sx={{ backgroundColor: "#f5f5f5" }}>
                 <TableCell sx={{ fontWeight: "bold" }}>Shift</TableCell>
+                <TableCell sx={{ fontWeight: "bold" }}>Time</TableCell>
                 <TableCell align="right" sx={{ fontWeight: "bold" }}>
                   Hours
+                </TableCell>
+                <TableCell align="right" sx={{ fontWeight: "bold" }}>
+                  Amount
                 </TableCell>
               </TableRow>
             </TableHead>
@@ -178,18 +202,24 @@ function Paystub({ stub }) {
               {(stub.shifts || []).map((shift) => (
                 <TableRow key={shift.id}>
                   <TableCell>{shift.label}</TableCell>
+                  <TableCell>{formatTimeRange(shift.startTime, shift.endTime)}</TableCell>
                   <TableCell align="right">
                     {Number(shift.hours).toFixed(2)}
+                  </TableCell>
+                  <TableCell align="right">
+                    {formatCurrency(shift.pay || 0)}
                   </TableCell>
                 </TableRow>
               ))}
               {/* Totals for Shifts */}
               <TableRow sx={{ backgroundColor: "#f0f0f0" }}>
-                <TableCell component="th" scope="row" sx={{ fontWeight: "bold" }}>
+                <TableCell colSpan={2} component="th" scope="row" sx={{ fontWeight: "bold" }}>
                   Total Hours | Gross Pay
                 </TableCell>
                 <TableCell align="right" sx={{ fontWeight: "bold" }}>
-                  {Number(stub.totalHours || 0).toFixed(2)} |{" "}
+                  {Number(stub.totalHours || 0).toFixed(2)}
+                </TableCell>
+                <TableCell align="right" sx={{ fontWeight: "bold" }}>
                   {formatCurrency(grossPay)}
                 </TableCell>
               </TableRow>
@@ -215,12 +245,12 @@ function Paystub({ stub }) {
                 </TableHead>
                 <TableBody>
                   {stub.additionItems.map((item, index) => (
-                      <TableRow key={item.id + index}>
-                        <TableCell>{item.label}</TableCell>
-                        <TableCell align="right">
-                          {formatCurrency(item.amount)}
-                        </TableCell>
-                      </TableRow>
+                    <TableRow key={item.id + index}>
+                      <TableCell>{item.label}</TableCell>
+                      <TableCell align="right">
+                        {formatCurrency(item.amount)}
+                      </TableCell>
+                    </TableRow>
                   ))}
                   <TableRow sx={{ backgroundColor: "#e8f5e9" }}>
                     <TableCell component="th" scope="row" sx={{ fontWeight: "bold" }}>
@@ -355,27 +385,27 @@ export default function PaystubDialog({ open, onClose, runId }) {
 
   // print css to keep width when someone hits CTRL+P
   const printCss = `
-    @media print {
-      .MuiDialog-paper {
-        margin: 0 !important;
-        max-width: none !important;
-        width: auto !important;
-        box-shadow: none !important;
-      }
-      .paystub-print-area {
-        width: ${PAYSLIP_WIDTH} !important;
-        margin: 0 auto !important;
-        box-shadow: none !important;
-      }
-      .paystub-dialog-left,
-      .MuiDialogActions-root {
-        display: none !important;
-      }
+@media print {
+      .MuiDialog - paper {
+    margin: 0!important;
+    max - width: none!important;
+    width: auto!important;
+    box - shadow: none!important;
+  }
+      .paystub - print - area {
+    width: ${PAYSLIP_WIDTH} !important;
+    margin: 0 auto!important;
+    box - shadow: none!important;
+  }
+      .paystub - dialog - left,
+      .MuiDialogActions - root {
+    display: none!important;
+  }
       body {
-        background: #fff !important;
-      }
-    }
-  `;
+    background: #fff!important;
+  }
+}
+`;
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">

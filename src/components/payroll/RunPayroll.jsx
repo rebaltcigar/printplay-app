@@ -948,6 +948,11 @@ export default function RunPayroll({
       );
       existingTx.docs.forEach((t) => txBatch.update(t.ref, { voided: true }));
 
+      // 1.5) delete existing paystubs to avoid duplicates
+      updateBusy("Cleaning up old paystubs...");
+      const oldStubs = await getDocs(collection(runRef, "paystubs"));
+      oldStubs.docs.forEach((s) => txBatch.delete(s.ref));
+
       // 2) lookups for cross-staff salary advances
       const lineIdByUid = new Map();
       const lineIdByEmail = new Map();
@@ -1102,6 +1107,8 @@ export default function RunPayroll({
             label: shiftLabel,
             hours: toHours(minutesUsed),
             minutes: minutesUsed,
+            startTime: start,
+            endTime: end,
             expenseDate: expenseDateTS,
             advances: advancesForThisShiftForThisStaff,
             shortages: shortageAmount,
@@ -1237,7 +1244,8 @@ export default function RunPayroll({
         const deductionItems = [];
         const additionItems = []; // NEW
 
-        m.shifts.forEach((s) => {
+        const shiftsForStub = m.shifts.map((s) => {
+          const shiftPay = Number(((s.minutes / 60) * m.rate).toFixed(2));
           if (s.advances > 0) {
             deductionItems.push({
               id: s.id,
@@ -1252,6 +1260,14 @@ export default function RunPayroll({
               amount: s.shortages,
             });
           }
+          return {
+            id: s.id,
+            label: s.label,
+            hours: s.hours,
+            startTime: s.startTime || null,
+            endTime: s.endTime || null,
+            pay: shiftPay,
+          };
         });
 
         m.manualAdjustments.forEach((a) =>
@@ -1302,11 +1318,7 @@ export default function RunPayroll({
           periodStart: periodStartTS,
           periodEnd: periodEndTS,
           payDate: runPayDateTS,
-          shifts: m.shifts.map((s) => ({
-            id: s.id,
-            label: s.label,
-            hours: s.hours,
-          })),
+          shifts: shiftsForStub,
           deductionItems,
           additionItems, // NEW
           totalHours: toHours(m.totalMinutes),

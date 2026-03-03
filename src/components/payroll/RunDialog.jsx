@@ -29,6 +29,8 @@ import {
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import CheckIcon from "@mui/icons-material/Check";
+import RefreshIcon from "@mui/icons-material/Refresh";
+
 import {
   peso,
   toHours,
@@ -875,9 +877,18 @@ export default function RunDialog({
               </>
             )}
             {status === "posted" && (
-              <Button variant="contained" onClick={showPaystubs}>
-                View Paystubs
-              </Button>
+              <Stack direction="row" spacing={1}>
+                <Button
+                  variant="outlined"
+                  startIcon={<RefreshIcon />}
+                  onClick={onFinalize}
+                >
+                  Regenerate Paystubs
+                </Button>
+                <Button variant="contained" onClick={showPaystubs}>
+                  View Paystubs
+                </Button>
+              </Stack>
             )}
           </>
         )}
