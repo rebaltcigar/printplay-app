@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
  
+## [0.1.15] - 2026-03-04
+
+### Added
+- **Expenses Page**: Added "Load All Filtered" and "Load All Expenses" buttons to quickly fetch wide date ranges or the entire database without pagination. Filters will also apply correctly to all fetched data instead of only paginated groups.
+
 ## [0.1.14] - 2026-03-03
 
 ### Added

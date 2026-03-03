@@ -333,6 +333,50 @@ export default function ExpenseManagement({ user, showSnackbar }) {
     return () => { if (unsubRef.current) unsubRef.current(); };
   }, [filterStart, filterEnd]);
 
+  /* ---- Fetch ALL rows without limits ---- */
+  const fetchAllExpenses = async (forceAllTime = false) => {
+    setLoadingMore(true);
+    setLoading(true);
+
+    // Cleanup any existing real-time listener
+    if (unsubRef.current) {
+      unsubRef.current();
+      unsubRef.current = null;
+    }
+
+    try {
+      let constraints = [
+        where("item", "==", "Expenses"),
+        orderBy("timestamp", "desc"),
+      ];
+
+      if (!forceAllTime) {
+        const s = new Date(filterStart); s.setHours(0, 0, 0, 0);
+        const e = new Date(filterEnd); e.setHours(23, 59, 59, 999);
+        constraints.push(where("timestamp", ">=", s));
+        constraints.push(where("timestamp", "<=", e));
+      }
+
+      const q = query(collection(db, "transactions"), ...constraints);
+      const snap = await getDocs(q);
+
+      const newRows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      setExpenses(newRows);
+      setLastDoc(null);
+      setHasMore(false);
+      setIsArchiveMode(forceAllTime ? true : false);
+
+      if (showSnackbar) showSnackbar(`Loaded ${newRows.length} expenses.`, 'success');
+    } catch (err) {
+      console.error("Fetch All error", err);
+      if (showSnackbar) showSnackbar("Failed to load all expenses.", "error");
+    } finally {
+      setLoadingMore(false);
+      setLoading(false);
+    }
+  };
+
   /** ===================== DERIVED ROWS + FILTERS ===================== */
   const tableRows = useMemo(() => {
     return expenses.map((e) => {
@@ -969,6 +1013,22 @@ export default function ExpenseManagement({ user, showSnackbar }) {
             >
               Export CSV
             </Button>
+            <Button
+              variant="contained"
+              color="secondary"
+              onClick={() => fetchAllExpenses(false)}
+              size="small"
+            >
+              Load All Filtered
+            </Button>
+            <Button
+              variant="contained"
+              color="warning"
+              onClick={() => fetchAllExpenses(true)}
+              size="small"
+            >
+              Load ALL EXPENSES
+            </Button>
           </Box>
 
           {/* Table */}
@@ -1210,6 +1270,24 @@ export default function ExpenseManagement({ user, showSnackbar }) {
                 sx={{ gridColumn: { xs: "1 / -1", sm: "auto" } }}
               >
                 Export CSV
+              </Button>
+              <Button
+                variant="contained"
+                color="secondary"
+                onClick={() => fetchAllExpenses(false)}
+                size="small"
+                sx={{ gridColumn: { xs: "1 / -1", sm: "auto" } }}
+              >
+                Load All Filtered
+              </Button>
+              <Button
+                variant="contained"
+                color="warning"
+                onClick={() => fetchAllExpenses(true)}
+                size="small"
+                sx={{ gridColumn: { xs: "1 / -1", sm: "auto" } }}
+              >
+                Load ALL EXPENSES
               </Button>
             </Box>
           </Collapse>
