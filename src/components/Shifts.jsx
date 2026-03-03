@@ -71,6 +71,9 @@ import { fmtPeso } from "../utils/analytics";
 import { aggregateShiftTransactions, sumDenominations, computeExpectedCash } from "../utils/shiftFinancials";
 import { useStaffList } from "../hooks/useStaffList";
 
+// Shift period options
+const SHIFT_PERIODS = ["Morning", "Afternoon", "Evening"];
+
 // Returns { startStr, endStr } for the current month as "YYYY-MM-DD" strings
 const thisMonthDefaults = () => {
   const now = new Date();
