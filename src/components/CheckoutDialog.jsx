@@ -66,10 +66,29 @@ export default function CheckoutDialog({ open, onClose, total, onConfirm, custom
     return (
         <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm" onKeyDown={handleKeyDown}>
             <DialogTitle sx={{ textAlign: 'center', fontWeight: 'bold' }}>
-                Total Due: ₱{total.toFixed(2)}
+                Checkout
             </DialogTitle>
             <DialogContent dividers>
                 <Stack spacing={3}>
+                    {/* ENHANCED TOTAL DISPLAY */}
+                    <Box
+                        sx={{
+                            bgcolor: 'primary.main',
+                            color: 'primary.contrastText',
+                            p: 3,
+                            borderRadius: 2,
+                            textAlign: 'center',
+                            boxShadow: 3
+                        }}
+                    >
+                        <Typography variant="overline" sx={{ letterSpacing: 2, opacity: 0.9, fontWeight: 'bold' }}>
+                            ORDER TOTAL
+                        </Typography>
+                        <Typography variant="h2" sx={{ fontWeight: 900, lineHeight: 1 }}>
+                            ₱{total.toFixed(2)}
+                        </Typography>
+                    </Box>
+
                     <ToggleButtonGroup value={method} exclusive onChange={(e, m) => m && setMethod(m)} fullWidth color="primary">
                         <ToggleButton value="Cash"><PaymentsIcon sx={{ mr: 1 }} /> Cash</ToggleButton>
                         <ToggleButton value="GCash"><PhoneAndroidIcon sx={{ mr: 1 }} /> GCash</ToggleButton>
@@ -106,12 +125,13 @@ export default function CheckoutDialog({ open, onClose, total, onConfirm, custom
                                     <Button key={amt} variant="outlined" size="small" onClick={() => addCash(amt)}>+{amt}</Button>
                                 ))}
                             </Stack>
-                            <Box sx={{ bgcolor: 'rgba(255, 255, 255, 0.05)', p: 2, borderRadius: 2, textAlign: 'center' }}>
-                                <Typography variant="h6">Change</Typography>
-                                <Typography variant="h4" color="primary.main" fontWeight="bold">₱{change.toFixed(2)}</Typography>
+                            <Box sx={{ bgcolor: 'rgba(255, 255, 255, 0.05)', p: 1.5, borderRadius: 2, textAlign: 'center', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+                                <Typography variant="body2" sx={{ opacity: 0.7 }}>Expected Change</Typography>
+                                <Typography variant="h5" color="secondary.main" fontWeight="bold">₱{change.toFixed(2)}</Typography>
                             </Box>
                         </Box>
                     )}
+
 
                     {method === 'GCash' && (
                         <Stack spacing={2}>

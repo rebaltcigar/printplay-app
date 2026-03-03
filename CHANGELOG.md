@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
  
+## [0.1.21] - 2026-03-04
+
+### Changed
+- **POS Checkout UI**: Re-designed the checkout modal to make the **Order Total** the most prominent element. It now features a large, bold display in the center of the modal with a high-contrast background, ensuring staff and customers see the total immediately.
+
+ 
 ## [0.1.20] - 2026-03-04
 
 ### Added
