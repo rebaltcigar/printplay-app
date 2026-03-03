@@ -298,6 +298,17 @@ export default function AdminDashboard({ user, onLogout }) {
         >
           <Toolbar sx={{ alignItems: "center", gap: 1, minHeight: { xs: 56, sm: 64 } }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexGrow: 1, ml: isMobile ? 0 : 1 }}>
+              {/* Hamburger for mobile — opens the slide-in nav drawer */}
+              {isMobile && (
+                <IconButton
+                  color="inherit"
+                  onClick={() => setMobileDrawerOpen(true)}
+                  size="small"
+                  sx={{ color: 'text.primary', mr: 0.5 }}
+                >
+                  <MenuIcon />
+                </IconButton>
+              )}
               <Box
                 component="img"
                 src={storeSettings.logoUrl}
@@ -326,12 +337,13 @@ export default function AdminDashboard({ user, onLogout }) {
               </Tooltip>
             )}
 
+            {/* Open Drawer — only on desktop (PC has a physical cash drawer, mobile doesn't) */}
             <Button
               variant="contained"
               color="primary"
               startIcon={<MeetingRoomIcon />}
               onClick={() => setCashDrawerOpen(true)}
-              sx={{ mr: 1, textTransform: "none", borderRadius: 2 }}
+              sx={{ mr: 1, textTransform: "none", borderRadius: 2, display: { xs: 'none', md: 'inline-flex' } }}
             >
               Open Drawer
             </Button>

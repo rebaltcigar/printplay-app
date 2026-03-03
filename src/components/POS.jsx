@@ -1067,7 +1067,6 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
           </IconButton>
 
           <MuiMenu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)}>
-            <MenuItem onClick={() => { setMenuAnchor(null); setOpenDrawerDialog(true); }}>Drawer</MenuItem>
             <MenuItem onClick={() => { setMenuAnchor(null); setOpenExpense(true); }}>+ Expense</MenuItem>
             <MenuItem onClick={() => { setMenuAnchor(null); setOpenDebtDialog(true); }}>Debt Log</MenuItem>
             <MenuItem onClick={() => { setMenuAnchor(null); setOpenEndShiftDialog(true); }}>End Shift</MenuItem>

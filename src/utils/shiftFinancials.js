@@ -165,20 +165,24 @@ export const computeShiftFinancials = (transactions = [], pcRentalTotal = 0) => 
  *
  * Priority order:
  *   1. shift.breakdown.cash (set at end-of-shift; most accurate)
- *   2. aggregated cashSales + pcRentalTotal (live-aggregated fallback)
+ *   2. aggregated cashSales + (pcRentalTotal - pcNonCashSales) fallback
  *
  * @param {Object} shift          - Firestore shift doc
- * @param {Object} [txAgg]        - Aggregated tx data { cashSales, expenses }
- * @returns {number} expectedCash (before subtracting expenses)
+ * @param {Object} [txAgg]        - Aggregated tx data { cashSales, expenses, pcNonCashSales }
+ * @returns {number} expectedCash
  */
 export const computeExpectedCash = (shift, txAgg = {}) => {
     const pc = Number(shift?.pcRentalTotal || 0);
     const expenses = Number(txAgg?.expenses || shift?.expensesTotal || 0);
+    // Deduct non-cash (GCash/Charge) PC Rental transactions from the manual total
+    // so those amounts are NOT counted as cash in the drawer.
+    const pcNonCash = Number(txAgg?.pcNonCashSales || 0);
+    const pcCash = Math.max(0, pc - pcNonCash);
 
     if (shift?.breakdown?.cash !== undefined) {
         return Number(shift.breakdown.cash || 0) - expenses;
     }
-    return (Number(txAgg?.cashSales || 0) + pc) - expenses;
+    return (Number(txAgg?.cashSales || 0) + pcCash) - expenses;
 };
 
 // ---------------------------------------------------------------------------
@@ -195,13 +199,14 @@ export const computeExpectedCash = (shift, txAgg = {}) => {
  * @param {Array}  txList       - Shift transactions (filtered, non-deleted)
  * @param {Array}  serviceMeta  - [{ name: string, category: string }] from Firestore
  * @returns {{
- *   serviceTotals: Object,   // { [displayName]: amount }
- *   sales:         number,   // non-PC-rental debit totals
+ *   serviceTotals: Object,
+ *   sales:         number,
  *   expenses:      number,
- *   systemTotal:   number,   // sales - expenses
+ *   systemTotal:   number,
  *   cashSales:     number,
  *   gcashSales:    number,
  *   arSales:       number,
+ *   pcNonCashSales: number,  // GCash + Charge logged as PC Rental (NOT cash in drawer)
  * }}
  */
 export const aggregateShiftTransactions = (txList = [], serviceMeta = []) => {
@@ -217,6 +222,8 @@ export const aggregateShiftTransactions = (txList = [], serviceMeta = []) => {
     const serviceTotals = {};
     let sales = 0, expenses = 0;
     let cashSales = 0, gcashSales = 0, arSales = 0;
+    // Track non-cash PC Rental so expectedCash is not inflated
+    let pcNonCashSales = 0;
 
     for (const tx of txList) {
         if (!tx || tx.isDeleted === true) continue;
@@ -249,9 +256,19 @@ export const aggregateShiftTransactions = (txList = [], serviceMeta = []) => {
         if (normalize(cat) === 'debit') {
             if (!isPcRental) {
                 sales += amt;
-                if (tx.paymentMethod === 'GCash') gcashSales += amt;
-                else if (tx.paymentMethod === 'Charge') arSales += amt;
-                else cashSales += amt;
+            }
+
+            if (tx.paymentMethod === 'GCash') {
+                gcashSales += amt;
+                if (isPcRental) pcNonCashSales += amt;   // GCash PC Rental → not in drawer
+            } else if (tx.paymentMethod === 'Charge') {
+                arSales += amt;
+                if (isPcRental) pcNonCashSales += amt;   // AR PC Rental → not in drawer
+            } else {
+                // Cash: only add if NOT PC Rental (PC Rental cash covered by manual total input)
+                if (!isPcRental) {
+                    cashSales += amt;
+                }
             }
         } else {
             expenses += amt;
@@ -266,6 +283,7 @@ export const aggregateShiftTransactions = (txList = [], serviceMeta = []) => {
         cashSales,
         gcashSales,
         arSales,
+        pcNonCashSales,
     };
 };
 
