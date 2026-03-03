@@ -74,6 +74,18 @@ import { useStaffList } from "../hooks/useStaffList";
 // Shift period options
 const SHIFT_PERIODS = ["Morning", "Afternoon", "Evening"];
 
+// Helper: calculate on-hand cash from denominations; returns `null` when
+// denominations are missing or empty to indicate "not counted".
+const calculateOnHand = (denoms) => {
+  if (!denoms || typeof denoms !== 'object') return null;
+  if (Object.keys(denoms).length === 0) return null;
+  try {
+    return sumDenominations(denoms);
+  } catch (e) {
+    return null;
+  }
+};
+
 // Returns { startStr, endStr } for the current month as "YYYY-MM-DD" strings
 const thisMonthDefaults = () => {
   const now = new Date();
