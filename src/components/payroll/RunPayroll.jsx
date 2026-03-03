@@ -146,29 +146,20 @@ export default function RunPayroll({
       const start = tsFromYMD(periodStart, false);
       const end = tsFromYMD(periodEnd, true);
 
-      updateBusy("Querying shifts from Firestore...");
-      const qShifts = query(
-        collection(db, "shifts"),
-        where("startTime", ">=", start),
-        where("startTime", "<=", end)
-      );
-      const sSnap = await getDocs(qShifts);
-
-      // Also fetch admin-added Salary/Salary Advance within this period
-      // Also fetch admin-added Salary/Salary Advance within this period
-      console.log("Fetching admin manual salary entries via Timestamp only...");
-      // Safe query: Only range on timestamp. No composite index needed.
-      const qAdmin = query(
-        collection(db, "transactions"),
-        where("timestamp", ">=", start),
-        where("timestamp", "<=", end)
-      );
-      const adminSnap = await getDocs(qAdmin);
-      console.log(`Transactions found in range: ${adminSnap.size}`);
-      const adminExpenses = adminSnap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .filter(t => t.item === "Expenses");
-      console.log(`Filtered to ${adminExpenses.length} expenses.`);
+      // Round 1: fetch shifts + admin transactions in parallel
+      updateBusy("Querying shifts and transactions...");
+      const [sSnap, adminSnap] = await Promise.all([
+        getDocs(query(
+          collection(db, "shifts"),
+          where("startTime", ">=", start),
+          where("startTime", "<=", end)
+        )),
+        getDocs(query(
+          collection(db, "transactions"),
+          where("timestamp", ">=", start),
+          where("timestamp", "<=", end)
+        )),
+      ]);
 
 
       //
@@ -253,10 +244,20 @@ export default function RunPayroll({
         byStaff.set(email, bucket);
       });
 
-      updateBusy("Fetching staff records...");
-      const usersSnap = await getDocs(
-        query(collection(db, "users"), where("role", "==", "staff"))
-      );
+      // Round 2: fetch staff records + ALL per-shift advance queries in parallel
+      updateBusy("Fetching staff records and salary advances...");
+      const shiftRows = Array.from(shiftsById.values());
+      const [usersSnap, ...advanceSnaps] = await Promise.all([
+        getDocs(query(collection(db, "users"), where("role", "==", "staff"))),
+        ...shiftRows.map((row) =>
+          getDocs(query(
+            collection(db, "transactions"),
+            where("expenseType", "==", "Salary Advance"),
+            where("shiftId", "==", row.id)
+          ))
+        ),
+      ]);
+
       const usersByEmail = new Map();
       usersSnap.forEach((u) => {
         const v = u.data() || {};
@@ -267,18 +268,11 @@ export default function RunPayroll({
         });
       });
 
-      // extra advances (for other staff)
-      updateBusy("Analyzing salary advances per shift...");
+      // Process advance results (already fetched in parallel above)
       const extraAdvancesByStaff = new Map();
 
-      for (const row of shiftsById.values()) {
-        const advQ = query(
-          collection(db, "transactions"),
-          where("expenseType", "==", "Salary Advance"),
-          where("shiftId", "==", row.id)
-        );
-        const advSnap = await getDocs(advQ);
-
+      shiftRows.forEach((row, idx) => {
+        const advSnap = advanceSnaps[idx];
         let ownerAdvance = 0;
         const ownerAdvanceRefs = [];
         advSnap.docs.forEach((advDoc) => {
@@ -329,7 +323,7 @@ export default function RunPayroll({
 
         row.advance = ownerAdvance;
         row.advanceRefs = ownerAdvanceRefs;
-      }
+      });
 
       // attach “foreign” advances
       for (const [, info] of extraAdvancesByStaff.entries()) {
@@ -518,13 +512,31 @@ export default function RunPayroll({
 
       updateBusy("Loading run lines...");
       const linesSnap = await getDocs(collection(runRef, "lines"));
-      const out = [];
-      for (const ld of linesSnap.docs) {
+
+      // Process all lines in parallel — each line independently fetches its
+      // overrides, shift docs, and salary advances concurrently.
+      const out = await Promise.all(linesSnap.docs.map(async (ld) => {
         const l = ld.data() || {};
         const lineId = ld.id;
-        const overSnap = await getDocs(
-          collection(runRef, `lines/${lineId}/shifts`)
-        );
+        const shiftIds = l.source?.shiftIds || [];
+
+        // Fetch overrides + all shift docs + all advance queries in one round
+        const [overSnap, ...shiftAndAdvResults] = await Promise.all([
+          getDocs(collection(runRef, `lines/${lineId}/shifts`)),
+          ...shiftIds.map((sid) => getDoc(doc(db, "shifts", sid))),
+          ...shiftIds.map((sid) =>
+            getDocs(query(
+              collection(db, "transactions"),
+              where("expenseType", "==", "Salary Advance"),
+              where("shiftId", "==", sid)
+            ))
+          ),
+        ]);
+
+        // Split results: first N are shift docs, next N are advance snapshots
+        const shiftDocs = shiftAndAdvResults.slice(0, shiftIds.length);
+        const advanceSnaps = shiftAndAdvResults.slice(shiftIds.length);
+
         const overrides = new Map();
         overSnap.forEach((od) => {
           const v = od.data() || {};
@@ -532,17 +544,15 @@ export default function RunPayroll({
         });
 
         const shiftRows = [];
-        for (const sid of l.source?.shiftIds || []) {
-          const sDoc = await getDoc(doc(db, "shifts", sid));
+        for (let i = 0; i < shiftIds.length; i++) {
+          const sid = shiftIds[i];
+          const sDoc = shiftDocs[i];
           if (!sDoc.exists()) continue;
           const s = sDoc.data() || {};
           const ov = overrides.get(sid) || {};
 
-          //
           const isOngoing = !s.endTime;
-
           const start = ov.overrideStart || s.startTime;
-          //
           const end = ov.overrideEnd || s.endTime || (isOngoing ? Timestamp.now() : null);
 
           const minutesOriginal = minutesBetweenTS(s.startTime, s.endTime || Timestamp.now());
@@ -555,7 +565,7 @@ export default function RunPayroll({
           const row = {
             id: sid,
             start: s.startTime,
-            end: s.endTime || null, // null if ongoing
+            end: s.endTime || null,
             title: s.title || s.shiftTitle || null,
             label: s.label || null,
             overrideStart: ov.overrideStart || null,
@@ -568,27 +578,20 @@ export default function RunPayroll({
             denominations: s.denominations || {},
             systemTotal: Number(s.systemTotal || 0),
             staffUid: l.staffUid || null,
-            staffName:
-              l.staffName || s.staffName || s.staffFullName || l.staffEmail,
+            staffName: l.staffName || s.staffName || s.staffFullName || l.staffEmail,
             staffEmail: l.staffEmail || s.staffEmail,
             expenseDate: ov.expenseDate || null,
           };
 
-          // re-attach salary advances
-          const advQ = query(
-            collection(db, "transactions"),
-            where("expenseType", "==", "Salary Advance"),
-            where("shiftId", "==", sid)
-          );
-          const advSnap = await getDocs(advQ);
+          // Advances already fetched in parallel above
+          const advSnap = advanceSnaps[i];
           let ownerAdvance = 0;
           const ownerAdvanceRefs = [];
           advSnap.docs.forEach((ad) => {
             const tx = ad.data() || {};
             if (tx.voided) return;
             const amt = Number(tx.total || 0);
-            const targetEmail =
-              tx.expenseStaffEmail || tx.staffEmail || row.staffEmail;
+            const targetEmail = tx.expenseStaffEmail || tx.staffEmail || row.staffEmail;
             const targetUid = tx.expenseStaffId || tx.staffUid || row.staffUid;
             const isForThisStaff =
               (l.staffEmail && targetEmail === l.staffEmail) ||
@@ -626,26 +629,17 @@ export default function RunPayroll({
         const shortages = shiftRows
           .filter((r) => !r.excluded)
           .reduce((s, r) => s + Number(r.shortage || 0), 0);
-        const extraAdvTotal = extraAdvAdjustments.reduce(
-          (s, a) => s + Number(a.amount || 0),
-          0
-        );
-        const manualTotal = manualAdjustments.reduce(
-          (s, a) => s + Number(a.amount || 0),
-          0
-        );
-        const additionTotal = manualAdditions.reduce(
-          (s, a) => s + Number(a.amount || 0),
-          0
-        );
+        const extraAdvTotal = extraAdvAdjustments.reduce((s, a) => s + Number(a.amount || 0), 0);
+        const manualTotal = manualAdjustments.reduce((s, a) => s + Number(a.amount || 0), 0);
+        const additionTotal = manualAdditions.reduce((s, a) => s + Number(a.amount || 0), 0);
 
         const otherDeductions = Number((extraAdvTotal + manualTotal).toFixed(2));
         const totalAdditions = Number(additionTotal.toFixed(2));
-
         const net = Number(
           (gross + totalAdditions - advances - shortages - otherDeductions).toFixed(2)
         );
-        out.push({
+
+        return {
           id: lineId,
           staffUid: l.staffUid || null,
           staffEmail: l.staffEmail,
@@ -675,8 +669,9 @@ export default function RunPayroll({
             label: a.label,
             amount: a.amount,
           })),
-        });
-      }
+        };
+      }));
+
       setPreview(out.sort((a, b) => a.staffName.localeCompare(b.staffName)));
     } catch (err) {
       console.error(err);
@@ -747,6 +742,8 @@ export default function RunPayroll({
         updatedBy: auth.currentUser?.uid || "admin",
       });
 
+      // Build all line-level batch operations synchronously, then fetch all
+      // override snapshots in parallel before adding delete/set overrides.
       for (const line of preview) {
         batch.set(doc(db, `payrollRuns/${id}/lines/${line.id}`), {
           staffUid: line.staffUid || null,
@@ -782,12 +779,17 @@ export default function RunPayroll({
           updatedAt: serverTimestamp(),
           updatedBy: auth.currentUser?.uid || user?.uid || "admin",
         });
+      }
 
-        // clear previous overrides
-        const overSnap = await getDocs(
-          collection(db, "payrollRuns", id, "lines", line.id, "shifts")
-        );
-        overSnap.forEach((o) => batch.delete(o.ref));
+      // Fetch all override snapshots in parallel, then delete old + set new
+      const overSnaps = await Promise.all(
+        preview.map((line) =>
+          getDocs(collection(db, "payrollRuns", id, "lines", line.id, "shifts"))
+        )
+      );
+
+      preview.forEach((line, lineIdx) => {
+        overSnaps[lineIdx].forEach((o) => batch.delete(o.ref));
 
         for (const r of line.shiftRows) {
           //
@@ -815,7 +817,7 @@ export default function RunPayroll({
             );
           }
         }
-      }
+      });
       await batch.commit();
 
       if (withLoader) {
@@ -971,13 +973,39 @@ export default function RunPayroll({
         Number((((Number(minutes || 0) / 60) * Number(rate || 0))).toFixed(2));
 
       updateBusy("Expanding each line to shift-level data...");
-      for (const ld of linesSnap.docs) {
+
+      // Pre-fetch ALL overrides + shift docs + advance queries in parallel across all lines,
+      // then process sequentially to maintain correct cross-line advance attribution.
+      const linesFetchData = await Promise.all(linesSnap.docs.map(async (ld) => {
         const l = ld.data() || {};
         const lineId = ld.id;
+        const shiftIds = l.source?.shiftIds || [];
 
-        const overSnap = await getDocs(
-          collection(runRef, `lines/${lineId}/shifts`)
-        );
+        const [overSnap, ...shiftAndAdvResults] = await Promise.all([
+          getDocs(collection(runRef, `lines/${lineId}/shifts`)),
+          ...shiftIds.map((sid) => getDoc(doc(db, "shifts", sid))),
+          ...shiftIds.map((sid) =>
+            getDocs(query(
+              collection(db, "transactions"),
+              where("expenseType", "==", "Salary Advance"),
+              where("shiftId", "==", sid)
+            ))
+          ),
+        ]);
+
+        return {
+          ld,
+          l,
+          lineId,
+          shiftIds,
+          overSnap,
+          shiftDocs: shiftAndAdvResults.slice(0, shiftIds.length),
+          advanceSnaps: shiftAndAdvResults.slice(shiftIds.length),
+        };
+      }));
+
+      // Process lines sequentially to maintain cross-line extraDeductionsByLineId state
+      for (const { ld, l, lineId, shiftIds, overSnap, shiftDocs, advanceSnaps } of linesFetchData) {
         const overrides = new Map();
         overSnap.forEach((od) => {
           const v = od.data() || {};
@@ -986,11 +1014,12 @@ export default function RunPayroll({
 
         const shiftDetails = [];
         let totalMinutes = 0;
-        let totalAdvances = 0; // Only advances for THIS staff on THEIR shifts
+        let totalAdvances = 0;
         let totalShortages = 0;
 
-        for (const sid of l.source?.shiftIds || []) {
-          const sDoc = await getDoc(doc(db, "shifts", sid));
+        for (let _si = 0; _si < shiftIds.length; _si++) {
+          const sid = shiftIds[_si];
+          const sDoc = shiftDocs[_si];
           if (!sDoc.exists()) continue;
           const s = sDoc.data() || {};
 
@@ -1021,13 +1050,8 @@ export default function RunPayroll({
             totalShortages += shortageAmount;
           }
 
-          const advSnap = await getDocs(
-            query(
-              collection(db, "transactions"),
-              where("expenseType", "==", "Salary Advance"),
-              where("shiftId", "==", sid)
-            )
-          );
+          // Advance snapshot pre-fetched in parallel above
+          const advSnap = advanceSnaps[_si];
           let advancesForThisShiftForThisStaff = 0;
 
           for (const advDoc of advSnap.docs) {

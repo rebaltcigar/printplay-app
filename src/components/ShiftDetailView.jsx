@@ -61,7 +61,9 @@ import {
 } from "firebase/firestore";
 import { generateDisplayId } from "../utils/idGenerator";
 import { fmtCurrency, toDatetimeLocal, fromDatetimeLocal, identifierText, downloadCSV } from "../utils/formatters";
+import { computeShiftFinancials } from "../utils/shiftFinancials";
 import { useStaffList } from "../hooks/useStaffList";
+import { useServiceList } from "../hooks/useServiceList";
 
 
 import CustomerDialog from "./CustomerDialog";
@@ -94,9 +96,8 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const itemInputRef = useRef(null);
 
-  const [serviceItems, setServiceItems] = useState([]);
-  const [expenseServiceItems, setExpenseServiceItems] = useState([]);
-  // Staff list from shared hook (replaces manual getDocs block in services useEffect)
+  // Services and staff from shared hooks (replaces manual onSnapshot subscriptions)
+  const { parentServices: serviceItems, expenseServiceNames: expenseServiceItems } = useServiceList();
   const { staffOptions } = useStaffList();
   const [currentlyEditing, setCurrentlyEditing] = useState(null);
 
@@ -146,31 +147,7 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
   // Refs to scroll to
   const txControlsRef = useRef(null);
 
-  // ----- load services, staff, recon -----
-  useEffect(() => {
-    const qServices = query(collection(db, "services"), orderBy("sortOrder"));
-    const unsubServices = onSnapshot(qServices, (snap) => {
-      const allServices = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-
-      const parentServices = allServices.filter((s) => !s.parentServiceId);
-      setServiceItems(parentServices);
-
-      const expensesParent = allServices.find(
-        (s) => s.serviceName === "Expenses"
-      );
-      const expensesParentId = expensesParent ? expensesParent.id : null;
-
-      let expenseSubServices = [];
-      if (expensesParentId) {
-        expenseSubServices = allServices
-          .filter((s) => s.parentServiceId === expensesParentId)
-          .map((s) => s.serviceName);
-      }
-      setExpenseServiceItems(expenseSubServices);
-    });
-
-    return () => unsubServices();
-  }, [shift.id]);
+  // Services loaded via useServiceList() hook above (replaces manual onSnapshot)
 
   useEffect(() => {
     if (!shift?.id) return;
@@ -612,64 +589,17 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
     );
   };
 
-  const servicesTotal = useMemo(
-    () =>
-      transactions.reduce((sum, tx) => {
-        // Exclude PC Rental from standard services sum (it's added separately via shift.pcRentalTotal)
-        if (tx.item !== "Expenses" && tx.item !== "New Debt" && normalize(tx.item) !== "pc rental")
-          return sum + (tx.total || 0);
-        return sum;
-      }, 0),
-    [transactions]
-  );
-
-  // New Breakdowns
-  const cashSalesTotal = useMemo(() =>
-    transactions.reduce((sum, tx) => {
-      // Exclude PC Rental from cash sum (it's added separately via shift.pcRentalTotal)
-      if (tx.item !== 'Expenses' && tx.item !== 'New Debt' && normalize(tx.item) !== 'pc rental') {
-        if (tx.paymentMethod === 'Cash' || !tx.paymentMethod) return sum + (tx.total || 0);
-      }
-      return sum;
-    }, 0) + Number(shift.pcRentalTotal || 0),
+  // Single source of truth for all shift financial computations
+  const {
+    servicesTotal,
+    expensesTotal,
+    totalCash: cashSalesTotal,
+    totalGcash: gcashSalesTotal,
+    totalAr: arSalesTotal,
+    systemTotal,
+  } = useMemo(
+    () => computeShiftFinancials(transactions, shift.pcRentalTotal || 0),
     [transactions, shift.pcRentalTotal]
-  );
-
-  const gcashSalesTotal = useMemo(() =>
-    transactions.reduce((sum, tx) => {
-      const isPc = normalize(tx.item) === 'pc rental';
-      // INCLUDE PC Rental in GCash sum (since it's not part of shift.pcRentalTotal's cash portion)
-      if (tx.item !== 'Expenses' && tx.item !== 'New Debt' && (isPc || true) && tx.paymentMethod === 'GCash')
-        return sum + (tx.total || 0);
-      return sum;
-    }, 0),
-    [transactions]
-  );
-
-  const arSalesTotal = useMemo(() =>
-    transactions.reduce((sum, tx) => {
-      const isPc = normalize(tx.item) === 'pc rental';
-      // INCLUDE PC Rental in Charge sum
-      if (tx.item !== 'Expenses' && tx.item !== 'New Debt' && (isPc || true) && tx.paymentMethod === 'Charge')
-        return sum + (tx.total || 0);
-      return sum;
-    }, 0),
-    [transactions]
-  );
-
-  const expensesTotal = useMemo(
-    () =>
-      transactions.reduce((sum, tx) => {
-        if (tx.item === "Expenses" || tx.item === "New Debt")
-          return sum + (tx.total || 0);
-        return sum;
-      }, 0),
-    [transactions]
-  );
-
-  const systemTotal = useMemo(
-    () => servicesTotal - expensesTotal + Number(shift.pcRentalTotal || 0),
-    [servicesTotal, expensesTotal, shift.pcRentalTotal]
   );
 
   useEffect(() => {

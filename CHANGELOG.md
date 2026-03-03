@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
  
+## [0.1.18] - 2026-03-04
+
+### Added
+- **`useServiceList` hook** (`src/hooks/useServiceList.js`): Single Firestore `onSnapshot` subscription for the services collection, replacing three duplicate subscriptions in `Shifts.jsx`, `ShiftDetailView.jsx`, and `Transactions.jsx`. Returns `serviceMeta`, `parentServices`, `parentServiceNames`, and `expenseServiceNames` shaped for each consumer's needs.
+
+### Changed
+- **`ShiftConsolidationDialog.jsx`**: Replaced 7 separate `useMemo` financial calculations with a single `computeShiftFinancials()` call from `shiftFinancials.js`. Cash/GCash/AR breakdown values now correctly exclude non-cash PC Rental payments from the cash drawer total.
+- **`ShiftDetailView.jsx`**: Replaced 6 separate `useMemo` financial calculations with a single `computeShiftFinancials()` call. Removed inline `onSnapshot(services)` subscription — now uses `useServiceList` hook.
+- **`Shifts.jsx`**: Removed dead users `onSnapshot` listener and inline services `onSnapshot` subscription. Now uses `useServiceList` hook for `serviceMeta`.
+- **`Transactions.jsx`**: Removed redundant `staffSelectOptions` state that was a manual sync copy of `staffOptions`. Removed inline services `onSnapshot` with hardcoded expense parent ID — now uses `useServiceList` hook for dynamic, named lookups. Fixed missing `useStaffList` import (pre-existing bug).
+- **`ExpenseManagement.jsx`**: Replaced 13-line inline CSV blob/anchor/URL creation with a single `downloadCSV()` call from `formatters.js`.
+- **`RunPayroll.jsx`**: Parallelized Firestore reads across all four payroll functions (`generatePreview`, `loadRun`, `saveEditsToRun`, `finalizeRun`) using `Promise.all`. Most impactful: per-shift advance queries in `generatePreview` now execute in one parallel batch instead of sequentially (e.g. 20 shifts → ~20× fewer Firestore round trips).
+
+### Fixed
+- **`Transactions.jsx`**: `useStaffList` was called but never imported — fixed missing import statement.
+- **`Transactions.jsx`**: Hardcoded Firestore document ID `"9JlYs3n6k3bsebkLq7A9"` used as expense parent ID removed — expense sub-services are now looked up dynamically by service name.
+
 ## [0.1.17] - 2026-03-04
 
 ### Added

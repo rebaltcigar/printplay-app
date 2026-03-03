@@ -70,6 +70,7 @@ import { generateDisplayId } from "../utils/idGenerator";
 import { fmtPeso, normalize } from "../utils/analytics";
 import { aggregateShiftTransactions, sumDenominations, computeExpectedCash } from "../utils/shiftFinancials";
 import { useStaffList } from "../hooks/useStaffList";
+import { useServiceList } from "../hooks/useServiceList";
 
 // Shift period options
 const SHIFT_PERIODS = ["Morning", "Afternoon", "Evening"];
@@ -103,11 +104,11 @@ const Shifts = ({ showSnackbar }) => {
 
   const [shifts, setShifts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [services, setServices] = useState([]);
   const [viewingShift, setViewingShift] = useState(null);
 
-  // Staff list from shared hook
+  // Staff and services from shared hooks
   const { staffOptions, userMap } = useStaffList();
+  const { serviceMeta } = useServiceList();
 
   const { startStr: defaultStart, endStr: defaultEnd } = thisMonthDefaults();
   const [startDate, setStartDate] = useState(defaultStart);
@@ -237,31 +238,14 @@ const Shifts = ({ showSnackbar }) => {
     return () => unsub();
   }, [startDate, endDate]);
 
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, "users"), (snap) => {
-      // now handled by useStaffList hook — kept for reference only
-    });
-    return () => unsub();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    const qRef = query(collection(db, "services"), orderBy("sortOrder"));
-    const unsub = onSnapshot(qRef, (snap) => {
-      const meta = snap.docs.map((d) => {
-        const v = d.data() || {};
-        return { name: v.serviceName || "", category: v.category || "" };
-      });
-      setServices(meta.filter((s) => s.name));
-    });
-    return () => unsub();
-  }, []);
+  // Users listener removed (handled by useStaffList)
+  // Services listener removed (handled by useServiceList)
 
   const serviceNames = useMemo(() =>
-    services
+    serviceMeta
       .filter(s => normalize(s.category) !== 'credit')
       .map((s) => s.name),
-    [services]);
+    [serviceMeta]);
 
   useEffect(() => {
     const desired = new Set(shifts.map((s) => s.id));
@@ -280,7 +264,7 @@ const Shifts = ({ showSnackbar }) => {
         q1,
         (snap) => {
           const txs = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((t) => t && t.isDeleted !== true);
-          const aggregated = aggregateShiftTransactions(txs, services);
+          const aggregated = aggregateShiftTransactions(txs, serviceMeta);
           setTxAggByShift((prev) => ({
             ...prev,
             [s.id]: { ...aggregated, fullTransactions: txs } // Store full transactions for consolidation
@@ -298,7 +282,7 @@ const Shifts = ({ showSnackbar }) => {
       }
       txUnsubsRef.current = {};
     };
-  }, [shifts, services]);
+  }, [shifts, serviceMeta]);
 
   const perServiceTotals = useMemo(() => {
     const totals = {};

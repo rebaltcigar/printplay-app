@@ -68,6 +68,8 @@ import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice
 import LoadingScreen from './common/LoadingScreen';
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 import PageHeader from "./common/PageHeader";
+import { useStaffList } from "../hooks/useStaffList";
+import { useServiceList } from "../hooks/useServiceList";
 import {
   fmtCurrency,
   toDateInput,
@@ -105,15 +107,10 @@ const Transactions = ({ showSnackbar }) => {
   const [onlyEdited, setOnlyEdited] = useState(false);
   const [servicesFilter, setServicesFilter] = useState([]);
 
-  // Option lists
-  // Staff list from shared hook (replaces manual onSnapshot block)
-  const { staffOptions, userMap: _userMap } = useStaffList();
-  const [staffSelectOptions, setStaffSelectOptions] = useState([]);
-  // Keep staffSelectOptions in sync with staffOptions from the hook
-  React.useEffect(() => { setStaffSelectOptions(staffOptions); }, [staffOptions]);
+  // Option lists from shared hooks (replaces manual onSnapshot blocks)
+  const { staffOptions } = useStaffList();
+  const { parentServiceNames: serviceItems, expenseServiceNames: expenseServiceItems } = useServiceList();
   const [shiftOptions, setShiftOptions] = useState([]);
-  const [serviceItems, setServiceItems] = useState([]);
-  const [expenseServiceItems, setExpenseServiceItems] = useState([]);
 
   // Data
   const [tx, setTx] = useState([]);
@@ -197,32 +194,7 @@ const Transactions = ({ showSnackbar }) => {
     return () => unsub();
   }, []);
 
-  /* ---- Load services ---- */
-  useEffect(() => {
-    const unsub = onSnapshot(
-      query(collection(db, "services"), orderBy("sortOrder")),
-      (snap) => {
-        const allServices = snap.docs.map((d) => d.data());
-
-        // Populate the main "Item" dropdown with services that have no parent
-        const parentList = allServices
-          .filter((s) => !s.parentServiceId)
-          .map((s) => s.serviceName);
-
-        // Include special items that are not managed as services
-        const specials = ["New Debt", "Paid Debt"];
-        const merged = Array.from(new Set([...parentList, ...specials]));
-        setServiceItems(merged);
-
-        // Populate the "Expense Type" dropdown with children of the "Expenses" service
-        const expenseList = allServices
-          .filter((s) => s.parentServiceId === "9JlYs3n6k3bsebkLq7A9")
-          .map((s) => s.serviceName);
-        setExpenseServiceItems(expenseList);
-      }
-    );
-    return () => unsub();
-  }, []);
+  // Services loaded via useServiceList() hook above (replaces manual onSnapshot + hardcoded expense parent ID)
 
   /* ---- Pagination State ---- */
   const [lastDoc, setLastDoc] = useState(null);
@@ -1822,12 +1794,12 @@ const Transactions = ({ showSnackbar }) => {
                       value={editExpenseStaffId}
                       onChange={(e) => setEditExpenseStaffId(e.target.value)}
                     >
-                      {staffSelectOptions.length === 0 ? (
+                      {staffOptions.length === 0 ? (
                         <MenuItem value="" disabled>
                           No staff available
                         </MenuItem>
                       ) : (
-                        staffSelectOptions.map((s) => (
+                        staffOptions.map((s) => (
                           <MenuItem key={s.id} value={s.id}>
                             {s.name} — {s.email}
                           </MenuItem>

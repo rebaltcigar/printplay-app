@@ -10,7 +10,7 @@ import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import ReceiptIcon from '@mui/icons-material/Receipt';
 import { doc, updateDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../firebase';
-import { sumDenominations } from '../utils/shiftFinancials';
+import { sumDenominations, computeShiftFinancials } from '../utils/shiftFinancials';
 
 const BILL_DENOMS = [1000, 500, 200, 100, 50, 20];
 const COIN_DENOMS = [20, 10, 5, 1];
@@ -46,33 +46,22 @@ export default function ShiftConsolidationDialog({
     const cashOnHand = useMemo(() => sumDenominations(recon), [recon]);
 
 
-    const cashTransactions = useMemo(() =>
-        transactions.filter(t => (t.paymentMethod === 'Cash' || !t.paymentMethod) && t.item !== 'Expenses' && t.item !== 'PC Rental'),
-        [transactions]
+    // Single source of truth: all financial computations via shiftFinancials.js
+    const {
+        expectedCash,
+        expensesTotal,
+        totalGcash: gcashSalesTotal,
+        totalAr: arTotal,
+        totalCash,
+        loggedPcNonCash,
+    } = useMemo(
+        () => computeShiftFinancials(transactions, shift?.pcRentalTotal || 0),
+        [transactions, shift?.pcRentalTotal]
     );
 
-    const expensesTotal = useMemo(() =>
-        transactions
-            .filter(t => t.item === 'Expenses')
-            .reduce((acc, t) => acc + (t.total || 0), 0),
-        [transactions]
-    );
-
-    const cashSalesTotal = useMemo(() =>
-        cashTransactions.reduce((acc, t) => acc + (t.total || 0), 0),
-        [cashTransactions]
-    );
-
-    // Calculate Non-Cash PC Rental to deduct from the Manual Input
-    const pcNonCashTotal = useMemo(() => {
-        return transactions
-            .filter(t => t.item === 'PC Rental' && (t.paymentMethod === 'GCash' || t.paymentMethod === 'Charge'))
-            .reduce((acc, t) => acc + (t.total || 0), 0);
-    }, [transactions]);
-
-    const pcRentalCash = Math.max(0, (Number(shift?.pcRentalTotal || 0) - pcNonCashTotal));
-
-    const expectedCash = cashSalesTotal - expensesTotal + pcRentalCash;
+    // Breakdown display values for Cash tab
+    const pcRentalCash = Math.max(0, Number(shift?.pcRentalTotal || 0) - loggedPcNonCash);
+    const cashSalesTotal = totalCash - pcRentalCash;
 
 
     // --- CASE 2: GCash ---
@@ -98,10 +87,7 @@ export default function ShiftConsolidationDialog({
         setGcashStatuses(prev => ({ ...prev, [id]: status }));
     };
 
-    const gcashSalesTotal = useMemo(() =>
-        gcashTransactions.reduce((acc, t) => acc + (t.total || 0), 0),
-        [gcashTransactions]
-    );
+    // gcashSalesTotal is now derived from computeShiftFinancials (see above)
 
     const verifiedGcashTotal = useMemo(() => {
         return gcashTransactions.reduce((acc, t) => {
@@ -118,10 +104,7 @@ export default function ShiftConsolidationDialog({
         [transactions]
     );
 
-    const arTotal = useMemo(() =>
-        arTransactions.reduce((acc, t) => acc + (t.total || 0), 0),
-        [arTransactions]
-    );
+    // arTotal is now derived from computeShiftFinancials (see above)
 
 
     // --- ACTION: SAVE ALL ---
