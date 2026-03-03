@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
  
+## [0.1.20] - 2026-03-04
+
+### Added
+- **Detailed Paystubs**: Paystub shift entries now include "Time" (start/end) and "Amount" (pay per shift) columns for better transparency.
+- **Paystub Regeneration**: Added a "Regenerate Paystubs" button to the Payroll Run Details dialog for already posted runs, allowing updates to existing paystubs without re-finalizing transactions.
+- **Paystub Auto-Cleanup**: Finalizing a payroll run now automatically deletes previous paystub documents for that run to prevent duplicates.
+
+### Changed
+- **Universal Loader in Payroll**: Replaced the custom `Backdrop` and `CircularProgress` loaders in `RunPayroll.jsx` with the universal `LoadingScreen` component (linear progress) for a consistent UI experience.
+
+### Fixed
+- **Payroll Loading Loop**: Resolved a `ReferenceError: sumDenominations is not defined` in `payrollHelpers.js` caused by a missing internal import.
+
+ 
 ## [0.1.19] - 2026-03-04
 
 ### Added
