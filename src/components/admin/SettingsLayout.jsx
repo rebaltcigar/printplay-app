@@ -9,7 +9,6 @@ import LockIcon from "@mui/icons-material/Lock";
 import StorageIcon from "@mui/icons-material/Storage";
 import ListAltIcon from "@mui/icons-material/ListAlt";
 import TagIcon from "@mui/icons-material/Tag";
-import BuildIcon from "@mui/icons-material/Build";
 import { useNavigate, useLocation } from 'react-router-dom';
 
 export default function SettingsLayout({ children }) {
@@ -25,7 +24,6 @@ export default function SettingsLayout({ children }) {
         { id: 'expensetypes', path: 'expensetypes', label: 'Expense Types', icon: <ListAltIcon /> },
         { id: 'ids', path: 'ids', label: 'ID System', icon: <TagIcon /> },
         { id: 'datacore', path: 'datacore', label: 'Data Core', icon: <StorageIcon /> },
-        { id: 'datamigration', path: 'datamigration', label: 'Data Migration', icon: <BuildIcon /> },
     ];
 
     const isSelected = (itemPath) => {

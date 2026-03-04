@@ -2,7 +2,13 @@
 
 All notable changes to this project will be documented in this file.
  
+## [0.1.24] - 2026-03-04
+
+### Removed
+- **Data Migration Tool**: Removed `Settings → Data Migration` panel and the `migrateCategoryValues.js` script after successful production migration. The `services` collection category values have been permanently updated (`'Debit'` → `'Sale'`, `'Credit'` → `'Expense'`).
+
 ## [0.1.23] - 2026-03-04
+
 
 ### Added
 - **Data Migration Tool** (`Settings → Data Migration`): Admin panel for running one-time Firestore data migrations. Features a live progress bar, real-time timestamped log console with colour-coded levels (INFO / WARN / ERROR / DEBUG), DEBUG toggle to show per-document change details, copy-to-clipboard log export, idempotency pre-run warning, and a result summary card showing updated vs. skipped counts. Retry and re-run supported after both success and failure.
