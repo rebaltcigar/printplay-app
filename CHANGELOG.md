@@ -2,6 +2,44 @@
 
 All notable changes to this project will be documented in this file.
  
+## [0.1.22] - 2026-03-04
+
+### Added
+- **Shared components**: new zero-duplication UI elements for universal use across the app.
+  - `DetailDrawer.jsx` – Universal right-side slide panel replacing per-page dialogs.
+  - `SummaryCards.jsx` – Reusable KPI card row shown above every table.
+  - `useShiftOptions.js` hook – returns shifts with human-readable `SHIFT-XXXXXX` display IDs.
+  - `useStaffList.js` extended to return `emailToName`, `idToName`, and `userMap` alias.
+
+### Transactions page
+- Removed 240px left sidebar and replaced with horizontal filter bar above table.
+- Table now shows 11 clean columns: Date, Type, Description, Staff name (not email), Shift display ID (not blob), Order #, Amount, Method, Status, Actions.
+- SummaryCards row: Total Sales / Expenses / Net / Row count + live/archive badge.
+- "View Details" opens a DetailDrawer with full audit trail (who created, who edited, why deleted, all cross-references).
+- Status filter dropdown replaces 3 separate checkboxes (All / Active / Deleted / Edited).
+
+### Expense Log
+- Removed always-visible left-panel form.
+- "Add Expense" button in page header opens form in DetailDrawer; editing a row opens same drawer pre-populated.
+- SummaryCards: Total / OPEX / COGS / CAPEX breakdown.
+- Table: Date, Type chip, Category chip, Staff name, Notes, Qty×Price, Total, Status.
+
+### Shift Detail View
+- Introduced 3-tab layout replacing split-screen:
+  - Summary – SummaryCards (7 KPIs) + Sales breakdown + Expenses breakdown + Denominations.
+  - Transactions – Full CRUD table with Add Transaction → DetailDrawer form, bulk select, edit dates.
+  - Orders – Live Firestore query by `shiftId`, showing all orders linked to this shift.
+- Back button + shift title/subtitle in header with Consolidate, Debug, Export CSV actions.
+
+### Payroll
+- 3-step inline wizard on Run Payroll tab; no more modals:
+  1. Period + pay date + expense mode setup
+  2. Staff hours review table (inline, was RunDialog)
+  3. Confirm & Post summary
+- Paystubs open via `PaystubDialog` triggered from within page, not nested modal.
+- AllRuns: "View" opens a DetailDrawer showing period, status, staff breakdown, and paystub access – no nested modals.
+- `Payroll.jsx` cleaned up, removing 5 unused props and state variables.
+
 ## [0.1.21] - 2026-03-04
 
 ### Changed
