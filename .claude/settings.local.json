@@ -1,7 +1,16 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx vite build)"
+      "Bash(npx vite build)",
+      "Bash(npm run build)",
+      "Bash(./node_modules/.bin/vite build)",
+      "Bash(ls /c/printplay-app/printplay-app/node_modules/.bin/vite*)",
+      "Bash(ls \"c:\\\\printplay-app\\\\printplay-app\\\\node_modules\\\\.bin\"\" 2>/dev/null | head -5 || echo \"cannot list \")",
+      "Bash(cmd /c \"cd /d c:\\\\printplay-app\\\\printplay-app && node_modules\\\\.bin\\\\vite build 2>&1\")",
+      "Bash(cmd /c \"cd /d c:\\\\printplay-app\\\\printplay-app && node_modules\\\\.bin\\\\vite build\")",
+      "Bash(powershell -Command \"Set-Location ''c:\\\\printplay-app\\\\printplay-app''; node_modules\\\\.bin\\\\vite build 2>&1\")",
+      "Bash(powershell -Command \"Set-Location ''c:\\\\printplay-app\\\\printplay-app''; & ''.\\\\node_modules\\\\.bin\\\\vite.cmd'' build 2>&1\")",
+      "Bash(powershell -Command \"Get-ChildItem ''c:\\\\printplay-app\\\\printplay-app\\\\node_modules\\\\.bin'' -Filter ''vite*'' 2>&1 | Select-Object -First 5\")"
     ]
   }
 }

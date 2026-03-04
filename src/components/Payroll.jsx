@@ -1,24 +1,14 @@
-// src/views/Payroll.jsx
+// src/components/Payroll.jsx
 import React, { useState, useRef } from "react";
 import { Box, Card, Tab, Tabs } from "@mui/material";
-import RunPayroll from "../components/payroll/RunPayroll";
-import AllRuns from "../components/payroll/AllRuns";
-import PayRates from "../components/payroll/PayRates";
-import PaystubDialog from "../components/Paystub";
+import RunPayroll from "./payroll/RunPayroll";
+import AllRuns from "./payroll/AllRuns";
+import PayRates from "./payroll/PayRates";
 import PageHeader from "./common/PageHeader";
 
 export default function Payroll({ user, showSnackbar }) {
   const [tab, setTab] = useState(0);
-  const [openRunId, setOpenRunId] = useState("");
-  const [openDialogAfterLoad, setOpenDialogAfterLoad] = useState(false);
-  const [stubRunId, setStubRunId] = useState(null);
   const requestOpenDialogRef = useRef(null);
-
-  const openRunInModalFromHistory = (id) => {
-    setOpenRunId(id);
-    setOpenDialogAfterLoad(true);
-    setTab(0);
-  };
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2, p: 3 }}>
@@ -43,29 +33,17 @@ export default function Payroll({ user, showSnackbar }) {
         {tab === 0 && (
           <RunPayroll
             user={user}
-            openRunId={openRunId}
-            openDialogAfterLoad={openDialogAfterLoad}
-            onOpenedFromHistory={() => setOpenDialogAfterLoad(false)}
-            onOpenPaystubs={(runId) => setStubRunId(runId)}
             requestOpenDialogRef={requestOpenDialogRef}
             showSnackbar={showSnackbar}
           />
         )}
         {tab === 1 && (
           <AllRuns
-            onOpenRunInModal={openRunInModalFromHistory}
-            onOpenPaystubs={(runId) => setStubRunId(runId)}
             showSnackbar={showSnackbar}
           />
         )}
         {tab === 2 && <PayRates showSnackbar={showSnackbar} />}
       </Box>
-
-      <PaystubDialog
-        open={!!stubRunId}
-        onClose={() => setStubRunId(null)}
-        runId={stubRunId}
-      />
     </Box>
   );
 }

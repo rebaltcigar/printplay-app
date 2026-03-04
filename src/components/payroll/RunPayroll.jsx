@@ -4,14 +4,24 @@ import {
   Box,
   Button,
   Card,
+  Chip,
+  Collapse,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  Divider,
   FormControl,
-  Grid,
   IconButton,
   InputLabel,
   MenuItem,
   Paper,
   Select,
   Stack,
+  Step,
+  StepLabel,
+  Stepper,
   Table,
   TableBody,
   TableCell,
@@ -21,16 +31,12 @@ import {
   TextField,
   Tooltip,
   Typography,
-  Backdrop,
   CircularProgress,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  DialogContentText, //
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import CheckIcon from "@mui/icons-material/Check";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
 import { db, auth } from "../../firebase";
 import {
@@ -48,7 +54,6 @@ import {
   where,
   writeBatch,
 } from "firebase/firestore";
-import RunDialog from "./RunDialog";
 import StatChip from "./StatChip";
 import {
   cap,
@@ -59,14 +64,16 @@ import {
   shortageForShift,
   toHours,
   toLocaleDateStringPHT,
+  toLocalISO_PHT_fromTS,
   toYMD_PHT_fromTS,
   todayYMD_PHT,
-
   tsFromYMD,
+  sumDenominations,
 } from "../../utils/payrollHelpers";
 import { generateDisplayId, generateBatchIds } from "../../utils/idGenerator";
 import LoadingScreen from "../common/LoadingScreen";
-
+import DetailDrawer from "../common/DetailDrawer";
+import PaystubDialog from "../Paystub";
 
 export default function RunPayroll({
   user,
@@ -84,29 +91,37 @@ export default function RunPayroll({
   const [preview, setPreview] = useState([]);
   const [runId, setRunId] = useState(null);
   const [status, setStatus] = useState("draft");
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [dialogContext, setDialogContext] = useState("preview");
+
+  // Step state: 0 = Setup, 1 = Preview/Review, 2 = Confirm/Summary
+  const [step, setStep] = useState(0);
 
   // loader
   const [busy, setBusy] = useState(false);
   const [busyMsg, setBusyMsg] = useState("");
 
-  // in-app dialogs
+  // inline dialogs (ongoing prompt, finalize confirm) — these are lightweight
+  // and are NOT nested inside a modal, so they remain as small dialogs
   const [confirmFinalizeOpen, setConfirmFinalizeOpen] = useState(false);
-  const [feedback, setFeedback] = useState({
-    open: false,
-    title: "",
-    message: "",
-  });
-
-  //
   const [ongoingPrompt, setOngoingPrompt] = useState({
     open: false,
     shifts: [],
   });
 
-  const closeFeedback = () =>
-    setFeedback((p) => ({ ...p, open: false, message: "" }));
+  // Paystub drawer — replaces nested paystub dialog
+  const [paystubDrawerRunId, setPaystubDrawerRunId] = useState(null);
+
+  // Expand state for the step-1 detail table
+  const [expanded, setExpanded] = useState({});
+
+  // Item edit inline mini-dialog (add/edit custom deductions and additions)
+  const [itemEdit, setItemEdit] = useState({
+    open: false,
+    type: "deduction",
+    lineId: null,
+    index: -1,
+    label: "",
+    amount: "",
+  });
 
   const startBusy = (msg = "Working...") => {
     setBusy(true);
@@ -121,24 +136,202 @@ export default function RunPayroll({
   const calcGross = (minutes, rate) =>
     Number((((Number(minutes || 0) / 60) * Number(rate || 0))).toFixed(2));
 
-  // allow parent to open dialog
+  // ─── recalc helpers (previously lived in RunDialog) ─────────────────────────
+
+  const recalcLine = (line) => {
+    const included = line.shiftRows.filter((r) => !r.excluded);
+    const minutes = included.reduce((m, r) => m + Number(r.minutes || r.minutesUsed || 0), 0);
+    const gross = calcGross(minutes, line.rate);
+
+    const advances = included.reduce((s, r) => s + Number(r.advance || 0), 0);
+    const shortages = included.reduce((s, r) => s + Number(r.shortage || 0), 0);
+    const extraAdvances = (line.extraAdvances || []).reduce(
+      (s, d) => s + Number(d.amount || 0),
+      0
+    );
+    const customDeductions = (line.customDeductions || []).reduce(
+      (s, d) => s + Number(d.amount || 0),
+      0
+    );
+    const otherDeductions = Number((extraAdvances + customDeductions).toFixed(2));
+
+    const customAdditions = (line.customAdditions || []).reduce(
+      (s, d) => s + Number(d.amount || 0),
+      0
+    );
+    const totalAdditions = Number(customAdditions.toFixed(2));
+
+    const net = Number(
+      (gross + totalAdditions - advances - shortages - otherDeductions).toFixed(2)
+    );
+
+    return { minutes, gross, advances, shortages, otherDeductions, totalAdditions, net };
+  };
+
+  const setLine = (id, patch) => {
+    setPreview((prev) =>
+      prev.map((l) => (l.id === id ? { ...l, ...patch } : l))
+    );
+  };
+
+  const updateShiftRow = (lineId, shiftId, patch) => {
+    setPreview((prev) =>
+      prev.map((l) => {
+        if (l.id !== lineId) return l;
+        const shiftRows = l.shiftRows.map((r) => {
+          if (r.id !== shiftId) return r;
+          const next = { ...r, ...patch };
+
+          const start = next.overrideStart?.seconds
+            ? next.overrideStart
+            : next.overrideStart
+              ? Timestamp.fromDate(new Date(next.overrideStart))
+              : next.start;
+
+          const end = next.overrideEnd?.seconds
+            ? next.overrideEnd
+            : next.overrideEnd
+              ? Timestamp.fromDate(new Date(next.overrideEnd))
+              : next.end || next.overrideEnd;
+
+          next.minutesUsed = next.excluded ? 0 : minutesBetweenTS(start, end);
+          next.shortage = shortageForShift({
+            denominations: next.denominations,
+            systemTotal: next.systemTotal,
+          });
+          return next;
+        });
+        const totals = recalcLine({ ...l, shiftRows });
+        return { ...l, shiftRows, ...totals };
+      })
+    );
+  };
+
+  // Totals for the step-1 header summary
+  const totalMinutes = useMemo(
+    () => preview.reduce((s, l) => s + Number(l.minutes || 0), 0),
+    [preview]
+  );
+  const totalGross = useMemo(
+    () => Number(preview.reduce((s, l) => s + Number(l.gross || 0), 0).toFixed(2)),
+    [preview]
+  );
+  const totalAdvances = useMemo(
+    () => Number(preview.reduce((s, l) => s + Number(l.advances || 0), 0).toFixed(2)),
+    [preview]
+  );
+  const totalShortages = useMemo(
+    () => Number(preview.reduce((s, l) => s + Number(l.shortages || 0), 0).toFixed(2)),
+    [preview]
+  );
+  const totalOtherDeds = useMemo(
+    () => Number(preview.reduce((s, l) => s + Number(l.otherDeductions || 0), 0).toFixed(2)),
+    [preview]
+  );
+  const totalAdditionsSum = useMemo(
+    () => Number(preview.reduce((s, l) => s + Number(l.totalAdditions || 0), 0).toFixed(2)),
+    [preview]
+  );
+  const totalNet = useMemo(
+    () => Number(preview.reduce((s, l) => s + Number(l.net || 0), 0).toFixed(2)),
+    [preview]
+  );
+
+  const isPerStaffMode = expenseMode === "per-staff";
+  const disableEdits = status === "posted" || status === "voided";
+
+  // ─── item dialog helpers ─────────────────────────────────────────────────────
+
+  const openItemDialog = (type, lineId, existing) => {
+    if (existing) {
+      setItemEdit({ open: true, type, lineId, index: existing.index, label: existing.label, amount: existing.amount });
+    } else {
+      setItemEdit({ open: true, type, lineId, index: -1, label: "", amount: "" });
+    }
+  };
+
+  const closeItemDialog = () => {
+    setItemEdit({ open: false, type: "deduction", lineId: null, index: -1, label: "", amount: "" });
+  };
+
+  const saveItem = () => {
+    const { type, lineId, index, label, amount } = itemEdit;
+    const nAmount = Number(amount || 0);
+    if (!lineId || !label) { closeItemDialog(); return; }
+
+    setPreview((prev) =>
+      prev.map((l) => {
+        if (l.id !== lineId) return l;
+        const field = type === "addition" ? "customAdditions" : "customDeductions";
+        const idPrefix = type === "addition" ? "manual-add" : "manual-ded";
+        const list = Array.isArray(l[field]) ? [...l[field]] : [];
+        if (index >= 0 && index < list.length) {
+          list[index] = { ...list[index], label, amount: nAmount };
+        } else {
+          list.push({ id: `${idPrefix}-${Date.now()}`, label, amount: nAmount });
+        }
+        const updatedLine = { ...l, [field]: list };
+        return { ...updatedLine, ...recalcLine(updatedLine) };
+      })
+    );
+    closeItemDialog();
+  };
+
+  const deleteItem = (type, lineId, index) => {
+    setPreview((prev) =>
+      prev.map((l) => {
+        if (l.id !== lineId) return l;
+        const field = type === "addition" ? "customAdditions" : "customDeductions";
+        const list = Array.isArray(l[field]) ? l[field].filter((_, i) => i !== index) : [];
+        const updatedLine = { ...l, [field]: list };
+        return { ...updatedLine, ...recalcLine(updatedLine) };
+      })
+    );
+  };
+
+  const handleExpenseModeChange = (val) => {
+    const today = todayYMD_PHT();
+    setExpenseMode(val);
+    if (val === "per-staff") {
+      setPayDate(today);
+      setPreview((prev) =>
+        prev.map((line) => ({
+          ...line,
+          shiftRows: line.shiftRows.map((r) => ({
+            ...r,
+            expenseDate: tsFromYMD(today, false),
+          })),
+        }))
+      );
+    } else {
+      setPayDate((old) => (old ? old : today));
+      setPreview((prev) =>
+        prev.map((line) => ({
+          ...line,
+          shiftRows: line.shiftRows.map((r) => ({
+            ...r,
+            expenseDate: r.expenseDate || tsFromYMD(today, false),
+          })),
+        }))
+      );
+    }
+  };
+
+  // allow parent to set step/open from history (replaces old requestOpenDialogRef)
   useEffect(() => {
     if (requestOpenDialogRef) {
       requestOpenDialogRef.current = () => {
         if (runId || preview.length) {
-          setDialogContext(runId ? "existing" : "preview");
-          setDialogOpen(true);
+          setStep(runId ? 1 : 1);
         }
       };
     }
   }, [requestOpenDialogRef, runId, preview.length]);
 
-  /** ----------------- generate preview from shifts ----------------- */
-  //
+  /** ─── generate preview from shifts ─────────────────────────────────────── */
   const generatePreview = async (decision = null) => {
     if (!periodStart || !periodEnd) {
-      if (showSnackbar) showSnackbar("Pick a start and end date first.", 'warning');
-      else openFeedback("Select period", "Pick a start and end date first.");
+      showSnackbar?.("Pick a start and end date first.", "warning");
       return;
     }
 
@@ -148,7 +341,6 @@ export default function RunPayroll({
       const start = tsFromYMD(periodStart, false);
       const end = tsFromYMD(periodEnd, true);
 
-      // Round 1: fetch shifts + admin transactions in parallel
       updateBusy("Querying shifts and transactions...");
       const [sSnap, adminSnap] = await Promise.all([
         getDocs(query(
@@ -163,28 +355,23 @@ export default function RunPayroll({
         )),
       ]);
 
-
-      //
       const rawShifts = sSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
       const ongoing = rawShifts.filter((s) => !s.endTime);
 
-      // If we found ongoing shifts and haven't made a decision yet
       if (ongoing.length > 0 && decision === null) {
         setOngoingPrompt({ open: true, shifts: ongoing });
         stopBusy();
         return;
       }
 
-      // Filter based on decision
       const shiftsToProcess = rawShifts.filter((s) => {
-        if (s.endTime) return true; // always include completed
-        if (decision === "include") return true; // include ongoing if user said yes
-        return false; // exclude ongoing if user said no (or default behavior)
+        if (s.endTime) return true;
+        if (decision === "include") return true;
+        return false;
       });
 
       if (shiftsToProcess.length === 0) {
-        if (showSnackbar) showSnackbar("No eligible shifts found in this period.", 'info');
-        else openFeedback("No shifts", "No eligible shifts found in this period.");
+        showSnackbar?.("No eligible shifts found in this period.", "info");
         stopBusy();
         return;
       }
@@ -195,30 +382,23 @@ export default function RunPayroll({
       const shiftsById = new Map();
 
       shiftsToProcess.forEach((s) => {
-        //
         if (!s.startTime) return;
-
         const email = s.staffEmail || "unknown";
-
-        //
         const isOngoing = !s.endTime;
         const effectiveEnd = isOngoing ? Timestamp.now() : s.endTime;
-
-        // If it's ongoing, we set an overrideEnd immediately so the calc works
         const overrideEnd = isOngoing ? effectiveEnd : null;
-
         const minutes = minutesBetweenTS(s.startTime, effectiveEnd);
         const shortage = shortageForShift(s);
 
         const row = {
           id: s.id,
           start: s.startTime,
-          end: s.endTime || null, // keep null in 'end' to signify ongoing source
+          end: s.endTime || null,
           title: s.title || s.shiftTitle || null,
           label: s.label || null,
           overrideStart: null,
-          overrideEnd: overrideEnd, // Set presumed end here
-          isOngoing: isOngoing,     // Mark as ongoing
+          overrideEnd: overrideEnd,
+          isOngoing: isOngoing,
           excluded: false,
           minutesOriginal: minutes,
           minutesUsed: minutes,
@@ -232,21 +412,19 @@ export default function RunPayroll({
         };
         shiftsById.set(s.id, row);
 
-        const bucket =
-          byStaff.get(email) || {
-            staffUid: s.staffUid || null,
-            staffName: row.staffName,
-            staffEmail: email,
-            minutes: 0,
-            shiftRows: [],
-            extraAdvances: [],
-          };
+        const bucket = byStaff.get(email) || {
+          staffUid: s.staffUid || null,
+          staffName: row.staffName,
+          staffEmail: email,
+          minutes: 0,
+          shiftRows: [],
+          extraAdvances: [],
+        };
         bucket.minutes += minutes;
         bucket.shiftRows.push(row);
         byStaff.set(email, bucket);
       });
 
-      // Round 2: fetch staff records + ALL per-shift advance queries in parallel
       updateBusy("Fetching staff records and salary advances...");
       const shiftRows = Array.from(shiftsById.values());
       const [usersSnap, ...advanceSnaps] = await Promise.all([
@@ -270,7 +448,6 @@ export default function RunPayroll({
         });
       });
 
-      // Process advance results (already fetched in parallel above)
       const extraAdvancesByStaff = new Map();
 
       shiftRows.forEach((row, idx) => {
@@ -286,11 +463,7 @@ export default function RunPayroll({
           const shiftOwnerEmail = row.staffEmail;
           const shiftOwnerUid = row.staffUid;
 
-          const shiftLabel = `${inferShiftName(
-            row.start,
-            row.title,
-            row.label
-          )} — ${toLocaleDateStringPHT(row.start)}`;
+          const shiftLabel = `${inferShiftName(row.start, row.title, row.label)} — ${toLocaleDateStringPHT(row.start)}`;
 
           const isForOther =
             (targetEmail && targetEmail !== shiftOwnerEmail) ||
@@ -322,12 +495,10 @@ export default function RunPayroll({
             ownerAdvanceRefs.push(advDoc.id);
           }
         });
-
         row.advance = ownerAdvance;
         row.advanceRefs = ownerAdvanceRefs;
       });
 
-      // attach “foreign” advances
       for (const [, info] of extraAdvancesByStaff.entries()) {
         const emailKey =
           info.staffEmail ||
@@ -339,9 +510,7 @@ export default function RunPayroll({
         const bucketKey = emailKey || info.staffEmail || null;
         if (bucketKey && byStaff.has(bucketKey)) {
           const bucket = byStaff.get(bucketKey);
-          bucket.extraAdvances = (bucket.extraAdvances || []).concat(
-            info.details
-          );
+          bucket.extraAdvances = (bucket.extraAdvances || []).concat(info.details);
         } else {
           const name = info.staffName || bucketKey || "Unknown Staff";
           byStaff.set(bucketKey || name, {
@@ -355,41 +524,29 @@ export default function RunPayroll({
         }
       }
 
-      // Proceess admin manual entries
       adminSnap.docs.forEach((docSnap) => {
         const tx = docSnap.data();
         if (tx.voided || tx.isDeleted) return;
-
-        // Only care about Salary Advance (User requested "Salary" be ignored/not deducted)
         if (tx.expenseType !== "Salary Advance") return;
-
-        const amt = Number(tx.total || 0);
-
-        // SKIP if linked to a shift (Duplicate check)
         if (tx.shiftId) return;
 
-        // Identify staff
+        const amt = Number(tx.total || 0);
         const staffEmail = tx.expenseStaffEmail || tx.staffEmail;
-        const staffUid = tx.expenseStaffId; // might be null
+        const staffUid = tx.expenseStaffId;
 
-        // Key for our map
         let key = staffEmail;
         if (!key && staffUid) {
-          // try to find email from uid in usersByEmail
-          const userObj = Array.from(usersByEmail.values()).find(u => u.uid === staffUid);
+          const userObj = Array.from(usersByEmail.values()).find((u) => u.uid === staffUid);
           key = userObj ? userObj.email : `uid:${staffUid}`;
         }
+        if (!key) return;
 
-        if (!key) return; // orphan transaction
-
-        // Ensure bucket exists
         if (!byStaff.has(key)) {
-          // Create new bucket for this staff if they have no shifts but have salary entries
           const name = tx.expenseStaffName || (usersByEmail.get(key)?.name) || "Unknown Staff";
           byStaff.set(key, {
             staffUid: staffUid || null,
             staffName: name,
-            staffEmail: staffEmail || key, // fallback
+            staffEmail: staffEmail || key,
             minutes: 0,
             shiftRows: [],
             extraAdvances: [],
@@ -397,15 +554,11 @@ export default function RunPayroll({
         }
 
         const bucket = byStaff.get(key);
-
-        // Add to extraAdvances. 
-        // Note: If expenseType is "Salary", we treat it as an ADVANCE (deduction) 
-        // because it was already paid out manually.
         bucket.extraAdvances.push({
           id: docSnap.id,
           label: `${tx.expenseType} (Admin Manual - ${toLocaleDateStringPHT(tx.timestamp)})`,
           amount: amt,
-          fromShiftId: null, // manual
+          fromShiftId: null,
         });
       });
 
@@ -437,9 +590,7 @@ export default function RunPayroll({
           0
         );
         const otherDeductions = Number(extraAdvanceTotal.toFixed(2));
-
         const totalAdditions = 0;
-
         const net = Number(
           (gross + totalAdditions - advancesFromShifts - shortages - otherDeductions).toFixed(2)
         );
@@ -466,25 +617,21 @@ export default function RunPayroll({
       setRunId(null);
       setStatus("draft");
       setPreview(out.sort((a, b) => a.staffName.localeCompare(b.staffName)));
-      setDialogContext("preview");
-      setDialogOpen(true);
+      setStep(1);
     } catch (err) {
       console.error(err);
-      if (showSnackbar) showSnackbar("Failed to generate payroll preview.", 'error');
-      else openFeedback(
-        "Generate failed",
-        "Failed to generate payroll preview. Check console for details."
-      );
+      showSnackbar?.("Failed to generate payroll preview.", "error");
     } finally {
       stopBusy();
     }
   };
 
-  /** ----------------- load existing run ----------------- */
+  /** ─── load existing run ─────────────────────────────────────────────────── */
   const loadRun = async (id) => {
     if (!id) {
       setRunId(null);
       setPreview([]);
+      setStep(0);
       return;
     }
 
@@ -494,35 +641,25 @@ export default function RunPayroll({
       const runRef = doc(db, "payrollRuns", id);
       const runDoc = await getDoc(runRef);
       if (!runDoc.exists()) {
-        if (showSnackbar) showSnackbar("That payroll run does not exist anymore.", 'error');
-        else openFeedback("Not found", "That payroll run does not exist anymore.");
+        showSnackbar?.("That payroll run does not exist anymore.", "error");
         return;
       }
       const run = runDoc.data() || {};
       setRunId(id);
       setStatus(run.status || "draft");
-      setPeriodStart(
-        run.periodStart?.seconds ? toYMD_PHT_fromTS(run.periodStart) : ""
-      );
-      setPeriodEnd(
-        run.periodEnd?.seconds ? toYMD_PHT_fromTS(run.periodEnd) : ""
-      );
-      setPayDate(
-        run.payDate?.seconds ? toYMD_PHT_fromTS(run.payDate) : todayYMD_PHT()
-      );
+      setPeriodStart(run.periodStart?.seconds ? toYMD_PHT_fromTS(run.periodStart) : "");
+      setPeriodEnd(run.periodEnd?.seconds ? toYMD_PHT_fromTS(run.periodEnd) : "");
+      setPayDate(run.payDate?.seconds ? toYMD_PHT_fromTS(run.payDate) : todayYMD_PHT());
       setExpenseMode(run.expenseMode || "per-staff");
 
       updateBusy("Loading run lines...");
       const linesSnap = await getDocs(collection(runRef, "lines"));
 
-      // Process all lines in parallel — each line independently fetches its
-      // overrides, shift docs, and salary advances concurrently.
       const out = await Promise.all(linesSnap.docs.map(async (ld) => {
         const l = ld.data() || {};
         const lineId = ld.id;
         const shiftIds = l.source?.shiftIds || [];
 
-        // Fetch overrides + all shift docs + all advance queries in one round
         const [overSnap, ...shiftAndAdvResults] = await Promise.all([
           getDocs(collection(runRef, `lines/${lineId}/shifts`)),
           ...shiftIds.map((sid) => getDoc(doc(db, "shifts", sid))),
@@ -535,7 +672,6 @@ export default function RunPayroll({
           ),
         ]);
 
-        // Split results: first N are shift docs, next N are advance snapshots
         const shiftDocs = shiftAndAdvResults.slice(0, shiftIds.length);
         const advanceSnaps = shiftAndAdvResults.slice(shiftIds.length);
 
@@ -585,7 +721,6 @@ export default function RunPayroll({
             expenseDate: ov.expenseDate || null,
           };
 
-          // Advances already fetched in parallel above
           const advSnap = advanceSnaps[i];
           let ownerAdvance = 0;
           const ownerAdvanceRefs = [];
@@ -675,10 +810,10 @@ export default function RunPayroll({
       }));
 
       setPreview(out.sort((a, b) => a.staffName.localeCompare(b.staffName)));
+      setStep(1);
     } catch (err) {
       console.error(err);
-      if (showSnackbar) showSnackbar("Failed to load that payroll run.", 'error');
-      else openFeedback("Load failed", "Failed to load that payroll run.");
+      showSnackbar?.("Failed to load that payroll run.", "error");
     } finally {
       stopBusy();
     }
@@ -689,22 +824,19 @@ export default function RunPayroll({
     if (openRunId) {
       loadRun(openRunId).then(() => {
         if (openDialogAfterLoad) {
-          setDialogContext("existing");
-          setDialogOpen(true);
-          onOpenedFromHistory && onOpenedFromHistory();
+          onOpenedFromHistory?.();
         }
       });
     }
-  }, [openRunId, openDialogAfterLoad, onOpenedFromHistory]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openRunId, openDialogAfterLoad]);
 
-  /** ----------------- save edits ----------------- */
+  /** ─── save edits to run ─────────────────────────────────────────────────── */
   const saveEditsToRun = async (id = runId, { withLoader = true } = {}) => {
     if (!id) {
-      if (showSnackbar) showSnackbar("No payroll run selected.", 'warning');
-      else openFeedback("Nothing to save", "No payroll run selected.");
+      showSnackbar?.("No payroll run selected.", "warning");
       return;
     }
-
     if (withLoader) startBusy("Saving payroll changes...");
 
     try {
@@ -715,37 +847,17 @@ export default function RunPayroll({
         totals: {
           staffCount: preview.length,
           minutes: preview.reduce((s, l) => s + Number(l.minutes || 0), 0),
-          gross: Number(
-            preview.reduce((s, l) => s + Number(l.gross || 0), 0).toFixed(2)
-          ),
-          advances: Number(
-            preview.reduce((s, l) => s + Number(l.advances || 0), 0).toFixed(2)
-          ),
-          shortages: Number(
-            preview
-              .reduce((s, l) => s + Number(l.shortages || 0), 0)
-              .toFixed(2)
-          ),
-          otherDeductions: Number(
-            preview
-              .reduce((s, l) => s + Number(l.otherDeductions || 0), 0)
-              .toFixed(2)
-          ),
-          additions: Number(
-            preview
-              .reduce((s, l) => s + Number(l.totalAdditions || 0), 0)
-              .toFixed(2)
-          ),
-          net: Number(
-            preview.reduce((s, l) => s + Number(l.net || 0), 0).toFixed(2)
-          ),
+          gross: Number(preview.reduce((s, l) => s + Number(l.gross || 0), 0).toFixed(2)),
+          advances: Number(preview.reduce((s, l) => s + Number(l.advances || 0), 0).toFixed(2)),
+          shortages: Number(preview.reduce((s, l) => s + Number(l.shortages || 0), 0).toFixed(2)),
+          otherDeductions: Number(preview.reduce((s, l) => s + Number(l.otherDeductions || 0), 0).toFixed(2)),
+          additions: Number(preview.reduce((s, l) => s + Number(l.totalAdditions || 0), 0).toFixed(2)),
+          net: Number(preview.reduce((s, l) => s + Number(l.net || 0), 0).toFixed(2)),
         },
         updatedAt: serverTimestamp(),
         updatedBy: auth.currentUser?.uid || "admin",
       });
 
-      // Build all line-level batch operations synchronously, then fetch all
-      // override snapshots in parallel before adding delete/set overrides.
       for (const line of preview) {
         batch.set(doc(db, `payrollRuns/${id}/lines/${line.id}`), {
           staffUid: line.staffUid || null,
@@ -783,7 +895,6 @@ export default function RunPayroll({
         });
       }
 
-      // Fetch all override snapshots in parallel, then delete old + set new
       const overSnaps = await Promise.all(
         preview.map((line) =>
           getDocs(collection(db, "payrollRuns", id, "lines", line.id, "shifts"))
@@ -792,16 +903,14 @@ export default function RunPayroll({
 
       preview.forEach((line, lineIdx) => {
         overSnaps[lineIdx].forEach((o) => batch.delete(o.ref));
-
         for (const r of line.shiftRows) {
-          //
           if (r.excluded || r.overrideStart || r.overrideEnd || r.expenseDate || r.isOngoing) {
             batch.set(
               doc(db, "payrollRuns", id, "lines", line.id, "shifts", r.id),
               {
                 shiftId: r.id,
                 originalStart: r.start,
-                originalEnd: r.end || null, // Ensure explicit null if ongoing
+                originalEnd: r.end || null,
                 overrideStart: r.overrideStart
                   ? r.overrideStart.seconds
                     ? r.overrideStart
@@ -823,19 +932,17 @@ export default function RunPayroll({
       await batch.commit();
 
       if (withLoader) {
-        if (showSnackbar) showSnackbar("Payroll changes were saved.", 'success');
-        else openFeedback("Saved", "Payroll changes were saved.");
+        showSnackbar?.("Payroll changes were saved.", "success");
       }
     } catch (err) {
       console.error(err);
-      if (showSnackbar) showSnackbar("Failed to save payroll run.", 'error');
-      else openFeedback("Save failed", "Failed to save payroll run.");
+      showSnackbar?.("Failed to save payroll run.", "error");
     } finally {
       if (withLoader) stopBusy();
     }
   };
 
-  /** ----------------- create run ----------------- */
+  /** ─── create run ────────────────────────────────────────────────────────── */
   const createRunInternal = async () => {
     startBusy("Creating new payroll run doc...");
 
@@ -851,30 +958,12 @@ export default function RunPayroll({
         totals: {
           staffCount: preview.length,
           minutes: preview.reduce((s, l) => s + Number(l.minutes || 0), 0),
-          gross: Number(
-            preview.reduce((s, l) => s + Number(l.gross || 0), 0).toFixed(2)
-          ),
-          advances: Number(
-            preview.reduce((s, l) => s + Number(l.advances || 0), 0).toFixed(2)
-          ),
-          shortages: Number(
-            preview
-              .reduce((s, l) => s + Number(l.shortages || 0), 0)
-              .toFixed(2)
-          ),
-          otherDeductions: Number(
-            preview
-              .reduce((s, l) => s + Number(l.otherDeductions || 0), 0)
-              .toFixed(2)
-          ),
-          additions: Number(
-            preview
-              .reduce((s, l) => s + Number(l.totalAdditions || 0), 0)
-              .toFixed(2)
-          ),
-          net: Number(
-            preview.reduce((s, l) => s + Number(l.net || 0), 0).toFixed(2)
-          ),
+          gross: Number(preview.reduce((s, l) => s + Number(l.gross || 0), 0).toFixed(2)),
+          advances: Number(preview.reduce((s, l) => s + Number(l.advances || 0), 0).toFixed(2)),
+          shortages: Number(preview.reduce((s, l) => s + Number(l.shortages || 0), 0).toFixed(2)),
+          otherDeductions: Number(preview.reduce((s, l) => s + Number(l.otherDeductions || 0), 0).toFixed(2)),
+          additions: Number(preview.reduce((s, l) => s + Number(l.totalAdditions || 0), 0).toFixed(2)),
+          net: Number(preview.reduce((s, l) => s + Number(l.net || 0), 0).toFixed(2)),
         },
         createdAt: serverTimestamp(),
         createdBy: auth.currentUser?.uid || user?.uid || "admin",
@@ -887,57 +976,51 @@ export default function RunPayroll({
       return runRef.id;
     } catch (err) {
       console.error(err);
-      if (showSnackbar) showSnackbar("Failed to create payroll run.", 'error');
-      else openFeedback("Create failed", "Failed to create payroll run.");
+      showSnackbar?.("Failed to create payroll run.", "error");
       return null;
     } finally {
       stopBusy();
     }
   };
 
-  const onCreateRun = async () => {
+  const handleSaveRun = async () => {
     const id = await createRunInternal();
     if (id) {
-      setDialogContext("existing");
-      setDialogOpen(true);
-      if (showSnackbar) showSnackbar("New payroll run has been created.", 'success');
-      else openFeedback("Run created", "New payroll run has been created.");
+      showSnackbar?.("New payroll run has been created.", "success");
     }
   };
 
-  const onCreateAndFinalize = async () => {
+  const handleCreateAndFinalize = async () => {
     const id = await createRunInternal();
     if (id) {
       setConfirmFinalizeOpen(true);
     }
   };
 
-  /** ----------------- finalize run (post tx + paystubs) ----------------- */
+  const handleFinalize = () => setConfirmFinalizeOpen(true);
+
+  /** ─── finalize run ──────────────────────────────────────────────────────── */
   const finalizeRun = async (id = runId) => {
     if (!id) {
-      if (showSnackbar) showSnackbar("There is no payroll run to finalize.", 'warning');
-      else openFeedback("No run", "There is no payroll run to finalize.");
+      showSnackbar?.("There is no payroll run to finalize.", "warning");
       return;
     }
 
     startBusy("Saving latest edits before posting...");
 
     try {
-      // 0. make sure run and lines are saved as-is
       await saveEditsToRun(id, { withLoader: false });
 
       updateBusy("Fetching run data...");
-      const runRef = doc(db, "payrollRuns", id); // <-- declared ONCE here
+      const runRef = doc(db, "payrollRuns", id);
       const runDoc = await getDoc(runRef);
       const runData = runDoc.data() || {};
 
       updateBusy("Loading run lines...");
       const linesSnap = await getDocs(collection(runRef, "lines"));
 
-      // we'll do everything in one big batch
       const txBatch = writeBatch(db);
 
-      // 1) void existing salary transactions for this run
       updateBusy("Voiding existing payroll transactions...");
       const existingTx = await getDocs(
         query(
@@ -948,12 +1031,10 @@ export default function RunPayroll({
       );
       existingTx.docs.forEach((t) => txBatch.update(t.ref, { voided: true }));
 
-      // 1.5) delete existing paystubs to avoid duplicates
       updateBusy("Cleaning up old paystubs...");
       const oldStubs = await getDocs(collection(runRef, "paystubs"));
       oldStubs.docs.forEach((s) => txBatch.delete(s.ref));
 
-      // 2) lookups for cross-staff salary advances
       const lineIdByUid = new Map();
       const lineIdByEmail = new Map();
       linesSnap.docs.forEach((ld) => {
@@ -962,10 +1043,9 @@ export default function RunPayroll({
         if (l.staffEmail) lineIdByEmail.set(l.staffEmail, ld.id);
       });
 
-      // Map<lineId, crossDeduction[]>
       const extraDeductionsByLineId = new Map();
       const materializedLines = [];
-      const pendingTransactions = []; // List to hold transactions before batch write (for ID generation)
+      const pendingTransactions = [];
 
       const periodStartTS = runData.periodStart;
       const periodEndTS = runData.periodEnd;
@@ -981,8 +1061,6 @@ export default function RunPayroll({
 
       updateBusy("Expanding each line to shift-level data...");
 
-      // Pre-fetch ALL overrides + shift docs + advance queries in parallel across all lines,
-      // then process sequentially to maintain correct cross-line advance attribution.
       const linesFetchData = await Promise.all(linesSnap.docs.map(async (ld) => {
         const l = ld.data() || {};
         const lineId = ld.id;
@@ -1011,7 +1089,6 @@ export default function RunPayroll({
         };
       }));
 
-      // Process lines sequentially to maintain cross-line extraDeductionsByLineId state
       for (const { ld, l, lineId, shiftIds, overSnap, shiftDocs, advanceSnaps } of linesFetchData) {
         const overrides = new Map();
         overSnap.forEach((od) => {
@@ -1020,9 +1097,9 @@ export default function RunPayroll({
         });
 
         const shiftDetails = [];
-        let totalMinutes = 0;
-        let totalAdvances = 0;
-        let totalShortages = 0;
+        let totalMinutesLine = 0;
+        let totalAdvancesLine = 0;
+        let totalShortagesLine = 0;
 
         for (let _si = 0; _si < shiftIds.length; _si++) {
           const sid = shiftIds[_si];
@@ -1034,7 +1111,6 @@ export default function RunPayroll({
           if (ov.excluded) continue;
 
           const start = ov.overrideStart || s.startTime;
-          //
           const end = ov.overrideEnd || s.endTime;
 
           const minutesUsed =
@@ -1042,22 +1118,16 @@ export default function RunPayroll({
               ? ov.minutesUsed
               : minutesBetweenTS(start, end);
 
-          const shiftLabel = `${toLocaleDateStringPHT(
-            s.startTime
-          )} (${inferShiftName(s.startTime, s.title, s.label)})`;
+          const shiftLabel = `${toLocaleDateStringPHT(s.startTime)} (${inferShiftName(s.startTime, s.title, s.label)})`;
 
           const expenseDateTS =
-            ov.expenseDate ||
-            s.startTime ||
-            runData.payDate ||
-            Timestamp.fromDate(runPayDate);
+            ov.expenseDate || s.startTime || runData.payDate || Timestamp.fromDate(runPayDate);
 
           const shortageAmount = shortageForShift(s);
           if (shortageAmount > 0) {
-            totalShortages += shortageAmount;
+            totalShortagesLine += shortageAmount;
           }
 
-          // Advance snapshot pre-fetched in parallel above
           const advSnap = advanceSnaps[_si];
           let advancesForThisShiftForThisStaff = 0;
 
@@ -1068,25 +1138,18 @@ export default function RunPayroll({
             const intendedEmail = tx.expenseStaffEmail || tx.staffEmail || null;
             const intendedUid = tx.expenseStaffId || tx.staffUid || null;
 
-            // This is the staff being processed in this OUTER loop
             const isForThisLine =
               (!!l.staffUid && intendedUid === l.staffUid) ||
               (!!l.staffEmail && intendedEmail === l.staffEmail) ||
-              // This case handles advances for the shift owner when no staffId/email was logged
-              (!intendedEmail &&
-                !intendedUid &&
-                s.staffEmail === l.staffEmail);
+              (!intendedEmail && !intendedUid && s.staffEmail === l.staffEmail);
 
             if (isForThisLine) {
               advancesForThisShiftForThisStaff += amt;
             } else {
-              // this advance was intended for ANOTHER staff
               const targetLineId =
                 (intendedUid && lineIdByUid.get(intendedUid)) ||
                 (intendedEmail && lineIdByEmail.get(intendedEmail)) ||
                 null;
-
-              // If we can't find a line for the target, attribute it back to the current line (as "other")
               const key = targetLineId || lineId;
               const list = extraDeductionsByLineId.get(key) || [];
               list.push({
@@ -1099,8 +1162,7 @@ export default function RunPayroll({
             }
           }
 
-          // This is the sum of advances FOR THIS STAFF on THIS SHIFT
-          totalAdvances += advancesForThisShiftForThisStaff;
+          totalAdvancesLine += advancesForThisShiftForThisStaff;
 
           shiftDetails.push({
             id: sid,
@@ -1114,35 +1176,23 @@ export default function RunPayroll({
             shortages: shortageAmount,
           });
 
-          totalMinutes += minutesUsed;
+          totalMinutesLine += minutesUsed;
 
-          // tag shift with payrollRunId
-          txBatch.update(doc(db, "shifts", sid), {
-            payrollRunId: id,
-          });
+          txBatch.update(doc(db, "shifts", sid), { payrollRunId: id });
         }
 
-        const grossPay = calcGrossLocal(totalMinutes, l.rate);
+        const grossPay = calcGrossLocal(totalMinutesLine, l.rate);
 
         const manualAdjustments = Array.isArray(l.adjustments)
           ? l.adjustments.filter((a) => a?.type === "manual-deduction")
           : [];
-        const manualTotal = manualAdjustments.reduce(
-          (s, a) => s + Number(a.amount || 0),
-          0
-        );
+        const manualTotal = manualAdjustments.reduce((s, a) => s + Number(a.amount || 0), 0);
 
-        // NEW: Additions
         const manualAdditions = Array.isArray(l.adjustments)
           ? l.adjustments.filter((a) => a?.type === "manual-addition")
           : [];
-        const additionTotal = manualAdditions.reduce(
-          (s, a) => s + Number(a.amount || 0),
-          0
-        );
+        const additionTotal = manualAdditions.reduce((s, a) => s + Number(a.amount || 0), 0);
 
-        // We no longer read 'extra-advance' from adjustments.
-        // We re-calculate it every time from the cross-shift logic.
         materializedLines.push({
           lineId,
           staffUid: l.staffUid,
@@ -1150,164 +1200,105 @@ export default function RunPayroll({
           staffName: l.staffName,
           rate: l.rate,
           shifts: shiftDetails,
-          totalMinutes,
+          totalMinutes: totalMinutesLine,
           grossPay,
-          totalAdvances, // This is *only* shift-owner advances
-          totalShortages,
-          manualAdjustments, // This is *only* custom deductions
+          totalAdvances: totalAdvancesLine,
+          totalShortages: totalShortagesLine,
+          manualAdjustments,
           manualTotal,
-          manualAdditions, // NEW
-          additionTotal,   // NEW
-          crossDeductions: [], // Will be populated in Loop 3
+          manualAdditions,
+          additionTotal,
+          crossDeductions: [],
         });
       }
 
       updateBusy("Merging cross-staff salary advances...");
-
-      // --- FIX: FETCH ADMIN MANUAL EXPENSES (Mirroring generatePreview) ---
       updateBusy("Fetching admin manual salary entries...");
-      // We need to re-fetch these because finalizeRun rebuilds everything from shifts/lines
-      const start = tsFromYMD(runData.periodStart ? toYMD_PHT_fromTS(runData.periodStart) : periodStart, false);
-      const end = tsFromYMD(runData.periodEnd ? toYMD_PHT_fromTS(runData.periodEnd) : periodEnd, true);
+      const startTS = tsFromYMD(runData.periodStart ? toYMD_PHT_fromTS(runData.periodStart) : periodStart, false);
+      const endTS = tsFromYMD(runData.periodEnd ? toYMD_PHT_fromTS(runData.periodEnd) : periodEnd, true);
 
-      const qAdmin = query(
+      const adminSnap = await getDocs(query(
         collection(db, "transactions"),
-        where("timestamp", ">=", start),
-        where("timestamp", "<=", end),
+        where("timestamp", ">=", startTS),
+        where("timestamp", "<=", endTS),
         where("item", "==", "Expenses")
-      );
-      const adminSnap = await getDocs(qAdmin);
-      const adminExpenses = adminSnap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .filter(t => t.item === "Expenses"); // Double check
+      ));
 
-      // Distribute Admin Expenses
-      for (const tx of adminExpenses) {
+      for (const docSnap of adminSnap.docs) {
+        const tx = { id: docSnap.id, ...docSnap.data() };
         if (tx.voided || tx.isDeleted) continue;
-        // FIX: Only treat "Salary Advance" as a deduction. Ignore "Salary".
         if (tx.expenseType !== "Salary Advance") continue;
-
-        // Skip consistency check with shiftId (already handled in generatePreview, but good for safety)
         if (tx.shiftId) continue;
 
         const email = tx.expenseStaffEmail || tx.staffEmail;
         const uid = tx.expenseStaffId || tx.staffUid;
         const amt = Number(tx.total || 0);
 
-        // Find target line
-        const targetLine = materializedLines.find(l =>
-          (uid && l.staffUid === uid) ||
-          (email && l.staffEmail === email)
+        const targetLine = materializedLines.find((l) =>
+          (uid && l.staffUid === uid) || (email && l.staffEmail === email)
         );
 
         if (targetLine) {
-          // Check if this deduction is already in crossDeductions (unlikely but safe)
-          const exists = (targetLine.crossDeductions || []).some(d => d.id === tx.id);
+          const exists = (targetLine.crossDeductions || []).some((d) => d.id === tx.id);
           if (!exists) {
             if (!targetLine.crossDeductions) targetLine.crossDeductions = [];
             targetLine.crossDeductions.push({
               id: tx.id,
               label: `Manual: ${tx.notes || "Salary Advance"}`,
               amount: amt,
-              expenseDate: tx.timestamp
+              expenseDate: tx.timestamp,
             });
           }
         }
       }
-      // --- END FIX ---
 
-      // This loop now *only* populates/merges `crossDeductions`.
       for (const [targetLineId, extraList] of extraDeductionsByLineId.entries()) {
         const target = materializedLines.find((m) => m.lineId === targetLineId);
         if (target) {
-          // Merge with existing crossDeductions (from Admin Manual above)
           const current = target.crossDeductions || [];
           target.crossDeductions = [...current, ...extraList];
         }
       }
 
       updateBusy("Writing paystubs and posting salary expenses...");
-      let runTotals = {
-        staffCount: 0,
-        minutes: 0,
-        gross: 0,
-        additions: 0,
-        advances: 0,
-        shortages: 0,
-        otherDeductions: 0,
-        net: 0,
-      };
+      let runTotals = { staffCount: 0, minutes: 0, gross: 0, additions: 0, advances: 0, shortages: 0, otherDeductions: 0, net: 0 };
 
       const expenseModeToUse = runData.expenseMode || "per-staff";
 
       for (const m of materializedLines) {
         const deductionItems = [];
-        const additionItems = []; // NEW
+        const additionItems = [];
 
         const shiftsForStub = m.shifts.map((s) => {
           const shiftPay = Number(((s.minutes / 60) * m.rate).toFixed(2));
           if (s.advances > 0) {
-            deductionItems.push({
-              id: s.id,
-              label: `Salary Advance on ${s.label}`,
-              amount: s.advances,
-            });
+            deductionItems.push({ id: s.id, label: `Salary Advance on ${s.label}`, amount: s.advances });
           }
           if (s.shortages > 0) {
-            deductionItems.push({
-              id: s.id,
-              label: `Shortage on ${s.label}`,
-              amount: s.shortages,
-            });
+            deductionItems.push({ id: s.id, label: `Shortage on ${s.label}`, amount: s.shortages });
           }
-          return {
-            id: s.id,
-            label: s.label,
-            hours: s.hours,
-            startTime: s.startTime || null,
-            endTime: s.endTime || null,
-            pay: shiftPay,
-          };
+          return { id: s.id, label: s.label, hours: s.hours, startTime: s.startTime || null, endTime: s.endTime || null, pay: shiftPay };
         });
 
         m.manualAdjustments.forEach((a) =>
-          deductionItems.push({
-            id: a.id,
-            label: a.label,
-            amount: Number(a.amount || 0),
-          })
+          deductionItems.push({ id: a.id, label: a.label, amount: Number(a.amount || 0) })
         );
 
-        // NEW: Populate Addition Items
         m.manualAdditions.forEach((a) =>
-          additionItems.push({
-            id: a.id,
-            label: a.label,
-            amount: Number(a.amount || 0),
-          })
+          additionItems.push({ id: a.id, label: a.label, amount: Number(a.amount || 0) })
         );
 
-        // Only add re-calculated cross-deductions.
         (m.crossDeductions || []).forEach((a) =>
-          deductionItems.push({
-            id: a.id,
-            label: a.label,
-            amount: Number(a.amount || 0),
-          })
+          deductionItems.push({ id: a.id, label: a.label, amount: Number(a.amount || 0) })
         );
 
-        // Calculate cross-staff total from the correct (re-calculated) source.
         const crossStaffTotal = (m.crossDeductions || []).reduce(
           (s, a) => s + Number(a.amount || 0),
           0
         );
 
-        // totalDeductions is now shift-advances + shortages + manual + cross-staff
         const totalDeductions =
-          m.totalAdvances +
-          m.totalShortages +
-          m.manualTotal +
-          crossStaffTotal;
+          m.totalAdvances + m.totalShortages + m.manualTotal + crossStaffTotal;
 
         const netPay = Number((m.grossPay + m.additionTotal - totalDeductions).toFixed(2));
 
@@ -1320,10 +1311,10 @@ export default function RunPayroll({
           payDate: runPayDateTS,
           shifts: shiftsForStub,
           deductionItems,
-          additionItems, // NEW
+          additionItems,
           totalHours: toHours(m.totalMinutes),
           grossPay: m.grossPay,
-          totalAdditions: m.additionTotal, // NEW
+          totalAdditions: m.additionTotal,
           totalDeductions: Number(totalDeductions.toFixed(2)),
           netPay,
           createdAt: serverTimestamp(),
@@ -1332,11 +1323,6 @@ export default function RunPayroll({
 
         txBatch.set(doc(collection(runRef, "paystubs")), paystubData);
 
-        // --- POST TRANSACTIONS ---
-
-        // --- PREPARE TRANSACTIONS (Collected for Batch ID Generation) ---
-        // Instead of writing immediately, we push to a list
-        // 1. Pay Additions
         if (m.additionTotal > 0 && expenseModeToUse === "per-shift") {
           pendingTransactions.push({
             item: "Expenses",
@@ -1360,15 +1346,11 @@ export default function RunPayroll({
         }
 
         if (expenseModeToUse === "per-shift") {
-          // per shift logic
           m.shifts.forEach((s) => {
-            const shiftGross = Number(
-              (((s.minutes || 0) / 60) * Number(m.rate || 0)).toFixed(2)
-            );
+            const shiftGross = Number((((s.minutes || 0) / 60) * Number(m.rate || 0)).toFixed(2));
             const shiftDeductions = deductionItems
               .filter((d) => d.id === s.id)
               .reduce((sum, d) => sum + Number(d.amount || 0), 0);
-
             const shiftNet = Number((shiftGross - shiftDeductions).toFixed(2));
             if (shiftGross === 0 && shiftDeductions === 0) return;
 
@@ -1393,15 +1375,9 @@ export default function RunPayroll({
             });
           });
 
-          // Non-shift deductions
-          const nonShiftDeds = deductionItems.filter(
-            (d) => !m.shifts.find((s) => s.id === d.id)
-          );
+          const nonShiftDeds = deductionItems.filter((d) => !m.shifts.find((s) => s.id === d.id));
           if (nonShiftDeds.length) {
-            const extraTotal = nonShiftDeds.reduce(
-              (s, d) => s + Number(d.amount || 0),
-              0
-            );
+            const extraTotal = nonShiftDeds.reduce((s, d) => s + Number(d.amount || 0), 0);
             if (extraTotal > 0) {
               pendingTransactions.push({
                 item: "Expenses",
@@ -1425,7 +1401,6 @@ export default function RunPayroll({
             }
           }
         } else {
-          // per staff
           pendingTransactions.push({
             item: "Expenses",
             expenseType: "Salary",
@@ -1447,27 +1422,21 @@ export default function RunPayroll({
           });
         }
 
-        // Update runTotals calculation
         runTotals = {
           staffCount: runTotals.staffCount + 1,
           minutes: runTotals.minutes + m.totalMinutes,
           gross: runTotals.gross + m.grossPay,
-          additions: runTotals.additions + m.additionTotal, // NEW
+          additions: runTotals.additions + m.additionTotal,
           advances: runTotals.advances + m.totalAdvances,
           shortages: runTotals.shortages + m.totalShortages,
-          otherDeductions:
-            runTotals.otherDeductions +
-            m.manualTotal +
-            crossStaffTotal,
+          otherDeductions: runTotals.otherDeductions + m.manualTotal + crossStaffTotal,
           net: runTotals.net + netPay,
         };
       }
 
-      // --- BATCH GENERATE IDS AND COMMIT PENDING TRANSACTIONS ---
       if (pendingTransactions.length > 0) {
         updateBusy(`Generating IDs for ${pendingTransactions.length} expenses...`);
         const expIds = await generateBatchIds("expenses", "EXP", pendingTransactions.length);
-
         pendingTransactions.forEach((tx, idx) => {
           const newRef = doc(collection(db, "transactions"));
           tx.displayId = expIds[idx];
@@ -1486,184 +1455,175 @@ export default function RunPayroll({
       await txBatch.commit();
 
       setStatus("posted");
-      setDialogContext("existing");
-      setDialogOpen(true);
+      setStep(2);
       stopBusy();
-      if (showSnackbar) showSnackbar("Run finalized, transactions posted, and paystubs created.", 'success');
-      else openFeedback(
-        "Payroll complete",
-        "Run was finalized, transactions were posted, and paystubs were created."
-      );
+      showSnackbar?.("Run finalized, transactions posted, and paystubs created.", "success");
       onOpenPaystubs && onOpenPaystubs(id);
     } catch (err) {
       console.error(err);
       stopBusy();
-      if (showSnackbar) showSnackbar("Failed to finalize payroll run.", 'error');
-      else openFeedback("Finalize failed", "Failed to finalize payroll run.");
+      showSnackbar?.("Failed to finalize payroll run.", "error");
     }
   };
 
-  /** runs dropdown (top) */
+  /** runs dropdown */
   const [availableRuns, setAvailableRuns] = useState([]);
   useEffect(() => {
     const unsub = onSnapshot(
       query(collection(db, "payrollRuns"), orderBy("periodStart", "desc")),
-      (snap) =>
-        setAvailableRuns(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+      (snap) => setAvailableRuns(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
     );
     return () => unsub();
   }, []);
 
-  // totals for small table below
-  const totals = useMemo(() => {
-    const minutes = preview.reduce((s, l) => s + Number(l.minutes || 0), 0);
-    const gross = Number(
-      preview.reduce((s, l) => s + Number(l.gross || 0), 0).toFixed(2)
-    );
-    const adds = Number(
-      preview.reduce((s, l) => s + Number(l.totalAdditions || 0), 0).toFixed(2)
-    );
-    const adv = Number(
-      preview.reduce((s, l) => s + Number(l.advances || 0), 0).toFixed(2)
-    );
-    const short = Number(
-      preview.reduce((s, l) => s + Number(l.shortages || 0), 0).toFixed(2)
-    );
-    const other = Number(
-      preview.reduce((s, l) => s + Number(l.otherDeductions || 0), 0).toFixed(2)
-    );
-    const net = Number(
-      preview.reduce((s, l) => s + Number(l.net || 0), 0).toFixed(2)
-    );
-    return { minutes, gross, adds, adv, short, other, net };
-  }, [preview]);
-
-  const hasData = preview.length > 0;
-  const isFinalized = status === "posted" || status === "voided";
+  // ─── render ──────────────────────────────────────────────────────────────────
 
   return (
     <>
-      <Card>
-        {/* header / filters */}
-        <Box sx={{ p: 2, borderBottom: "1px solid", borderColor: "divider" }}>
-          <Grid container spacing={2} alignItems="center">
-            {/* period and load */}
-            <Grid item xs={12} md={6}>
-              <Stack direction="row" spacing={2} alignItems="center">
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 3, maxWidth: 1100, mx: "auto" }}>
+
+        {/* Step indicator */}
+        <Stepper activeStep={step} alternativeLabel>
+          <Step>
+            <StepLabel>Select Period</StepLabel>
+          </Step>
+          <Step>
+            <StepLabel>Review Hours</StepLabel>
+          </Step>
+          <Step>
+            <StepLabel>Confirm & Post</StepLabel>
+          </Step>
+        </Stepper>
+
+        {/* ── Step 0: Period Setup ─────────────────────────────────────────── */}
+        {step === 0 && (
+          <Card sx={{ p: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Payroll Period
+            </Typography>
+            <Stack spacing={2}>
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
                 <TextField
-                  type="date"
                   label="Period Start"
+                  type="date"
                   value={periodStart}
                   onChange={(e) => setPeriodStart(e.target.value)}
                   InputLabelProps={{ shrink: true }}
-                  size="small"
+                  fullWidth
                 />
                 <TextField
-                  type="date"
                   label="Period End"
+                  type="date"
                   value={periodEnd}
                   onChange={(e) => setPeriodEnd(e.target.value)}
                   InputLabelProps={{ shrink: true }}
-                  size="small"
+                  fullWidth
                 />
-                <FormControl size="small" sx={{ minWidth: 240 }}>
-                  <InputLabel>Load Existing Run</InputLabel>
-                  <Select
-                    value={runId || ""}
-                    onChange={(e) => loadRun(e.target.value)}
-                    label="Load Existing Run"
-                  >
-                    <MenuItem value="">
-                      <em>None (New Run)</em>
-                    </MenuItem>
-                    {availableRuns.map((r) => (
-                      <MenuItem key={r.id} value={r.id}>
-                        {toLocaleDateStringPHT(r.periodStart)} –{" "}
-                        {toLocaleDateStringPHT(r.periodEnd)} • {cap(r.status)}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+                <TextField
+                  label="Pay Date"
+                  type="date"
+                  value={payDate}
+                  onChange={(e) => setPayDate(e.target.value)}
+                  InputLabelProps={{ shrink: true }}
+                  fullWidth
+                  disabled={isPerStaffMode ? false : false}
+                />
               </Stack>
-            </Grid>
-
-            {/* actions */}
-            <Grid item xs={12} md={6}>
-              <Stack
-                direction="row"
-                spacing={1}
-                alignItems="center"
-                justifyContent="flex-end"
-              >
-                {hasData && !isFinalized && (
-                  <Button onClick={() => saveEditsToRun()}>
-                    Save Changes
-                  </Button>
-                )}
-                {hasData && (
-                  <Button
-                    variant="outlined"
-                    onClick={() => setDialogOpen(true)}
-                  >
-                    Run Details
-                  </Button>
-                )}
-
+              <FormControl fullWidth>
+                <InputLabel>Expense Mode</InputLabel>
+                <Select
+                  value={expenseMode}
+                  onChange={(e) => handleExpenseModeChange(e.target.value)}
+                  label="Expense Mode"
+                >
+                  <MenuItem value="per-staff">Post once per staff (use pay date)</MenuItem>
+                  <MenuItem value="per-shift">Post using each shift's expense date</MenuItem>
+                </Select>
+              </FormControl>
+              <Divider />
+              <FormControl size="small" sx={{ maxWidth: 340 }}>
+                <InputLabel>Or Load Existing Run</InputLabel>
+                <Select
+                  value={runId || ""}
+                  onChange={(e) => loadRun(e.target.value)}
+                  label="Or Load Existing Run"
+                >
+                  <MenuItem value=""><em>None (New Run)</em></MenuItem>
+                  {availableRuns.map((r) => (
+                    <MenuItem key={r.id} value={r.id}>
+                      {toLocaleDateStringPHT(r.periodStart)} – {toLocaleDateStringPHT(r.periodEnd)} • {cap(r.status)}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <Box>
                 <Button
                   variant="contained"
-                  startIcon={hasData ? <CheckIcon /> : <RefreshIcon />}
-                  onClick={
-                    hasData
-                      ? () => setConfirmFinalizeOpen(true)
-                      : () => generatePreview(null) //
-                  }
-                  disabled={
-                    isFinalized || (!hasData && (!periodStart || !periodEnd))
-                  }
+                  size="large"
+                  onClick={() => generatePreview(null)}
+                  disabled={!periodStart || !periodEnd || busy}
+                  startIcon={busy ? <CircularProgress size={18} color="inherit" /> : <RefreshIcon />}
                 >
-                  {hasData ? "Finalize Run" : "Generate Preview"}
+                  Preview Payroll
                 </Button>
-
-                {runId && (
-                  <Tooltip title="View Paystubs">
-                    <IconButton
-                      onClick={() => onOpenPaystubs && onOpenPaystubs(runId)}
-                    >
-                      <ReceiptLongIcon />
-                    </IconButton>
-                  </Tooltip>
-                )}
-              </Stack>
-            </Grid>
-          </Grid>
-        </Box>
-
-        {/* totals + table */}
-        {hasData ? (
-          <Box sx={{ p: 2 }}>
-            <Stack
-              direction="row"
-              spacing={1}
-              justifyContent="flex-end"
-              flexWrap="wrap"
-              sx={{ mb: 2 }}
-            >
-              <StatChip label="Staff" value={preview.length} />
-              <StatChip
-                label="Hours"
-                value={`${toHours(totals.minutes)} hrs`}
-              />
-              <StatChip label="Gross" value={peso(totals.gross)} />
-              <StatChip label="Adds" value={peso(totals.adds)} color="success" />
-              <StatChip label="Adv" value={peso(totals.adv)} />
-              <StatChip label="Short" value={peso(totals.short)} />
-              <StatChip label="Other" value={peso(totals.other)} />
-              <StatChip bold label="NET" value={peso(totals.net)} />
+              </Box>
             </Stack>
+          </Card>
+        )}
+
+        {/* ── Step 1: Review Hours (was RunDialog content) ─────────────────── */}
+        {step === 1 && (
+          <Box>
+            {/* Header bar */}
+            <Card sx={{ p: 2, mb: 2 }}>
+              <Stack
+                direction={{ xs: "column", md: "row" }}
+                justifyContent="space-between"
+                alignItems={{ xs: "flex-start", md: "center" }}
+                spacing={2}
+              >
+                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                  <TextField
+                    type="date"
+                    label="Pay Date"
+                    value={payDate}
+                    onChange={(e) => setPayDate(e.target.value)}
+                    InputLabelProps={{ shrink: true }}
+                    size="small"
+                    disabled={disableEdits || isPerStaffMode}
+                  />
+                  <FormControl size="small" sx={{ minWidth: 280 }}>
+                    <InputLabel>Expense Mode</InputLabel>
+                    <Select
+                      value={expenseMode}
+                      label="Expense Mode"
+                      onChange={(e) => handleExpenseModeChange(e.target.value)}
+                      disabled={disableEdits}
+                    >
+                      <MenuItem value="per-staff">Post once per staff (use pay date)</MenuItem>
+                      <MenuItem value="per-shift">Post using each shift's expense date</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Stack>
+                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                  <StatChip label="Staff" value={preview.length} />
+                  <StatChip label="Hours" value={`${toHours(totalMinutes)} hrs`} />
+                  <StatChip label="Gross" value={peso(totalGross)} />
+                  <StatChip label="Adds" value={peso(totalAdditionsSum)} color="success" />
+                  <StatChip label="Adv" value={peso(totalAdvances)} />
+                  <StatChip label="Short" value={peso(totalShortages)} />
+                  <StatChip label="Other Deds" value={peso(totalOtherDeds)} />
+                  <StatChip bold label="NET" value={peso(totalNet)} />
+                </Stack>
+              </Stack>
+            </Card>
+
+            {/* Staff table */}
             <TableContainer component={Paper}>
               <Table size="small">
                 <TableHead>
                   <TableRow>
+                    <TableCell />
                     <TableCell>Staff</TableCell>
                     <TableCell>Email</TableCell>
                     <TableCell align="right">Hours</TableCell>
@@ -1678,60 +1638,516 @@ export default function RunPayroll({
                 </TableHead>
                 <TableBody>
                   {preview.map((l) => (
+                    <React.Fragment key={l.id}>
+                      <TableRow>
+                        <TableCell width={48}>
+                          <IconButton
+                            size="small"
+                            onClick={() => setExpanded((p) => ({ ...p, [l.id]: !p[l.id] }))}
+                          >
+                            {expanded[l.id] ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                          </IconButton>
+                        </TableCell>
+                        <TableCell>{l.staffName}</TableCell>
+                        <TableCell>{l.staffEmail}</TableCell>
+                        <TableCell align="right">{toHours(l.minutes)}</TableCell>
+                        <TableCell align="right">
+                          <TextField
+                            type="number"
+                            size="small"
+                            value={l.rate}
+                            onChange={(e) => {
+                              const rate = Number(e.target.value || 0);
+                              setPreview((prev) =>
+                                prev.map((line) => {
+                                  if (line.id !== l.id) return line;
+                                  const newLine = { ...line, rate };
+                                  return { ...newLine, ...recalcLine(newLine) };
+                                })
+                              );
+                            }}
+                            inputProps={{ step: "0.01", min: 0 }}
+                            disabled={disableEdits}
+                            sx={{ width: 90 }}
+                          />
+                        </TableCell>
+                        <TableCell align="right">{peso(l.gross)}</TableCell>
+                        <TableCell align="right" sx={{ color: "green" }}>
+                          {peso(l.totalAdditions)}
+                        </TableCell>
+                        <TableCell align="right">{peso(l.advances)}</TableCell>
+                        <TableCell align="right">{peso(l.shortages)}</TableCell>
+                        <TableCell align="right">{peso(l.otherDeductions || 0)}</TableCell>
+                        <TableCell align="right">
+                          <b>{peso(l.net)}</b>
+                        </TableCell>
+                      </TableRow>
+
+                      {/* expanded detail */}
+                      <TableRow>
+                        <TableCell colSpan={11} sx={{ p: 0, border: 0 }}>
+                          <Collapse in={!!expanded[l.id]} timeout="auto" unmountOnExit>
+                            <Box sx={{ p: 2, bgcolor: "background.default" }}>
+
+                              {/* Shifts included */}
+                              <Typography variant="subtitle2" gutterBottom>
+                                Shifts (included)
+                              </Typography>
+                              <Table size="small">
+                                <TableHead>
+                                  <TableRow>
+                                    <TableCell>Shift</TableCell>
+                                    <TableCell>Start</TableCell>
+                                    <TableCell>End</TableCell>
+                                    <TableCell align="right">Hours</TableCell>
+                                    <TableCell align="right">System</TableCell>
+                                    <TableCell align="right">Denoms</TableCell>
+                                    <TableCell align="right">Shortage</TableCell>
+                                    <TableCell align="right">Expense Date</TableCell>
+                                    <TableCell align="center">Exclude</TableCell>
+                                  </TableRow>
+                                </TableHead>
+                                <TableBody>
+                                  {l.shiftRows
+                                    .filter((r) => !r.excluded)
+                                    .map((r) => {
+                                      const startForISO = r.overrideStart || r.start;
+                                      const endForISO = r.overrideEnd || r.end;
+                                      const startISO = toLocalISO_PHT_fromTS(startForISO);
+                                      const endISO = toLocalISO_PHT_fromTS(endForISO);
+
+                                      const label = `${inferShiftName(r.start, r.title, r.label)} — ${toLocaleDateStringPHT(r.start)}`;
+
+                                      const expenseDateYMD = isPerStaffMode
+                                        ? payDate
+                                        : r.expenseDate?.seconds
+                                          ? toYMD_PHT_fromTS(r.expenseDate)
+                                          : payDate || todayYMD_PHT();
+
+                                      return (
+                                        <TableRow key={r.id}>
+                                          <TableCell>
+                                            <Typography variant="body2">
+                                              {label}
+                                              {r.isOngoing && (
+                                                <Chip
+                                                  label="Ongoing"
+                                                  size="small"
+                                                  color="warning"
+                                                  variant="outlined"
+                                                  sx={{ ml: 1, height: 20, fontSize: 10 }}
+                                                />
+                                              )}
+                                            </Typography>
+                                          </TableCell>
+                                          <TableCell>
+                                            <TextField
+                                              type="datetime-local"
+                                              size="small"
+                                              value={startISO}
+                                              onChange={(e) =>
+                                                updateShiftRow(l.id, r.id, {
+                                                  overrideStart: Timestamp.fromDate(new Date(e.target.value)),
+                                                })
+                                              }
+                                              disabled={disableEdits}
+                                            />
+                                          </TableCell>
+                                          <TableCell>
+                                            <TextField
+                                              type="datetime-local"
+                                              size="small"
+                                              value={endISO}
+                                              onChange={(e) =>
+                                                updateShiftRow(l.id, r.id, {
+                                                  overrideEnd: Timestamp.fromDate(new Date(e.target.value)),
+                                                })
+                                              }
+                                              disabled={disableEdits}
+                                            />
+                                          </TableCell>
+                                          <TableCell align="right">{toHours(r.minutesUsed)}</TableCell>
+                                          <TableCell align="right">{peso(r.systemTotal)}</TableCell>
+                                          <TableCell align="right">{peso(sumDenominations(r.denominations))}</TableCell>
+                                          <TableCell align="right">{peso(r.shortage)}</TableCell>
+                                          <TableCell align="right">
+                                            <TextField
+                                              type="date"
+                                              size="small"
+                                              value={expenseDateYMD}
+                                              onChange={(e) =>
+                                                updateShiftRow(l.id, r.id, {
+                                                  expenseDate: tsFromYMD(e.target.value, false),
+                                                })
+                                              }
+                                              disabled={disableEdits || isPerStaffMode}
+                                            />
+                                          </TableCell>
+                                          <TableCell align="center">
+                                            <input
+                                              type="checkbox"
+                                              checked={!!r.excluded}
+                                              onChange={(e) =>
+                                                updateShiftRow(l.id, r.id, { excluded: !!e.target.checked })
+                                              }
+                                              disabled={disableEdits}
+                                            />
+                                          </TableCell>
+                                        </TableRow>
+                                      );
+                                    })}
+                                </TableBody>
+                              </Table>
+
+                              {/* Excluded shifts */}
+                              {l.shiftRows.some((r) => r.excluded) && (
+                                <>
+                                  <Divider sx={{ my: 2 }} />
+                                  <Typography variant="subtitle2" gutterBottom>Excluded</Typography>
+                                  <Table size="small">
+                                    <TableHead>
+                                      <TableRow>
+                                        <TableCell>Shift</TableCell>
+                                        <TableCell align="right">Hours</TableCell>
+                                        <TableCell align="center">Re-include</TableCell>
+                                        <TableCell align="right">ID</TableCell>
+                                      </TableRow>
+                                    </TableHead>
+                                    <TableBody>
+                                      {l.shiftRows
+                                        .filter((r) => r.excluded)
+                                        .map((r) => {
+                                          const label = `${inferShiftName(r.start, r.title, r.label)} — ${toLocaleDateStringPHT(r.start)}`;
+                                          return (
+                                            <TableRow key={r.id}>
+                                              <TableCell>{label}</TableCell>
+                                              <TableCell align="right">{toHours(r.minutesOriginal)}</TableCell>
+                                              <TableCell align="center">
+                                                <Button
+                                                  size="small"
+                                                  onClick={() =>
+                                                    updateShiftRow(l.id, r.id, {
+                                                      excluded: false,
+                                                      minutesUsed: r.minutesOriginal,
+                                                    })
+                                                  }
+                                                  disabled={disableEdits}
+                                                >
+                                                  Include
+                                                </Button>
+                                              </TableCell>
+                                              <TableCell align="right">
+                                                <Typography variant="caption" sx={{ opacity: 0.7 }}>
+                                                  {r.displayId || r.id.slice(-6)}
+                                                </Typography>
+                                              </TableCell>
+                                            </TableRow>
+                                          );
+                                        })}
+                                    </TableBody>
+                                  </Table>
+                                </>
+                              )}
+
+                              <Divider sx={{ my: 2 }} />
+
+                              {/* Additions */}
+                              <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                                <Typography variant="subtitle2" sx={{ color: "green" }}>
+                                  Additional Pay / Bonuses
+                                </Typography>
+                                <Button
+                                  size="small"
+                                  onClick={() => openItemDialog("addition", l.id)}
+                                  disabled={disableEdits}
+                                >
+                                  + Add Pay
+                                </Button>
+                              </Stack>
+                              <Table size="small" sx={{ mb: 2 }}>
+                                <TableHead>
+                                  <TableRow>
+                                    <TableCell>Label</TableCell>
+                                    <TableCell align="right">Amount</TableCell>
+                                    <TableCell align="center">Actions</TableCell>
+                                  </TableRow>
+                                </TableHead>
+                                <TableBody>
+                                  {l.customAdditions && l.customAdditions.length > 0 ? (
+                                    l.customAdditions.map((d, idx) => (
+                                      <TableRow key={`add-${idx}`}>
+                                        <TableCell>{d.label}</TableCell>
+                                        <TableCell align="right" sx={{ color: "green", fontWeight: "bold" }}>
+                                          {peso(d.amount)}
+                                        </TableCell>
+                                        <TableCell align="center">
+                                          <Stack direction="row" spacing={1} justifyContent="center">
+                                            <Button
+                                              size="small"
+                                              onClick={() =>
+                                                openItemDialog("addition", l.id, {
+                                                  index: idx,
+                                                  label: d.label,
+                                                  amount: d.amount,
+                                                })
+                                              }
+                                              disabled={disableEdits}
+                                            >
+                                              Edit
+                                            </Button>
+                                            <Button
+                                              size="small"
+                                              onClick={() => deleteItem("addition", l.id, idx)}
+                                              disabled={disableEdits}
+                                            >
+                                              Delete
+                                            </Button>
+                                          </Stack>
+                                        </TableCell>
+                                      </TableRow>
+                                    ))
+                                  ) : (
+                                    <TableRow>
+                                      <TableCell colSpan={3} align="center" sx={{ color: "text.secondary", fontStyle: "italic" }}>
+                                        No additional pay.
+                                      </TableCell>
+                                    </TableRow>
+                                  )}
+                                </TableBody>
+                              </Table>
+
+                              <Divider sx={{ my: 2 }} />
+
+                              {/* Deductions */}
+                              <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                                <Typography variant="subtitle2">
+                                  Deductions for {l.staffName}
+                                </Typography>
+                                <Button
+                                  size="small"
+                                  onClick={() => openItemDialog("deduction", l.id)}
+                                  disabled={disableEdits}
+                                >
+                                  + Add Custom Deduction
+                                </Button>
+                              </Stack>
+                              <Table size="small" sx={{ mb: 2 }}>
+                                <TableHead>
+                                  <TableRow>
+                                    <TableCell>Type</TableCell>
+                                    <TableCell>Label</TableCell>
+                                    <TableCell align="right">Amount</TableCell>
+                                    <TableCell align="center">Actions</TableCell>
+                                  </TableRow>
+                                </TableHead>
+                                <TableBody>
+                                  {(l.extraAdvances?.length || l.customDeductions?.length) ? (
+                                    <>
+                                      {(l.extraAdvances || []).map((d, idx) => (
+                                        <TableRow key={`extra-${idx}`}>
+                                          <TableCell>Salary Advance</TableCell>
+                                          <TableCell>{d.label}</TableCell>
+                                          <TableCell align="right">{peso(d.amount)}</TableCell>
+                                          <TableCell align="center">
+                                            <Typography variant="caption" color="text.secondary">auto</Typography>
+                                          </TableCell>
+                                        </TableRow>
+                                      ))}
+                                      {(l.customDeductions || []).map((d, idx) => (
+                                        <TableRow key={`custom-${idx}`}>
+                                          <TableCell>Custom</TableCell>
+                                          <TableCell>{d.label}</TableCell>
+                                          <TableCell align="right">{peso(d.amount)}</TableCell>
+                                          <TableCell align="center">
+                                            <Stack direction="row" spacing={1} justifyContent="center">
+                                              <Button
+                                                size="small"
+                                                onClick={() =>
+                                                  openItemDialog("deduction", l.id, {
+                                                    index: idx,
+                                                    label: d.label,
+                                                    amount: d.amount,
+                                                  })
+                                                }
+                                                disabled={disableEdits}
+                                              >
+                                                Edit
+                                              </Button>
+                                              <Button
+                                                size="small"
+                                                onClick={() => deleteItem("deduction", l.id, idx)}
+                                                disabled={disableEdits}
+                                              >
+                                                Delete
+                                              </Button>
+                                            </Stack>
+                                          </TableCell>
+                                        </TableRow>
+                                      ))}
+                                    </>
+                                  ) : (
+                                    <TableRow>
+                                      <TableCell colSpan={4} align="center" sx={{ color: "text.secondary" }}>
+                                        No other deductions.
+                                      </TableCell>
+                                    </TableRow>
+                                  )}
+                                </TableBody>
+                              </Table>
+                            </Box>
+                          </Collapse>
+                        </TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell colSpan={11} sx={{ p: 0, border: 0 }}>
+                          <Divider />
+                        </TableCell>
+                      </TableRow>
+                    </React.Fragment>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+
+            {/* Step 1 action bar */}
+            <Stack
+              direction="row"
+              justifyContent="space-between"
+              alignItems="center"
+              sx={{ mt: 2 }}
+            >
+              <Button onClick={() => setStep(0)}>Back</Button>
+              <Stack direction="row" spacing={1}>
+                {runId && (
+                  <Tooltip title="View Paystubs">
+                    <IconButton onClick={() => setPaystubDrawerRunId(runId)}>
+                      <ReceiptLongIcon />
+                    </IconButton>
+                  </Tooltip>
+                )}
+                {runId ? (
+                  <>
+                    {status !== "posted" && status !== "voided" && (
+                      <Button variant="outlined" onClick={() => saveEditsToRun()}>
+                        Save Changes
+                      </Button>
+                    )}
+                    {status === "posted" ? (
+                      <>
+                        <Button variant="outlined" startIcon={<RefreshIcon />} onClick={handleFinalize}>
+                          Regenerate Paystubs
+                        </Button>
+                        <Button variant="contained" onClick={() => setStep(2)}>
+                          View Summary
+                        </Button>
+                      </>
+                    ) : status !== "voided" ? (
+                      <Button variant="contained" color="success" startIcon={<CheckIcon />} onClick={handleFinalize}>
+                        Finalize Run
+                      </Button>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <Button variant="outlined" onClick={handleSaveRun}>
+                      Save Draft
+                    </Button>
+                    <Button variant="contained" color="success" startIcon={<CheckIcon />} onClick={handleCreateAndFinalize}>
+                      Create & Finalize
+                    </Button>
+                  </>
+                )}
+              </Stack>
+            </Stack>
+          </Box>
+        )}
+
+        {/* ── Step 2: Confirm / Summary ────────────────────────────────────── */}
+        {step === 2 && (
+          <Card sx={{ p: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Payroll Run Summary
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Period: {periodStart} – {periodEnd} &nbsp;|&nbsp; Pay Date: {payDate} &nbsp;|&nbsp; Status: {cap(status)}
+            </Typography>
+
+            <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mb: 3 }}>
+              <StatChip label="Staff" value={preview.length} />
+              <StatChip label="Hours" value={`${toHours(totalMinutes)} hrs`} />
+              <StatChip label="Gross" value={peso(totalGross)} />
+              <StatChip label="Additions" value={peso(totalAdditionsSum)} color="success" />
+              <StatChip label="Advances" value={peso(totalAdvances)} />
+              <StatChip label="Shortages" value={peso(totalShortages)} />
+              <StatChip label="Other Deds" value={peso(totalOtherDeds)} />
+              <StatChip bold label="NET" value={peso(totalNet)} />
+            </Stack>
+
+            <TableContainer component={Paper} sx={{ mb: 3 }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Staff</TableCell>
+                    <TableCell align="right">Hours</TableCell>
+                    <TableCell align="right">Gross</TableCell>
+                    <TableCell align="right">Additions</TableCell>
+                    <TableCell align="right">Deductions</TableCell>
+                    <TableCell align="right">NET</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {preview.map((l) => (
                     <TableRow key={l.id}>
                       <TableCell>{l.staffName}</TableCell>
-                      <TableCell>{l.staffEmail}</TableCell>
                       <TableCell align="right">{toHours(l.minutes)}</TableCell>
-                      <TableCell align="right">{peso(l.rate)}</TableCell>
                       <TableCell align="right">{peso(l.gross)}</TableCell>
-                      <TableCell align="right" sx={{ color: 'green' }}>{peso(l.totalAdditions)}</TableCell>
-                      <TableCell align="right">{peso(l.advances)}</TableCell>
-                      <TableCell align="right">{peso(l.shortages)}</TableCell>
+                      <TableCell align="right" sx={{ color: "green" }}>{peso(l.totalAdditions)}</TableCell>
                       <TableCell align="right">
-                        {peso(l.otherDeductions || 0)}
+                        {peso(l.advances + l.shortages + (l.otherDeductions || 0))}
                       </TableCell>
-                      <TableCell align="right">
-                        <b>{peso(l.net)}</b>
-                      </TableCell>
+                      <TableCell align="right"><b>{peso(l.net)}</b></TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </TableContainer>
-          </Box>
-        ) : (
-          <Box sx={{ p: 4, textAlign: "center" }}>
-            <Typography color="text.secondary">
-              Select a period and generate a preview, or load an existing run.
-            </Typography>
-          </Box>
+
+            <Stack direction="row" spacing={2} sx={{ mt: 1 }}>
+              <Button onClick={() => setStep(1)}>Back to Review</Button>
+              {runId && (
+                <Button
+                  variant="outlined"
+                  startIcon={<ReceiptLongIcon />}
+                  onClick={() => setPaystubDrawerRunId(runId)}
+                >
+                  View Paystubs
+                </Button>
+              )}
+              {status !== "posted" && status !== "voided" && (
+                <Button
+                  variant="contained"
+                  color="success"
+                  startIcon={<CheckIcon />}
+                  onClick={handleFinalize}
+                >
+                  Post Payroll
+                </Button>
+              )}
+              {status === "posted" && (
+                <Button
+                  variant="outlined"
+                  startIcon={<RefreshIcon />}
+                  onClick={handleFinalize}
+                >
+                  Regenerate Paystubs
+                </Button>
+              )}
+            </Stack>
+          </Card>
         )}
+      </Box>
 
-        {/* modal (run details) */}
-        <RunDialog
-          open={dialogOpen}
-          onClose={() => setDialogOpen(false)}
-          context={dialogContext}
-          runId={runId}
-          status={status}
-          periodStart={periodStart}
-          periodEnd={periodEnd}
-          payDate={payDate}
-          setPayDate={setPayDate}
-          expenseMode={expenseMode}
-          setExpenseMode={setExpenseMode}
-          preview={preview}
-          setPreview={setPreview}
-          onCreateRun={onCreateRun}
-          onCreateAndFinalize={onCreateAndFinalize}
-          onSaveRun={() => saveEditsToRun()}
-          onFinalize={() => setConfirmFinalizeOpen(true)}
-          showPaystubs={() => onOpenPaystubs && onOpenPaystubs(runId)}
-          showSnackbar={showSnackbar}
-        />
-      </Card>
-
-      {/* finalize confirmation modal */}
+      {/* ── Finalize confirmation dialog (lightweight, not nested in modal) ── */}
       <Dialog
         open={confirmFinalizeOpen}
         onClose={() => setConfirmFinalizeOpen(false)}
@@ -1765,7 +2181,7 @@ export default function RunPayroll({
         </DialogActions>
       </Dialog>
 
-      {/* */}
+      {/* ── Ongoing shifts prompt (lightweight) ─────────────────────────────── */}
       <Dialog
         open={ongoingPrompt.open}
         onClose={() => setOngoingPrompt({ open: false, shifts: [] })}
@@ -1776,8 +2192,8 @@ export default function RunPayroll({
             Found {ongoingPrompt.shifts.length} shift(s) that have started but not ended yet
             within this period.
             <br /><br />
-            Do you want to include them in this payroll calculation (using "now" as the presumed end time),
-            or skip them?
+            Do you want to include them in this payroll calculation (using "now" as the presumed
+            end time), or skip them?
           </DialogContentText>
         </DialogContent>
         <DialogActions>
@@ -1801,8 +2217,40 @@ export default function RunPayroll({
         </DialogActions>
       </Dialog>
 
+      {/* ── Item edit mini-dialog (add/edit deductions/additions) ───────────── */}
+      <Dialog open={itemEdit.open} onClose={closeItemDialog}>
+        <DialogTitle>
+          {itemEdit.type === "addition" ? "Additional Pay" : "Custom Deduction"}
+        </DialogTitle>
+        <DialogContent sx={{ display: "flex", gap: 2, mt: 1 }}>
+          <TextField
+            label="Label"
+            fullWidth
+            value={itemEdit.label}
+            onChange={(e) => setItemEdit((p) => ({ ...p, label: e.target.value }))}
+          />
+          <TextField
+            label="Amount"
+            type="number"
+            value={itemEdit.amount}
+            onChange={(e) => setItemEdit((p) => ({ ...p, amount: e.target.value }))}
+            inputProps={{ step: "0.01", min: 0 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeItemDialog}>Cancel</Button>
+          <Button variant="contained" onClick={saveItem}>Save</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ── Paystub Drawer (replaces nested paystub dialog) ─────────────────── */}
+      <PaystubDialog
+        open={!!paystubDrawerRunId}
+        onClose={() => setPaystubDrawerRunId(null)}
+        runId={paystubDrawerRunId}
+      />
+
       {busy && <LoadingScreen message={busyMsg || "Working..."} overlay />}
     </>
-
   );
 }

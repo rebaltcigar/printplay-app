@@ -3,7 +3,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Typography,
-  Card,
   TextField,
   Select,
   MenuItem,
@@ -12,7 +11,6 @@ import {
   Paper,
   IconButton,
   Tooltip,
-  Divider,
   Button,
   Table,
   TableHead,
@@ -26,28 +24,29 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  Collapse,
-  useMediaQuery,
-  useTheme,
+  Chip,
+  CircularProgress,
+  Divider,
 } from "@mui/material";
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import Tabs from "@mui/material/Tabs";
+import Tab from "@mui/material/Tab";
 import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
 import HistoryIcon from "@mui/icons-material/History";
 import ClearIcon from "@mui/icons-material/Clear";
 import CommentIcon from "@mui/icons-material/Comment";
-
 import LinkOffIcon from "@mui/icons-material/LinkOff";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
-import BugReportIcon from "@mui/icons-material/BugReport"; // NEW
+import BugReportIcon from "@mui/icons-material/BugReport";
+import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import AddIcon from "@mui/icons-material/Add";
+import AssignmentTurnedInIcon from "@mui/icons-material/AssignmentTurnedIn";
 
 import { db, auth } from "../firebase";
 import {
   addDoc,
   collection,
   doc,
-  getDoc,
   getDocs,
   onSnapshot,
   orderBy,
@@ -56,7 +55,6 @@ import {
   updateDoc,
   where,
   writeBatch,
-  // --- NEW: Import FieldValue for atomic operations ---
   FieldValue,
 } from "firebase/firestore";
 import { generateDisplayId } from "../utils/idGenerator";
@@ -65,38 +63,32 @@ import { computeShiftFinancials } from "../utils/shiftFinancials";
 import { useStaffList } from "../hooks/useStaffList";
 import { useServiceList } from "../hooks/useServiceList";
 
-
 import CustomerDialog from "./CustomerDialog";
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 import ShiftConsolidationDialog from "./ShiftConsolidationDialog";
-import ShiftAuditDebugger from "./ShiftAuditDebugger"; // NEW
-import AssignmentTurnedInIcon from "@mui/icons-material/AssignmentTurnedIn";
-import logo from "/icon.ico";
+import ShiftAuditDebugger from "./ShiftAuditDebugger";
+import DetailDrawer from "./common/DetailDrawer";
+import SummaryCards from "./common/SummaryCards";
 
-// Helpers imported from ../utils/formatters:
-//   fmtCurrency, toDatetimeLocal, fromDatetimeLocal, identifierText, downloadCSV
 // Local alias for readability in this file:
 const fmtPeso = fmtCurrency;
 
 const normalize = (s) => String(s ?? "").trim().toLowerCase();
 
-
 export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }) {
-  // ----- form state (left) -----
+  // ----- form state -----
   const [item, setItem] = useState("");
   const [quantity, setQuantity] = useState("");
   const [price, setPrice] = useState("");
-  // ... other existing state ...
   const [expenseType, setExpenseType] = useState("");
   const [expenseStaffId, setExpenseStaffId] = useState("");
   const [expenseStaffName, setExpenseStaffName] = useState("");
   const [expenseStaffEmail, setExpenseStaffEmail] = useState("");
-
   const [notes, setNotes] = useState("");
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const itemInputRef = useRef(null);
 
-  // Services and staff from shared hooks (replaces manual onSnapshot subscriptions)
+  // Services and staff from shared hooks
   const { parentServices: serviceItems, expenseServiceNames: expenseServiceItems } = useServiceList();
   const { staffOptions } = useStaffList();
   const [currentlyEditing, setCurrentlyEditing] = useState(null);
@@ -120,15 +112,6 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
 
   const isDebtItem = item === "New Debt" || item === "Paid Debt";
 
-  // --- responsive (mobile tweaks only) ---
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
-  const fieldSize = isMobile ? "small" : "medium";
-
-  // Mobile collapses
-  const [txControlsOpen, setTxControlsOpen] = useState(false);
-  const [actionsOpen, setActionsOpen] = useState(false);
-
   // Confirmation Dialog State
   const [confirmDialog, setConfirmDialog] = useState({
     open: false,
@@ -142,13 +125,15 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
 
   // Consolidation Dialog State
   const [consolidationOpen, setConsolidationOpen] = useState(false);
-  const [debugOpen, setDebugOpen] = useState(false); // NEW
+  const [debugOpen, setDebugOpen] = useState(false);
 
-  // Refs to scroll to
-  const txControlsRef = useRef(null);
+  // ----- NEW: Tab + Drawer + Orders state -----
+  const [activeTab, setActiveTab] = useState(0);
+  const [txDrawerOpen, setTxDrawerOpen] = useState(false);
+  const [orders, setOrders] = useState([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
 
-  // Services loaded via useServiceList() hook above (replaces manual onSnapshot)
-
+  // Transactions onSnapshot
   useEffect(() => {
     if (!shift?.id) return;
     const qTx = query(
@@ -162,6 +147,22 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
     });
     return () => unsubTx();
   }, [shift]);
+
+  // Orders onSnapshot
+  useEffect(() => {
+    if (!shift?.id) return;
+    setOrdersLoading(true);
+    const q = query(
+      collection(db, "orders"),
+      where("shiftId", "==", shift.id),
+      orderBy("timestamp", "desc")
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      setOrders(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setOrdersLoading(false);
+    });
+    return () => unsub();
+  }, [shift?.id]);
 
   useEffect(() => {
     if (
@@ -207,8 +208,6 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
     setSelectedCustomer(c);
     setOpenCustomerDialog(false);
   };
-
-  // identifierText is imported from ../utils/formatters
 
   useEffect(() => {
     if (!currentlyEditing) return;
@@ -309,6 +308,7 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
               });
               showSnackbar?.("Transaction updated.", 'success');
               clearForm();
+              setTxDrawerOpen(false);
             } catch (err) {
               console.error(err);
               showSnackbar?.("Failed to save transaction.", 'error');
@@ -342,6 +342,7 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
         showSnackbar?.("Transaction added.", 'success');
       }
       clearForm();
+      setTxDrawerOpen(false);
     } catch (err) {
       console.error(err);
       showSnackbar?.("Failed to save transaction.", 'error');
@@ -522,14 +523,9 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
     });
   };
 
-
-
-
-
   const handleExportCSV = () => {
     if (!transactions.length) return;
 
-    // 1. Define Headers
     const headers = [
       "Date",
       "Time",
@@ -544,7 +540,6 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
       "Edited By"
     ];
 
-    // 2. Map Data
     const rows = transactions.map((tx) => {
       const date = tx.timestamp?.seconds
         ? new Date(tx.timestamp.seconds * 1000).toLocaleDateString()
@@ -554,11 +549,8 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
         : "";
 
       const type = tx.item === "Expenses" ? "Expense" : "Service";
+      const txNotes = (tx.notes || "").replace(/"/g, '""');
 
-      // Escape generic notes/details for CSV
-      const notes = (tx.notes || "").replace(/"/g, '""');
-
-      // Identifier logic similar to identifierText helper
       let identifier = "";
       if (tx.item === "Expenses") {
         identifier = `${tx.expenseType || ""} ${tx.expenseStaffName ? "(" + tx.expenseStaffName + ")" : ""}`;
@@ -566,7 +558,6 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
         identifier = tx.customerName;
       }
 
-      // Return array of values
       return [
         `"${date}"`,
         `"${time}"`,
@@ -575,14 +566,13 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
         tx.quantity || 0,
         tx.price || 0,
         tx.total || 0,
-        `"${notes}"`,
+        `"${txNotes}"`,
         `"${identifier}"`,
         `"${tx.addedBy || ""}"`,
         `"${tx.editedBy || ""}"`
       ].join(",");
     });
 
-    // 4. Download
     downloadCSV(
       [headers.join(","), ...rows].join("\n"),
       `shift_${shift.id || "export"}_transactions.csv`
@@ -590,6 +580,11 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
   };
 
   // Single source of truth for all shift financial computations
+  const financials = useMemo(
+    () => computeShiftFinancials(transactions, shift.pcRentalTotal || 0),
+    [transactions, shift.pcRentalTotal]
+  );
+
   const {
     servicesTotal,
     expensesTotal,
@@ -597,10 +592,10 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
     totalGcash: gcashSalesTotal,
     totalAr: arSalesTotal,
     systemTotal,
-  } = useMemo(
-    () => computeShiftFinancials(transactions, shift.pcRentalTotal || 0),
-    [transactions, shift.pcRentalTotal]
-  );
+    salesBreakdown,
+    expensesBreakdown,
+    expectedCash,
+  } = financials;
 
   useEffect(() => {
     let t;
@@ -610,7 +605,6 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
           servicesTotal,
           expensesTotal,
           systemTotal,
-          // We no longer overwrite pcRentalTotal here based on local state
         });
       } catch (e) {
         console.warn("Totals write skipped/failed:", e?.message || e);
@@ -620,8 +614,6 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
     return () => clearTimeout(t);
   }, [servicesTotal, expensesTotal, systemTotal, shift.id]);
 
-
-
   const formatTime = (ts) =>
     ts?.seconds
       ? new Date(ts.seconds * 1000).toLocaleTimeString()
@@ -629,652 +621,519 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
         ? ts.toLocaleTimeString()
         : "—";
 
-  const FormContent = (
-    <>
-      <Typography variant="subtitle1" fontWeight={600}>
-        Log Entry
-      </Typography>
-      <FormControl fullWidth required>
-        <InputLabel>Item</InputLabel>
-        <Select
-          value={item}
-          label="Item"
-          onChange={handleItemChange}
-          inputRef={itemInputRef}
-          size={fieldSize}
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+
+      {/* Header */}
+      <Box sx={{ p: 2, pb: 0, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+        <Button
+          startIcon={<ArrowBackIcon />}
+          onClick={onBack}
+          size="small"
+          variant="outlined"
         >
-          {serviceItems.map((s) => (
-            <MenuItem key={s.id} value={s.serviceName}>
-              {s.serviceName}
-            </MenuItem>
-          ))}
-        </Select>
-      </FormControl>
-      {item === "Expenses" && (
-        <>
-          <FormControl fullWidth required>
-            <InputLabel>Expense Type</InputLabel>
-            <Select
-              label="Expense Type"
-              value={expenseType}
-              onChange={(e) => setExpenseType(e.target.value)}
-              size={fieldSize}
+          Back
+        </Button>
+        <Box sx={{ flex: 1, minWidth: 200 }}>
+          <Typography variant="h6" fontWeight={700}>
+            {shift.displayId || 'Shift Detail'} — {shift.shiftPeriod || ''}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {userMap[shift.staffEmail] || shift.staffEmail} ·{' '}
+            {shift.startTime?.seconds
+              ? new Date(shift.startTime.seconds * 1000).toLocaleString()
+              : ''}
+          </Typography>
+        </Box>
+        <Stack direction="row" spacing={1} alignItems="center">
+          <Button
+            variant="outlined"
+            startIcon={<AssignmentTurnedInIcon />}
+            onClick={() => setConsolidationOpen(true)}
+            size="small"
+          >
+            Consolidate
+          </Button>
+          <Tooltip title="Debug Calculations">
+            <IconButton size="small" color="warning" onClick={() => setDebugOpen(true)}>
+              <BugReportIcon />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Export CSV">
+            <IconButton size="small" onClick={handleExportCSV}>
+              <FileDownloadIcon />
+            </IconButton>
+          </Tooltip>
+        </Stack>
+      </Box>
+
+      {/* Tabs */}
+      <Tabs
+        value={activeTab}
+        onChange={(e, v) => setActiveTab(v)}
+        sx={{ px: 2, borderBottom: 1, borderColor: 'divider', mt: 1 }}
+      >
+        <Tab label="Summary" />
+        <Tab label={`Transactions (${transactions.length})`} />
+        <Tab label={`Orders (${orders.length})`} />
+      </Tabs>
+
+      {/* Tab panels */}
+      <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
+
+        {/* TAB 0: Summary */}
+        {activeTab === 0 && (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <SummaryCards cards={[
+              { label: 'System Total', value: fmtPeso(systemTotal || 0), highlight: true, color: 'primary.main' },
+              { label: 'Services', value: fmtPeso(servicesTotal || 0), color: 'success.main' },
+              { label: 'Cash', value: fmtPeso(cashSalesTotal || 0), color: 'success.main' },
+              { label: 'GCash', value: fmtPeso(gcashSalesTotal || 0), color: 'info.main' },
+              { label: 'A/R', value: fmtPeso(arSalesTotal || 0), color: 'warning.main' },
+              { label: 'Expenses', value: fmtPeso(expensesTotal || 0), color: 'error.main' },
+              { label: 'Expected Cash', value: fmtPeso(expectedCash || 0), color: 'text.primary' },
+            ]} />
+
+            {/* Service breakdown */}
+            {salesBreakdown && salesBreakdown.length > 0 && (
+              <Paper sx={{ p: 2 }}>
+                <Typography variant="subtitle2" fontWeight={700} gutterBottom>
+                  Sales Breakdown
+                </Typography>
+                {salesBreakdown.map(([name, total]) => (
+                  <Box key={name} sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
+                    <Typography variant="body2">{name}</Typography>
+                    <Typography variant="body2" fontWeight={600}>{fmtPeso(total)}</Typography>
+                  </Box>
+                ))}
+                <Divider sx={{ my: 1 }} />
+                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Typography variant="body2" fontWeight={700}>Services Total</Typography>
+                  <Typography variant="body2" fontWeight={700}>{fmtPeso(servicesTotal)}</Typography>
+                </Box>
+              </Paper>
+            )}
+
+            {/* Expenses breakdown */}
+            {expensesBreakdown && expensesBreakdown.length > 0 && (
+              <Paper sx={{ p: 2 }}>
+                <Typography variant="subtitle2" fontWeight={700} gutterBottom>
+                  Expenses Breakdown
+                </Typography>
+                {expensesBreakdown.map(([name, total]) => (
+                  <Box key={name} sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
+                    <Typography variant="body2">{name}</Typography>
+                    <Typography variant="body2" fontWeight={600} color="error.main">{fmtPeso(total)}</Typography>
+                  </Box>
+                ))}
+                <Divider sx={{ my: 1 }} />
+                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Typography variant="body2" fontWeight={700}>Expenses Total</Typography>
+                  <Typography variant="body2" fontWeight={700} color="error.main">{fmtPeso(expensesTotal)}</Typography>
+                </Box>
+              </Paper>
+            )}
+
+            {/* PC Rental */}
+            {(shift.pcRentalTotal > 0) && (
+              <Paper sx={{ p: 2 }}>
+                <Typography variant="subtitle2" fontWeight={700} gutterBottom>
+                  PC Rental
+                </Typography>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Typography variant="body2">PC Rental Total (manual)</Typography>
+                  <Typography variant="body2" fontWeight={600}>{fmtPeso(shift.pcRentalTotal || 0)}</Typography>
+                </Box>
+              </Paper>
+            )}
+
+            {/* Payment method summary */}
+            <Paper sx={{ p: 2 }}>
+              <Typography variant="subtitle2" fontWeight={700} gutterBottom>
+                Payment Methods
+              </Typography>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
+                <Typography variant="body2">Cash Sales</Typography>
+                <Typography variant="body2" fontWeight={600}>{fmtPeso(cashSalesTotal)}</Typography>
+              </Box>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
+                <Typography variant="body2">GCash Sales</Typography>
+                <Typography variant="body2" fontWeight={600}>{fmtPeso(gcashSalesTotal)}</Typography>
+              </Box>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
+                <Typography variant="body2">Receivables (A/R)</Typography>
+                <Typography variant="body2" fontWeight={600}>{fmtPeso(arSalesTotal)}</Typography>
+              </Box>
+              <Divider sx={{ my: 1 }} />
+              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                <Typography variant="body2" fontWeight={700}>Expected Cash in Drawer</Typography>
+                <Typography variant="body2" fontWeight={700} color="success.main">{fmtPeso(expectedCash)}</Typography>
+              </Box>
+            </Paper>
+          </Box>
+        )}
+
+        {/* TAB 1: Transactions */}
+        {activeTab === 1 && (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, flexWrap: 'wrap' }}>
+              <Button
+                variant="contained"
+                startIcon={<AddIcon />}
+                onClick={() => { clearForm(); setTxDrawerOpen(true); }}
+              >
+                Add Transaction
+              </Button>
+              {selectedTransactions.length > 0 && (
+                <>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={openBulkDateDialog}
+                  >
+                    Edit Dates ({selectedTransactions.length})
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={quickSetShiftStart}
+                  >
+                    Set to Shift Start
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="error"
+                    onClick={handleBulkDelete}
+                  >
+                    Delete Selected ({selectedTransactions.length})
+                  </Button>
+                </>
+              )}
+            </Box>
+
+            <TableContainer component={Paper}>
+              <Table size="small" stickyHeader>
+                <TableHead>
+                  <TableRow>
+                    <TableCell padding="checkbox">
+                      <Checkbox
+                        size="small"
+                        indeterminate={
+                          selectedTransactions.length > 0 &&
+                          selectedTransactions.length < transactions.length
+                        }
+                        checked={
+                          transactions.length > 0 &&
+                          selectedTransactions.length === transactions.length
+                        }
+                        onChange={() => {
+                          if (selectedTransactions.length === transactions.length) {
+                            setSelectedTransactions([]);
+                          } else {
+                            setSelectedTransactions(transactions.map((t) => t.id));
+                          }
+                        }}
+                      />
+                    </TableCell>
+                    <TableCell>Time</TableCell>
+                    <TableCell>Item</TableCell>
+                    <TableCell>Details</TableCell>
+                    <TableCell>Customer</TableCell>
+                    <TableCell align="right">Qty</TableCell>
+                    <TableCell align="right">Price</TableCell>
+                    <TableCell align="right">Total</TableCell>
+                    <TableCell>Method</TableCell>
+                    <TableCell align="right">Actions</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {transactions.map((tx) => (
+                    <TableRow key={tx.id} hover>
+                      <TableCell padding="checkbox">
+                        <Checkbox
+                          size="small"
+                          checked={selectedTransactions.includes(tx.id)}
+                          onChange={() =>
+                            setSelectedTransactions((prev) =>
+                              prev.includes(tx.id)
+                                ? prev.filter((i) => i !== tx.id)
+                                : [...prev, tx.id]
+                            )
+                          }
+                        />
+                      </TableCell>
+                      <TableCell sx={{ whiteSpace: 'nowrap' }}>{formatTime(tx.timestamp)}</TableCell>
+                      <TableCell>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+                          <Typography variant="body2" fontWeight={600}>
+                            {tx.item}
+                          </Typography>
+                          {tx.notes && (
+                            <Tooltip title={tx.notes}>
+                              <CommentIcon fontSize="inherit" />
+                            </Tooltip>
+                          )}
+                          {tx.isEdited && (
+                            <Tooltip title="Edited">
+                              <HistoryIcon fontSize="inherit" />
+                            </Tooltip>
+                          )}
+                          {tx.addedByAdmin && (
+                            <Typography
+                              variant="caption"
+                              sx={{ border: '1px solid', px: 0.5, borderColor: 'divider' }}
+                            >
+                              admin
+                            </Typography>
+                          )}
+                        </Box>
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {tx.item === 'Expenses'
+                          ? `${tx.expenseType || ''} · ${tx.expenseStaffName || ''}`
+                          : identifierText(tx)}
+                      </TableCell>
+                      <TableCell>{tx.customerName || '—'}</TableCell>
+                      <TableCell align="right">{tx.quantity}</TableCell>
+                      <TableCell align="right" sx={{ color: 'text.secondary', fontSize: '0.8rem' }}>
+                        {fmtPeso(tx.price || 0)}
+                      </TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 600 }}>
+                        {fmtPeso(tx.total || 0)}
+                      </TableCell>
+                      <TableCell>{tx.paymentMethod || '—'}</TableCell>
+                      <TableCell align="right">
+                        <Tooltip title="Unlink from Shift">
+                          <IconButton size="small" onClick={() => handleUnlink(tx)} color="warning">
+                            <LinkOffIcon fontSize="inherit" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Edit">
+                          <IconButton
+                            size="small"
+                            onClick={() => {
+                              setCurrentlyEditing(tx);
+                              setTxDrawerOpen(true);
+                            }}
+                          >
+                            <EditIcon fontSize="inherit" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Delete">
+                          <IconButton size="small" color="error" onClick={() => handleRowDelete(tx)}>
+                            <DeleteIcon fontSize="inherit" />
+                          </IconButton>
+                        </Tooltip>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Box>
+        )}
+
+        {/* TAB 2: Orders */}
+        {activeTab === 2 && (
+          <Box>
+            {ordersLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                <CircularProgress />
+              </Box>
+            ) : orders.length === 0 ? (
+              <Typography color="text.secondary" sx={{ py: 4, textAlign: 'center' }}>
+                No orders linked to this shift.
+              </Typography>
+            ) : (
+              <TableContainer component={Paper}>
+                <Table size="small" stickyHeader>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Order #</TableCell>
+                      <TableCell>Date/Time</TableCell>
+                      <TableCell>Customer</TableCell>
+                      <TableCell>Items</TableCell>
+                      <TableCell align="right">Total</TableCell>
+                      <TableCell>Method</TableCell>
+                      <TableCell>Status</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {orders.map((o) => (
+                      <TableRow key={o.id} hover>
+                        <TableCell sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
+                          {o.orderNumber || o.id.slice(-6)}
+                        </TableCell>
+                        <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                          {o.timestamp?.seconds
+                            ? new Date(o.timestamp.seconds * 1000).toLocaleString()
+                            : ''}
+                        </TableCell>
+                        <TableCell>{o.customerName || 'Walk-in'}</TableCell>
+                        <TableCell sx={{ color: 'text.secondary', fontSize: '0.8rem' }}>
+                          {(o.items || []).length} item(s)
+                        </TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 600 }}>
+                          {fmtPeso(o.total || 0)}
+                        </TableCell>
+                        <TableCell>{o.paymentMethod || '—'}</TableCell>
+                        <TableCell>
+                          <Chip
+                            label={o.status || 'completed'}
+                            size="small"
+                            color={o.status === 'pending' ? 'warning' : 'success'}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </Box>
+        )}
+      </Box>
+
+      {/* Transaction Add/Edit Drawer */}
+      <DetailDrawer
+        open={txDrawerOpen}
+        onClose={() => { setTxDrawerOpen(false); clearForm(); }}
+        title={currentlyEditing ? 'Edit Transaction' : 'Add Transaction'}
+        subtitle={
+          currentlyEditing
+            ? `Editing: ${currentlyEditing.item || ''}`
+            : `Shift: ${shift.displayId || ''}`
+        }
+        actions={
+          <>
+            <Button onClick={() => { setTxDrawerOpen(false); clearForm(); }}>Cancel</Button>
+            <Button
+              variant="contained"
+              onClick={handleSubmit}
+              disabled={isDebtItem && !selectedCustomer && !currentlyEditing}
             >
-              {expenseServiceItems.map((t) => (
-                <MenuItem key={t} value={t}>
-                  {t}
+              {currentlyEditing ? 'Save Changes' : 'Add Transaction'}
+            </Button>
+          </>
+        }
+      >
+        <Stack spacing={2}>
+          <FormControl fullWidth required>
+            <InputLabel>Item</InputLabel>
+            <Select
+              value={item}
+              label="Item"
+              onChange={handleItemChange}
+              inputRef={itemInputRef}
+            >
+              {serviceItems.map((s) => (
+                <MenuItem key={s.id} value={s.serviceName}>
+                  {s.serviceName}
                 </MenuItem>
               ))}
             </Select>
           </FormControl>
-          {(expenseType === "Salary" || expenseType === "Salary Advance") && (
-            <FormControl fullWidth required>
-              <InputLabel>Staff</InputLabel>
-              <Select
-                label="Staff"
-                value={expenseStaffId}
-                onChange={(e) => handleStaffSelect(e.target.value)}
-                size={fieldSize}
-              >
-                {staffOptions.length === 0 ? (
-                  <MenuItem value="" disabled>
-                    No staff available
-                  </MenuItem>
-                ) : (
-                  staffOptions.map((s) => (
-                    <MenuItem key={s.id} value={s.id}>
-                      {s.fullName}
+
+          {item === "Expenses" && (
+            <>
+              <FormControl fullWidth required>
+                <InputLabel>Expense Type</InputLabel>
+                <Select
+                  label="Expense Type"
+                  value={expenseType}
+                  onChange={(e) => setExpenseType(e.target.value)}
+                >
+                  {expenseServiceItems.map((t) => (
+                    <MenuItem key={t} value={t}>
+                      {t}
                     </MenuItem>
-                  ))
-                )}
-              </Select>
-            </FormControl>
-          )}
-        </>
-      )}
-      {(item === "New Debt" || item === "Paid Debt") && (
-        <Box sx={{ mt: 0.5, p: 1, border: "1px dashed grey", borderRadius: 1 }}>
-          <Typography variant="caption">Customer</Typography>
-          {selectedCustomer ? (
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-              }}
-            >
-              <Typography>
-                <strong>{selectedCustomer.fullName}</strong>
-              </Typography>
-              <IconButton
-                size="small"
-                onClick={() => setSelectedCustomer(null)}
-              >
-                <ClearIcon fontSize="small" />
-              </IconButton>
-            </Box>
-          ) : (
-            <Button
-              onClick={() => setOpenCustomerDialog(true)}
-              fullWidth
-              variant="outlined"
-              size={fieldSize}
-              sx={{ mt: 0.5 }}
-            >
-              Select Customer
-            </Button>
-          )}
-        </Box>
-      )}
-      <TextField
-        type="number"
-        label="Quantity"
-        value={quantity}
-        onChange={(e) => setQuantity(e.target.value)}
-        onKeyDown={handleEnterSubmit}
-        required
-        size={fieldSize}
-      />
-      <TextField
-        type="number"
-        label="Price"
-        value={price}
-        onChange={(e) => setPrice(e.target.value)}
-        onKeyDown={handleEnterSubmit}
-        required
-        size={fieldSize}
-      />
-      <Typography variant="body2">
-        Total: {fmtPeso(Number(quantity || 0) * Number(price || 0))}
-      </Typography>
-      <TextField
-        label="Notes (Optional)"
-        multiline
-        rows={3}
-        value={notes}
-        onChange={(e) => setNotes(e.target.value)}
-        size={fieldSize}
-      />
-    </>
-  );
-
-
-
-
-  const startEdit = (tx) => {
-    setCurrentlyEditing(tx);
-    if (isMobile) {
-      if (!txControlsOpen) setTxControlsOpen(true);
-      setTimeout(() => {
-        txControlsRef.current?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
-      }, 50);
-    }
-  };
-
-  return (
-    <Box
-      sx={{
-        p: 2,
-        display: "flex",
-        flexDirection: "column",
-        gap: 2,
-        height: "100%",
-        overflow: "hidden",
-      }}
-    >
-      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-        <img src={logo} width={18} height={18} alt="" />
-        <Button onClick={onBack} size="small" sx={{ ml: 0.5 }}>
-          &larr; Back to All Shifts
-        </Button>
-        <Box sx={{ flexGrow: 1 }} />
-        <Button
-          variant="outlined"
-          startIcon={<AssignmentTurnedInIcon />}
-          onClick={() => setConsolidationOpen(true)}
-        >
-          Consolidate Shift
-        </Button>
-      </Box>
-
-      <Typography variant="h5">
-        Shift Detail — {shift.displayId || shift.id.slice(-6)} — {userMap[shift.staffEmail] || shift.staffEmail} —{" "}
-        {shift.shiftPeriod} —{" "}
-        {shift.startTime?.seconds
-          ? new Date(shift.startTime.seconds * 1000).toLocaleDateString()
-          : ""}
-      </Typography>
-
-      <Box
-        sx={{
-          display: { xs: "none", sm: "flex" },
-          gap: 2,
-          alignItems: "stretch",
-          minHeight: 0,
-          flex: 1,
-          overflow: "hidden",
-        }}
-      >
-        <Box
-          sx={{ width: 360, display: "flex", flexDirection: "column", gap: 2 }}
-        >
-          <Card sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2 }}>
-            {FormContent}
-            <Button
-              onClick={handleSubmit}
-              variant="contained"
-              fullWidth
-              disabled={isDebtItem && !selectedCustomer && !currentlyEditing}
-            >
-              {currentlyEditing ? "Update Entry" : "Add Entry"}
-            </Button>
-            {currentlyEditing && (
-              <Button variant="outlined" onClick={clearForm} fullWidth>
-                Cancel
-              </Button>
-            )}
-            <Divider sx={{ my: 1 }} />
-            <Divider sx={{ my: 1 }} />
-            {/* ReconContent Removed */}
-            <Stack direction="row" spacing={1} sx={{ mt: "auto" }}></Stack>
-            <Stack direction="row" spacing={1} sx={{ mt: "auto" }}></Stack>
-
-          </Card>
-        </Box>
-
-        <Paper
-          sx={{
-            flex: 1,
-            minWidth: 0,
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <Box
-            sx={{ p: 2, pt: 1, display: "flex", alignItems: "center", gap: 2 }}
-          >
-            <Typography variant="subtitle1" fontWeight={600}>
-              Transactions
-            </Typography>
-            <Box sx={{ flexGrow: 1 }} />
-            <Tooltip title="Edit Date/Time for Selected">
-              <Box component="span">
-                <Button
-                  size="small"
-                  variant="outlined"
-                  onClick={openBulkDateDialog}
-                  disabled={selectedTransactions.length === 0}
-                >
-                  Edit Dates
-                </Button>
-              </Box>
-            </Tooltip>
-            <Tooltip title="Set selected to Shift Start time">
-              <Box component="span">
-                <Button
-                  size="small"
-                  variant="outlined"
-                  onClick={quickSetShiftStart}
-                  disabled={selectedTransactions.length === 0}
-                >
-                  Set to Shift Start
-                </Button>
-              </Box>
-            </Tooltip>
-            <Tooltip title="Delete Selected">
-              <Box component="span">
-                <Button
-                  size="small"
-                  variant="outlined"
-                  color="error"
-                  onClick={handleBulkDelete}
-                  disabled={selectedTransactions.length === 0}
-                >
-                  Delete Selected
-                </Button>
-              </Box>
-            </Tooltip>
-            <Tooltip title="Export to CSV">
-              <IconButton size="small" onClick={handleExportCSV} sx={{ ml: 1 }}>
-                <FileDownloadIcon />
-              </IconButton>
-            </Tooltip>
-          </Box>
-
-          <TableContainer sx={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
-            <Table size="small" stickyHeader>
-              <TableHead>
-                <TableRow>
-                  <TableCell padding="checkbox" />
-                  <TableCell>Time</TableCell>
-                  <TableCell>Item</TableCell>
-                  <TableCell align="right">Qty</TableCell>
-                  <TableCell align="right">Price</TableCell>
-                  <TableCell align="right">Total</TableCell>
-                  <TableCell>Identifier</TableCell>
-                  <TableCell align="right">Controls</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {transactions.map((tx) => (
-                  <TableRow key={tx.id} hover>
-                    <TableCell padding="checkbox">
-                      <Checkbox
-                        size="small"
-                        checked={selectedTransactions.includes(tx.id)}
-                        onChange={() =>
-                          setSelectedTransactions((prev) =>
-                            prev.includes(tx.id)
-                              ? prev.filter((i) => i !== tx.id)
-                              : [...prev, tx.id]
-                          )
-                        }
-                      />
-                    </TableCell>
-                    <TableCell>{formatTime(tx.timestamp)}</TableCell>
-                    <TableCell>
-                      <Box
-                        sx={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 1,
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        <Typography variant="body2" fontWeight={600}>
-                          {tx.item}
-                        </Typography>
-                        {tx.notes && (
-                          <Tooltip title={tx.notes}>
-                            <CommentIcon fontSize="inherit" />
-                          </Tooltip>
-                        )}
-                        {tx.isEdited && (
-                          <Tooltip title="Edited">
-                            <HistoryIcon fontSize="inherit" />
-                          </Tooltip>
-                        )}
-                        {tx.addedByAdmin && (
-                          <Typography
-                            variant="caption"
-                            sx={{
-                              border: "1px solid",
-                              px: 0.5,
-                              borderColor: "divider",
-                            }}
-                          >
-                            admin
-                          </Typography>
-                        )}
-                      </Box>
-                    </TableCell>
-                    <TableCell align="right">{tx.quantity}</TableCell>
-                    <TableCell align="right">{fmtPeso(tx.price || 0)}</TableCell>
-                    <TableCell align="right">{fmtPeso(tx.total || 0)}</TableCell>
-                    <TableCell>{identifierText(tx)}</TableCell>
-                    <TableCell align="right">
-                      <Tooltip title="Unlink from Shift">
-                        <IconButton size="small" onClick={() => handleUnlink(tx)} color="warning">
-                          <LinkOffIcon fontSize="inherit" />
-                        </IconButton>
-                      </Tooltip>
-                      <IconButton size="small" onClick={() => startEdit(tx)}>
-                        <EditIcon fontSize="inherit" />
-                      </IconButton>
-                      <IconButton
-                        size="small"
-                        onClick={() => handleRowDelete(tx)}
-                      >
-                        <DeleteIcon fontSize="inherit" color="error" />
-                      </IconButton>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-
-          <Divider sx={{ mx: 2, my: 1 }} />
-          <Box sx={{ p: 2, pt: 0 }}>
-            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-              <Typography>Services Total</Typography>
-              <Typography>{fmtPeso(servicesTotal)}</Typography>
-            </Box>
-            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-              <Typography>Expenses Total</Typography>
-              <Typography>{fmtPeso(expensesTotal)}</Typography>
-            </Box>
-            <Divider sx={{ my: 1 }} />
-            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-              <Typography variant="body2">Cash Sales</Typography>
-              <Typography variant="body2">{fmtPeso(cashSalesTotal)}</Typography>
-            </Box>
-            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-              <Typography variant="body2">GCash Sales</Typography>
-              <Typography variant="body2">{fmtPeso(gcashSalesTotal)}</Typography>
-            </Box>
-            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-              <Typography variant="body2">Receivables</Typography>
-              <Typography variant="body2">{fmtPeso(arSalesTotal)}</Typography>
-            </Box>
-            <Divider sx={{ my: 1 }} />
-            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-              <Typography variant="subtitle1">System Total</Typography>
-              <Typography variant="subtitle1">
-                {fmtPeso(systemTotal)}
-              </Typography>
-            </Box>
-          </Box>
-        </Paper>
-      </Box>
-
-      <Box
-        sx={{
-          display: { xs: "flex", sm: "none" },
-          flexDirection: "column",
-          gap: 1.25,
-          minHeight: 0,
-          flex: 1,
-          overflow: "hidden",
-        }}
-      >
-        <Card ref={txControlsRef} sx={{ p: 1.25 }}>
-          <Box sx={{ display: "flex", alignItems: "center" }}>
-            <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
-              Transaction Controls
-            </Typography>
-            <IconButton
-              size="small"
-              onClick={() => setTxControlsOpen((v) => !v)}
-            >
-              {txControlsOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-            </IconButton>
-          </Box>
-          <Collapse in={txControlsOpen} unmountOnExit>
-            <Stack spacing={1.25} sx={{ mt: 1 }}>
-              {FormContent}
-              <Stack spacing={1} direction="column">
-                <Button
-                  variant="contained"
-                  fullWidth
-                  size="small"
-                  onClick={handleSubmit}
-                  disabled={isDebtItem && !selectedCustomer && !currentlyEditing}
-                >
-                  {currentlyEditing ? "Update Entry" : "Add Entry"}
-                </Button>
-                {currentlyEditing && (
-                  <Button
-                    variant="outlined"
-                    fullWidth
-                    size="small"
-                    onClick={clearForm}
+                  ))}
+                </Select>
+              </FormControl>
+              {(expenseType === "Salary" || expenseType === "Salary Advance") && (
+                <FormControl fullWidth required>
+                  <InputLabel>Staff</InputLabel>
+                  <Select
+                    label="Staff"
+                    value={expenseStaffId}
+                    onChange={(e) => handleStaffSelect(e.target.value)}
                   >
-                    Cancel
-                  </Button>
-                )}
-              </Stack>
-            </Stack>
-          </Collapse>
-        </Card>
+                    {staffOptions.length === 0 ? (
+                      <MenuItem value="" disabled>
+                        No staff available
+                      </MenuItem>
+                    ) : (
+                      staffOptions.map((s) => (
+                        <MenuItem key={s.id} value={s.id}>
+                          {s.fullName}
+                        </MenuItem>
+                      ))
+                    )}
+                  </Select>
+                </FormControl>
+              )}
+            </>
+          )}
 
-        <Card sx={{ p: 1.0 }}>
-          <Box sx={{ display: "flex", alignItems: "center" }}>
-            <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
-              Actions
-            </Typography>
-            <IconButton size="small" onClick={() => setActionsOpen((v) => !v)}>
-              {actionsOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-            </IconButton>
-          </Box>
-          <Collapse in={actionsOpen} unmountOnExit>
-            <Stack spacing={1} sx={{ mt: 1 }}>
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={openBulkDateDialog}
-                disabled={selectedTransactions.length === 0}
-                fullWidth
-              >
-                Edit Dates (Selected)
-              </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={quickSetShiftStart}
-                disabled={selectedTransactions.length === 0}
-                fullWidth
-              >
-                Set to Shift Start
-              </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                color="error"
-                onClick={handleBulkDelete}
-                disabled={selectedTransactions.length === 0}
-                fullWidth
-              >
-                Delete Selected
-              </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                startIcon={<FileDownloadIcon />}
-                onClick={handleExportCSV}
-                fullWidth
-              >
-                Export CSV
-              </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                color="warning"
-                startIcon={<BugReportIcon />}
-                onClick={() => setDebugOpen(true)}
-                fullWidth
-              >
-                Debug Calculations
-              </Button>
-            </Stack>
-          </Collapse>
-        </Card>
-
-        <Paper
-          sx={{
-            flex: "1 1 auto",
-            minHeight: 0,
-            display: "flex",
-            flexDirection: "column",
-
-          }}
-        >
-          <Box
-            sx={{ p: 1.0, pt: 1, display: "flex", alignItems: "center", gap: 1 }}
-          >
-            <Typography variant="subtitle1" fontWeight={600}>
-              Transactions
-            </Typography>
-          </Box>
-
-          <TableContainer sx={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
-            <Table size="small" stickyHeader>
-              <TableHead>
-                <TableRow>
-                  <TableCell padding="checkbox" />
-                  <TableCell>Time</TableCell>
-                  <TableCell>Item</TableCell>
-                  <TableCell align="right">Qty</TableCell>
-                  <TableCell align="right">₱</TableCell>
-                  <TableCell align="right">Total</TableCell>
-                  <TableCell>Id</TableCell>
-                  <TableCell align="right">⋯</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {transactions.map((tx) => (
-                  <TableRow key={tx.id} hover>
-                    <TableCell padding="checkbox">
-                      <Checkbox
-                        size="small"
-                        checked={selectedTransactions.includes(tx.id)}
-                        onChange={() =>
-                          setSelectedTransactions((prev) =>
-                            prev.includes(tx.id)
-                              ? prev.filter((i) => i !== tx.id)
-                              : [...prev, tx.id]
-                          )
-                        }
-                      />
-                    </TableCell>
-                    <TableCell>{formatTime(tx.timestamp)}</TableCell>
-                    <TableCell>
-                      <Box
-                        sx={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 0.5,
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        <Typography variant="body2" fontWeight={600}>
-                          {tx.item}
-                        </Typography>
-                        {tx.notes && (
-                          <Tooltip title={tx.notes}>
-                            <CommentIcon fontSize="inherit" />
-                          </Tooltip>
-                        )}
-                        {tx.isEdited && (
-                          <Tooltip title="Edited">
-                            <HistoryIcon fontSize="inherit" />
-                          </Tooltip>
-                        )}
-                      </Box>
-                    </TableCell>
-                    <TableCell align="right">{tx.quantity}</TableCell>
-                    <TableCell align="right">{fmtPeso(tx.price || 0)}</TableCell>
-                    <TableCell align="right">{fmtPeso(tx.total || 0)}</TableCell>
-                    <TableCell>{identifierText(tx)}</TableCell>
-                    <TableCell align="right">
-                      <Tooltip title="Unlink">
-                        <IconButton size="small" onClick={() => handleUnlink(tx)} color="warning">
-                          <LinkOffIcon fontSize="inherit" />
-                        </IconButton>
-                      </Tooltip>
-                      <IconButton size="small" onClick={() => startEdit(tx)}>
-                        <EditIcon fontSize="inherit" />
-                      </IconButton>
-                      <IconButton
-                        size="small"
-                        onClick={() => handleRowDelete(tx)}
-                      >
-                        <DeleteIcon fontSize="inherit" color="error" />
-                      </IconButton>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-
-          <Divider sx={{ mx: 1, my: 1 }} />
-          <Box sx={{ px: 1, pb: 1 }}>
-            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-              <Typography>Services</Typography>
-              <Typography>{fmtPeso(servicesTotal)}</Typography>
+          {(item === "New Debt" || item === "Paid Debt") && (
+            <Box sx={{ p: 1, border: '1px dashed grey', borderRadius: 1 }}>
+              <Typography variant="caption">Customer</Typography>
+              {selectedCustomer ? (
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mt: 0.5 }}>
+                  <Typography>
+                    <strong>{selectedCustomer.fullName}</strong>
+                  </Typography>
+                  <IconButton size="small" onClick={() => setSelectedCustomer(null)}>
+                    <ClearIcon fontSize="small" />
+                  </IconButton>
+                </Box>
+              ) : (
+                <Button
+                  onClick={() => setOpenCustomerDialog(true)}
+                  fullWidth
+                  variant="outlined"
+                  sx={{ mt: 0.5 }}
+                >
+                  Select Customer
+                </Button>
+              )}
             </Box>
-            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-              <Typography>Expenses</Typography>
-              <Typography>{fmtPeso(expensesTotal)}</Typography>
-            </Box>
-            <Divider sx={{ my: 1 }} />
-            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-              <Typography variant="body2">Cash Sales</Typography>
-              <Typography variant="body2">{fmtPeso(cashSalesTotal)}</Typography>
-            </Box>
-            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-              <Typography variant="body2">GCash Sales</Typography>
-              <Typography variant="body2">{fmtPeso(gcashSalesTotal)}</Typography>
-            </Box>
-            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-              <Typography variant="body2">Receivables</Typography>
-              <Typography variant="body2">{fmtPeso(arSalesTotal)}</Typography>
-            </Box>
-            <Divider sx={{ my: 1 }} />
-            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-              <Typography fontWeight={600}>System Total</Typography>
-              <Typography fontWeight={600}>{fmtPeso(systemTotal)}</Typography>
-            </Box>
-          </Box>
-        </Paper>
+          )}
 
+          <TextField
+            type="number"
+            label="Quantity"
+            value={quantity}
+            onChange={(e) => setQuantity(e.target.value)}
+            onKeyDown={handleEnterSubmit}
+            required
+            fullWidth
+          />
+          <TextField
+            type="number"
+            label="Price"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            onKeyDown={handleEnterSubmit}
+            required
+            fullWidth
+          />
+          <Typography variant="body2">
+            Total: {fmtPeso(Number(quantity || 0) * Number(price || 0))}
+          </Typography>
+          <TextField
+            label="Notes (Optional)"
+            multiline
+            rows={3}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            fullWidth
+          />
+        </Stack>
+      </DetailDrawer>
 
-      </Box>
-
+      {/* Bulk Date Dialog */}
       <Dialog open={bulkOpen} onClose={() => setBulkOpen(false)} fullWidth maxWidth="xs">
         <DialogTitle>Edit Date/Time</DialogTitle>
         <DialogContent dividers>
@@ -1298,12 +1157,14 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
         </DialogActions>
       </Dialog>
 
+      {/* Customer Dialog */}
       <CustomerDialog
         open={openCustomerDialog}
         onClose={() => setOpenCustomerDialog(false)}
         onSelectCustomer={handleSelectCustomer}
         user={{ email: shift.staffEmail }}
       />
+
       {/* Confirmation Dialog */}
       <ConfirmationReasonDialog
         open={confirmDialog.open}
@@ -1315,6 +1176,7 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
         confirmText={confirmDialog.confirmText}
         confirmColor={confirmDialog.confirmColor}
       />
+
       {/* Consolidation Dialog */}
       {consolidationOpen && (
         <ShiftConsolidationDialog
@@ -1325,6 +1187,7 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
           showSnackbar={showSnackbar}
         />
       )}
+
       {/* Debugger Dialog */}
       <ShiftAuditDebugger
         open={debugOpen}

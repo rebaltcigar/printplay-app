@@ -2,8 +2,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
-  Card,
-  Typography,
   Button,
   TextField,
   MenuItem,
@@ -18,25 +16,22 @@ import {
   TableContainer,
   Paper,
   Stack,
-  Divider,
   IconButton,
   Tooltip,
-  Collapse,
-  useMediaQuery,
-  useTheme,
+  Chip,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
   Backdrop,
   CircularProgress,
+  Typography,
 } from "@mui/material";
 import EditIcon from "@mui/icons-material/Edit";
-import HistoryIcon from "@mui/icons-material/History";
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import DeleteIcon from "@mui/icons-material/Delete";
 import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
+import AddIcon from "@mui/icons-material/Add";
+import TrendingDownIcon from "@mui/icons-material/TrendingDown";
 import {
   collection,
   addDoc,
@@ -51,13 +46,14 @@ import {
   deleteDoc,
   limit,
   startAfter,
-
 } from "firebase/firestore";
 import { generateDisplayId } from "../utils/idGenerator";
 import { db } from "../firebase";
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 import LoadingScreen from "./common/LoadingScreen";
 import PageHeader from "./common/PageHeader";
+import DetailDrawer from "./common/DetailDrawer";
+import SummaryCards from "./common/SummaryCards";
 import { fmtCurrency, toDateInput, downloadCSV } from "../utils/formatters";
 import { useStaffList } from "../hooks/useStaffList";
 
@@ -91,7 +87,7 @@ function toDateTimeString(d) {
 const toCurrency = fmtCurrency;
 
 export default function ExpenseManagement({ user, showSnackbar }) {
-  /** ===================== FORM STATE (LEFT) ===================== */
+  /** ===================== FORM STATE ===================== */
   const [formDate, setFormDate] = useState(toDateOnlyString(new Date()));
   const [formType, setFormType] = useState("");
   const [financialCategory, setFinancialCategory] = useState("OPEX"); // NEW: OPEX, COGS, CAPEX
@@ -108,7 +104,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
   const [creditServices, setCreditServices] = useState([]);
   const dateInputRef = useRef(null);
 
-  /** ===================== TABLE / FILTER STATE (RIGHT) ===================== */
+  /** ===================== TABLE / FILTER STATE ===================== */
   const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -124,13 +120,8 @@ export default function ExpenseManagement({ user, showSnackbar }) {
   const [filterText, setFilterText] = useState("");
   const [filterDeleted, setFilterDeleted] = useState("active"); // active | deleted | all
 
-  /** ===================== MOBILE HELPERS ===================== */
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
-  const fieldSize = isMobile ? "small" : "medium";
-  const [controlsOpen, setControlsOpen] = useState(false);
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const controlsRef = useRef(null);
+  /** ===================== DRAWER STATE ===================== */
+  const [formDrawerOpen, setFormDrawerOpen] = useState(false);
 
   /** ===================== APP DIALOGS / LOADER ===================== */
   const [busy, setBusy] = useState(false);
@@ -391,6 +382,16 @@ export default function ExpenseManagement({ user, showSnackbar }) {
     return rows;
   }, [tableRows, filterDeleted, filterType, filterStaff, filterText]);
 
+  /** ===================== SUMMARY CARDS DATA ===================== */
+  const expenseSummary = useMemo(() => {
+    const active = filteredRows.filter(r => !r.isDeleted);
+    const total = active.reduce((s, r) => s + r.total, 0);
+    const opex = active.filter(r => r.financialCategory === 'OPEX').reduce((s, r) => s + r.total, 0);
+    const cogs = active.filter(r => r.financialCategory === 'COGS').reduce((s, r) => s + r.total, 0);
+    const capex = active.filter(r => r.financialCategory === 'CAPEX').reduce((s, r) => s + r.total, 0);
+    return { total, opex, cogs, capex, count: active.length };
+  }, [filteredRows]);
+
   /** ===================== FORM HELPERS ===================== */
   const handleTypeChange = (event) => {
     const selectedType = event.target.value;
@@ -441,9 +442,6 @@ export default function ExpenseManagement({ user, showSnackbar }) {
   };
 
   /** ===================== CRUD: ADD ===================== */
-  //
-  // --- THIS IS THE CORRECTED FUNCTION ---
-  //
   const handleAddExpense = async (e) => {
     e.preventDefault();
 
@@ -489,13 +487,11 @@ export default function ExpenseManagement({ user, showSnackbar }) {
       isEdited: false,
     };
 
-    // --- START: MODIFICATION ---
     // 2. Conditionally add fields required by security rules
     if (formType === "Salary") {
       expenseDoc.payrollRunId = "admin_manual_add"; // Add default string
       expenseDoc.voided = false; // Add default boolean
     }
-    // --- END: MODIFICATION ---
 
     try {
       startBusy("Adding expense...");
@@ -510,6 +506,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
       setFormQuantity("");
       setFormPrice("");
       setFormNotes("");
+      setFormDrawerOpen(false);
       showSnackbar?.("Expense has been added.", 'success');
     } catch (err) {
       console.error("Failed to add expense", err);
@@ -518,10 +515,6 @@ export default function ExpenseManagement({ user, showSnackbar }) {
       stopBusy();
     }
   };
-  //
-  // --- END OF CORRECTED FUNCTION ---
-  //
-
 
   /** ===================== CRUD: EDIT (OPEN FORM) ===================== */
   const startEdit = (row) => {
@@ -536,13 +529,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
     setFormPrice(String(row.price ?? ""));
     setFormNotes(row.notes || "");
     setTimeout(() => dateInputRef.current?.focus(), 60);
-
-    if (isMobile) {
-      if (!controlsOpen) setControlsOpen(true);
-      setTimeout(() => {
-        controlsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 80);
-    }
+    setFormDrawerOpen(true);
   };
 
   const cancelEdit = () => {
@@ -554,6 +541,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
     setFormQuantity("");
     setFormPrice("");
     setFormNotes("");
+    setFormDrawerOpen(false);
   };
 
   /** ===================== CRUD: EDIT (SAVE) ===================== */
@@ -632,16 +620,11 @@ export default function ExpenseManagement({ user, showSnackbar }) {
 
     // 2. Conditionally add fields required by security rules
     if (formType === "Salary") {
-      // Must satisfy isSalaryTxn() constraints
-      // If the original doc had these, preserve them.
-      // Otherwise, set valid defaults to pass rules.
       updateData.payrollRunId = row.payrollRunId || "admin_manual_edit";
       updateData.voided = row.voided === true || row.voided === false ? row.voided : false;
     }
 
     if (formType === "Salary Advance") {
-      // This admin form doesn't have shiftId, so preserve original
-      // or set to null if it didn't exist.
       updateData.shiftId = row.shiftId || null;
     }
 
@@ -650,6 +633,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
       await updateDoc(doc(db, "transactions", row.id), updateData);
       setEditReasonDialog({ open: false, reason: "", row: null });
       cancelEdit();
+      setFormDrawerOpen(false);
       if (showSnackbar) showSnackbar("Expense has been updated.", 'success');
     } catch (err) {
       console.error("Failed to update expense", err);
@@ -710,7 +694,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
     });
   };
 
-  /** ===================== FORM CONTENT (REUSED) ===================== */
+  /** ===================== FORM CONTENT ===================== */
   const FormContent = (
     <Stack
       component="form"
@@ -726,10 +710,10 @@ export default function ExpenseManagement({ user, showSnackbar }) {
         InputLabelProps={{ shrink: true }}
         required
         fullWidth
-        size={fieldSize}
+        size="medium"
       />
 
-      <FormControl fullWidth required size={fieldSize}>
+      <FormControl fullWidth required size="medium">
         <InputLabel>Expense Type</InputLabel>
         <Select label="Expense Type" value={formType} onChange={handleTypeChange}>
           {expenseTypes.map((t) => (
@@ -738,10 +722,9 @@ export default function ExpenseManagement({ user, showSnackbar }) {
             </MenuItem>
           ))}
         </Select>
-
       </FormControl>
 
-      <FormControl fullWidth required size={fieldSize}>
+      <FormControl fullWidth required size="medium">
         <InputLabel>Financial Category</InputLabel>
         <Select label="Financial Category" value={financialCategory} onChange={(e) => setFinancialCategory(e.target.value)}>
           <MenuItem value="OPEX">OPEX (Operating Expense)</MenuItem>
@@ -752,7 +735,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
 
       {
         (formType === "Salary" || formType === "Salary Advance") && (
-          <FormControl fullWidth required size={fieldSize}>
+          <FormControl fullWidth required size="medium">
             <InputLabel>Staff</InputLabel>
             <Select
               label="Staff"
@@ -782,7 +765,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
         onChange={(e) => setFormQuantity(e.target.value)}
         required
         fullWidth
-        size={fieldSize}
+        size="medium"
       />
       <TextField
         type="number"
@@ -791,7 +774,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
         onChange={(e) => setFormPrice(e.target.value)}
         required
         fullWidth
-        size={fieldSize}
+        size="medium"
       />
 
       <TextField
@@ -801,11 +784,11 @@ export default function ExpenseManagement({ user, showSnackbar }) {
         value={formNotes}
         onChange={(e) => setFormNotes(e.target.value)}
         fullWidth
-        size={fieldSize}
+        size="medium"
       />
 
       <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
-        <Button type="submit" variant="contained" fullWidth size={fieldSize}>
+        <Button type="submit" variant="contained" fullWidth size="medium">
           {currentlyEditing ? "Save Changes" : "Add Expense"}
         </Button>
         {currentlyEditing && (
@@ -814,13 +797,13 @@ export default function ExpenseManagement({ user, showSnackbar }) {
             color="inherit"
             onClick={cancelEdit}
             fullWidth
-            size={fieldSize}
+            size="medium"
           >
             Cancel
           </Button>
         )}
       </Stack>
-    </Stack >
+    </Stack>
   );
 
   /** ===================== RENDER ===================== */
@@ -829,525 +812,174 @@ export default function ExpenseManagement({ user, showSnackbar }) {
   }
 
   return (
-    <Box
-      sx={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        width: "100%",
-        minHeight: 0,
-        p: 3
-      }}
-    >
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', p: 2, gap: 2 }}>
       <PageHeader
-        title="Expense Management"
-        subtitle="Record and track business expenditures."
-      />
-      {/* --- DESKTOP / WEB --- */}
-      <Box
-        sx={{
-          display: { xs: "none", sm: "flex" },
-          flex: 1,
-          minHeight: 0,
-          gap: 2,
-          p: 2,
-          width: "100%",
-          alignItems: "stretch",
-        }}
-      >
-        {/* LEFT CARD */}
-        <Card
-          sx={{ width: 360, p: 2, display: "flex", flexDirection: "column", gap: 2 }}
-        >
-          <Typography variant="subtitle1" fontWeight={600}>
-            {currentlyEditing ? "Edit Expense" : "Add Expense (Admin)"}
-          </Typography>
-          <Divider />
-          {FormContent}
-        </Card>
-
-        {/* RIGHT PANEL */}
-        <Paper
-          sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
-        >
-          {/* Filters bar */}
-          <Box
-            sx={{
-              p: 2,
-              pt: 1,
-              display: "flex",
-              alignItems: "center",
-              gap: 1.5,
-              flexWrap: "wrap",
-            }}
+        title="Expense Log"
+        subtitle="Track and manage business expenditures."
+        actions={
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => { cancelEdit(); setFormDrawerOpen(true); }}
           >
-            <Typography variant="subtitle1" fontWeight={600}>
-              Expenses
-            </Typography>
+            Add Expense
+          </Button>
+        }
+      />
 
-            <TextField
-              type="date"
-              label="Start"
-              size="small"
-              value={filterStart}
-              onChange={(e) => setFilterStart(e.target.value)}
-              InputLabelProps={{ shrink: true }}
-            />
-            <TextField
-              type="date"
-              label="End"
-              size="small"
-              value={filterEnd}
-              onChange={(e) => setFilterEnd(e.target.value)}
-              InputLabelProps={{ shrink: true }}
-            />
+      {/* Summary Cards */}
+      <SummaryCards cards={[
+        { label: 'Total Expenses', value: toCurrency(expenseSummary.total), sub: expenseSummary.count + ' entries', color: 'error.main', highlight: true },
+        { label: 'OPEX', value: toCurrency(expenseSummary.opex), color: 'warning.main' },
+        { label: 'COGS', value: toCurrency(expenseSummary.cogs), color: 'info.main' },
+        { label: 'CAPEX', value: toCurrency(expenseSummary.capex), color: 'secondary.main' },
+      ]} />
 
-            <FormControl size="small" sx={{ minWidth: 140 }}>
-              <InputLabel>Type</InputLabel>
-              <Select
-                label="Type"
-                value={filterType}
-                onChange={(e) => setFilterType(e.target.value)}
-              >
-                <MenuItem value="">
-                  <em>All</em>
-                </MenuItem>
-                {expenseTypes.map((t) => (
-                  <MenuItem key={t} value={t}>
-                    {t}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+      {/* Filter bar */}
+      <Paper sx={{ p: 1.5 }}>
+        <Stack direction="row" spacing={1.5} flexWrap="wrap" alignItems="center">
+          <TextField
+            type="date"
+            label="Start"
+            size="small"
+            value={filterStart}
+            onChange={(e) => setFilterStart(e.target.value)}
+            InputLabelProps={{ shrink: true }}
+          />
+          <TextField
+            type="date"
+            label="End"
+            size="small"
+            value={filterEnd}
+            onChange={(e) => setFilterEnd(e.target.value)}
+            InputLabelProps={{ shrink: true }}
+          />
+          <FormControl size="small" sx={{ minWidth: 140 }}>
+            <InputLabel>Type</InputLabel>
+            <Select label="Type" value={filterType} onChange={(e) => setFilterType(e.target.value)}>
+              <MenuItem value=""><em>All Types</em></MenuItem>
+              {expenseTypes.map(t => <MenuItem key={t} value={t}>{t}</MenuItem>)}
+            </Select>
+          </FormControl>
+          <FormControl size="small" sx={{ minWidth: 140 }}>
+            <InputLabel>Staff</InputLabel>
+            <Select label="Staff" value={filterStaff} onChange={(e) => setFilterStaff(e.target.value)}>
+              <MenuItem value=""><em>All Staff</em></MenuItem>
+              {staffOptions.map(s => <MenuItem key={s.id} value={s.id}>{s.fullName}</MenuItem>)}
+            </Select>
+          </FormControl>
+          <FormControl size="small" sx={{ minWidth: 110 }}>
+            <InputLabel>Status</InputLabel>
+            <Select label="Status" value={filterDeleted} onChange={(e) => setFilterDeleted(e.target.value)}>
+              <MenuItem value="active">Active</MenuItem>
+              <MenuItem value="deleted">Deleted</MenuItem>
+              <MenuItem value="all">All</MenuItem>
+            </Select>
+          </FormControl>
+          <TextField
+            size="small"
+            label="Search"
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
+            sx={{ minWidth: 180 }}
+          />
+          <Box sx={{ flex: 1 }} />
+          <Button variant="outlined" size="small" onClick={handleExportCSV}>Export CSV</Button>
+          <Button variant="outlined" size="small" color="warning" onClick={() => fetchAllExpenses(false)}>Load All</Button>
+        </Stack>
+      </Paper>
 
-            <FormControl size="small" sx={{ minWidth: 140 }}>
-              <InputLabel>Staff</InputLabel>
-              <Select
-                label="Staff"
-                value={filterStaff}
-                onChange={(e) => setFilterStaff(e.target.value)}
-              >
-                <MenuItem value="">
-                  <em>All</em>
-                </MenuItem>
-                {staffOptions.map((s) => (
-                  <MenuItem key={s.id} value={s.id}>
-                    {s.fullName}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-
-            <FormControl size="small" sx={{ minWidth: 140 }}>
-              <InputLabel>Status</InputLabel>
-              <Select
-                label="Status"
-                value={filterDeleted}
-                onChange={(e) => setFilterDeleted(e.target.value)}
-              >
-                <MenuItem value="active">Active</MenuItem>
-                <MenuItem value="deleted">Deleted</MenuItem>
-                <MenuItem value="all">All</MenuItem>
-              </Select>
-            </FormControl>
-
-            <TextField
-              size="small"
-              label="Search"
-              value={filterText}
-              onChange={(e) => setFilterText(e.target.value)}
-              sx={{ minWidth: 180 }}
-            />
-
-            <Button
-              onClick={handleExportCSV}
-              variant="outlined"
-              size="small"
-              sx={{ marginLeft: "auto" }}
-            >
-              Export CSV
-            </Button>
-            <Button
-              variant="contained"
-              color="secondary"
-              onClick={() => fetchAllExpenses(false)}
-              size="small"
-            >
-              Load All Filtered
-            </Button>
-            <Button
-              variant="contained"
-              color="warning"
-              onClick={() => fetchAllExpenses(true)}
-              size="small"
-            >
-              Load ALL EXPENSES
+      {/* Table */}
+      <Paper sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <TableContainer sx={{ flex: 1, minHeight: 0 }}>
+          <Table size="small" stickyHeader>
+            <TableHead>
+              <TableRow>
+                <TableCell>Date</TableCell>
+                <TableCell>Type</TableCell>
+                <TableCell>Category</TableCell>
+                <TableCell>Staff</TableCell>
+                <TableCell>Notes</TableCell>
+                <TableCell align="right">Qty × Price</TableCell>
+                <TableCell align="right">Total</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell align="right">Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {filteredRows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={9} sx={{ py: 4, textAlign: 'center', color: 'text.secondary' }}>
+                    No expenses for the selected filters.
+                  </TableCell>
+                </TableRow>
+              ) : filteredRows.map(r => (
+                <TableRow key={r.id} hover sx={{ opacity: r.isDeleted ? 0.55 : 1 }}>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>{r._dateTime}</TableCell>
+                  <TableCell>
+                    <Chip label={r.expenseType || 'Unknown'} size="small" variant="outlined" color="warning" />
+                  </TableCell>
+                  <TableCell>
+                    <Chip label={r.financialCategory || 'OPEX'} size="small" variant="outlined" />
+                  </TableCell>
+                  <TableCell>{r.expenseStaffName || '—'}</TableCell>
+                  <TableCell
+                    sx={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    title={r.notes}
+                  >
+                    {r.notes || '—'}
+                  </TableCell>
+                  <TableCell align="right" sx={{ whiteSpace: 'nowrap', color: 'text.secondary', fontSize: '0.8rem' }}>
+                    {r.qty} × {toCurrency(r.price)}
+                  </TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700 }}>{toCurrency(r.total)}</TableCell>
+                  <TableCell>
+                    {r.isDeleted && <Chip label="Deleted" size="small" color="error" />}
+                    {!r.isDeleted && r.isEdited && <Chip label="Edited" size="small" color="info" />}
+                  </TableCell>
+                  <TableCell align="right">
+                    <Tooltip title="Edit">
+                      <IconButton size="small" onClick={() => startEdit(r)}>
+                        <EditIcon fontSize="inherit" />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Delete">
+                      <IconButton size="small" color="warning" onClick={() => handleSoftDelete(r)} disabled={r.isDeleted}>
+                        <DeleteIcon fontSize="inherit" />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Permanently Delete">
+                      <IconButton size="small" color="error" onClick={() => handlePermanentDelete(r)}>
+                        <DeleteForeverIcon fontSize="inherit" />
+                      </IconButton>
+                    </Tooltip>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+        {hasMore && isArchiveMode && (
+          <Box sx={{ p: 2, display: 'flex', justifyContent: 'center' }}>
+            <Button variant="outlined" size="small" onClick={() => fetchNextPage(false)} disabled={loadingMore}>
+              {loadingMore ? 'Loading...' : 'Load More'}
             </Button>
           </Box>
+        )}
+      </Paper>
 
-          {/* Table */}
-          <TableContainer sx={{ flex: 1, minHeight: 0 }}>
-            <Table size="small" stickyHeader>
-              <TableHead>
-                <TableRow>
-                  <TableCell>ID</TableCell>
-                  <TableCell>Date</TableCell>
-                  <TableCell>Item</TableCell>
-                  <TableCell align="right">Qty</TableCell>
-                  <TableCell align="right">Price</TableCell>
-                  <TableCell align="right">Total</TableCell>
-                  <TableCell>Type</TableCell>
-                  <TableCell>Staff</TableCell>
-                  <TableCell>Notes</TableCell>
-                  <TableCell align="right">Controls</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {loading ? (
-                  <TableRow>
-                    <TableCell colSpan={9}>Loading…</TableCell>
-                  </TableRow>
-                ) : filteredRows.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={9}>
-                      No expenses for the selected filters.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  filteredRows.map((r) => (
-                    <TableRow key={r.id} hover selected={!!r.isDeleted}>
-                      <TableCell sx={{ fontFamily: 'monospace' }}>
-                        {r.displayId || r.id.slice(-6).toUpperCase()}
-                      </TableCell>
-                      <TableCell>{r._dateTime}</TableCell>
-                      <TableCell>
-                        Expenses{" "}
-                        {r.isEdited && (
-                          <HistoryIcon
-                            fontSize="inherit"
-                            style={{ marginLeft: 4, opacity: 0.7 }}
-                            titleAccess="Edited"
-                          />
-                        )}
-                        {r.isDeleted && (
-                          <Typography
-                            component="span"
-                            sx={{
-                              ml: 1,
-                              fontSize: 11,
-                              color: "error.main",
-                              fontWeight: 500,
-                            }}
-                          >
-                            (deleted)
-                          </Typography>
-                        )}
-                      </TableCell>
-                      <TableCell align="right">{r.qty}</TableCell>
-                      <TableCell align="right">{toCurrency(r.price)}</TableCell>
-                      <TableCell align="right">{toCurrency(r.total)}</TableCell>
-                      <TableCell>{r.expenseType || ""}</TableCell>
-                      <TableCell>{r.expenseStaffName || ""}</TableCell>
-                      <TableCell
-                        sx={{
-                          maxWidth: 320,
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                        title={r.notes || ""}
-                      >
-                        {r.notes || ""}
-                      </TableCell>
-                      <TableCell align="right">
-                        <Tooltip title="Edit">
-                          <IconButton size="small" onClick={() => startEdit(r)}>
-                            <EditIcon fontSize="inherit" />
-                          </IconButton>
-                        </Tooltip>
-
-                        <Tooltip title="Delete (Soft)">
-                          <IconButton
-                            size="small"
-                            onClick={() => handleSoftDelete(r)}
-                            color="warning"
-                          >
-                            <DeleteIcon fontSize="inherit" />
-                          </IconButton>
-                        </Tooltip>
-
-                        <Tooltip title="Delete Permanently">
-                          <IconButton
-                            size="small"
-                            onClick={() => handlePermanentDelete(r)}
-                            color="error"
-                          >
-                            <DeleteForeverIcon fontSize="inherit" />
-                          </IconButton>
-                        </Tooltip>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </Paper>
-      </Box>
-
-      {/* --- MOBILE LAYOUT --- */}
-      <Box
-        sx={{
-          display: { xs: "flex", sm: "none" },
-          flexDirection: "column",
-          gap: 1.25,
-          p: 2,
-          pt: 1.25,
-          minHeight: 0,
-          flex: 1,
-          overflowY: "auto",
-          WebkitOverflowScrolling: "touch",
-          pb: "calc(env(safe-area-inset-bottom, 0) + 8px)",
-        }}
+      {/* Add/Edit Expense Drawer */}
+      <DetailDrawer
+        open={formDrawerOpen}
+        onClose={() => { setFormDrawerOpen(false); cancelEdit(); }}
+        title={currentlyEditing ? 'Edit Expense' : 'Add Expense'}
+        subtitle={currentlyEditing ? `Editing: ${currentlyEditing.expenseType || ''}` : 'Record a new business expense'}
+        loading={busy}
       >
-        {/* Add / Edit form card */}
-        <Card
-          ref={controlsRef}
-          sx={{ p: 1.0, overflow: "visible", position: "relative" }}
-        >
-          <Box sx={{ display: "flex", alignItems: "center" }}>
-            <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
-              {currentlyEditing ? "Edit Expense" : "Add Expense"}
-            </Typography>
-            <IconButton size="small" onClick={() => setControlsOpen((v) => !v)}>
-              {controlsOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-            </IconButton>
-          </Box>
-          <Collapse in={controlsOpen} timeout={250} sx={{ overflow: "visible" }}>
-            <Box sx={{ pt: 2, pb: 1 }}>{FormContent}</Box>
-          </Collapse>
-        </Card>
+        {FormContent}
+      </DetailDrawer>
 
-        {/* Filters card (mobile) */}
-        <Card sx={{ p: 1.0, overflow: "visible", position: "relative" }}>
-          <Box sx={{ display: "flex", alignItems: "center" }}>
-            <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
-              Filters & Export
-            </Typography>
-            <IconButton size="small" onClick={() => setFiltersOpen((v) => !v)}>
-              {filtersOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-            </IconButton>
-          </Box>
-          <Collapse in={filtersOpen} timeout={250} sx={{ overflow: "visible" }}>
-            <Box
-              sx={{
-                display: "grid",
-                gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
-                gap: 1,
-                mt: 1.25,
-                alignItems: "center",
-              }}
-            >
-              <TextField
-                type="date"
-                label="Start"
-                size="small"
-                value={filterStart}
-                onChange={(e) => setFilterStart(e.target.value)}
-                InputLabelProps={{ shrink: true }}
-              />
-              <TextField
-                type="date"
-                label="End"
-                size="small"
-                value={filterEnd}
-                onChange={(e) => setFilterEnd(e.target.value)}
-                InputLabelProps={{ shrink: true }}
-              />
-              <FormControl size="small" fullWidth>
-                <InputLabel>Type</InputLabel>
-                <Select
-                  label="Type"
-                  value={filterType}
-                  onChange={(e) => setFilterType(e.target.value)}
-                >
-                  <MenuItem value="">
-                    <em>All</em>
-                  </MenuItem>
-                  {expenseTypes.map((t) => (
-                    <MenuItem key={t} value={t}>
-                      {t}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <FormControl size="small" fullWidth>
-                <InputLabel>Staff</InputLabel>
-                <Select
-                  label="Staff"
-                  value={filterStaff}
-                  onChange={(e) => setFilterStaff(e.target.value)}
-                >
-                  <MenuItem value="">
-                    <em>All</em>
-                  </MenuItem>
-                  {staffOptions.map((s) => (
-                    <MenuItem key={s.id} value={s.id}>
-                      {s.fullName}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <FormControl size="small" fullWidth>
-                <InputLabel>Status</InputLabel>
-                <Select
-                  label="Status"
-                  value={filterDeleted}
-                  onChange={(e) => setFilterDeleted(e.target.value)}
-                >
-                  <MenuItem value="active">Active</MenuItem>
-                  <MenuItem value="deleted">Deleted</MenuItem>
-                  <MenuItem value="all">All</MenuItem>
-                </Select>
-              </FormControl>
-              <TextField
-                size="small"
-                label="Search"
-                value={filterText}
-                onChange={(e) => setFilterText(e.target.value)}
-                fullWidth
-              />
-              <Button
-                onClick={handleExportCSV}
-                variant="outlined"
-                size="small"
-                sx={{ gridColumn: { xs: "1 / -1", sm: "auto" } }}
-              >
-                Export CSV
-              </Button>
-              <Button
-                variant="contained"
-                color="secondary"
-                onClick={() => fetchAllExpenses(false)}
-                size="small"
-                sx={{ gridColumn: { xs: "1 / -1", sm: "auto" } }}
-              >
-                Load All Filtered
-              </Button>
-              <Button
-                variant="contained"
-                color="warning"
-                onClick={() => fetchAllExpenses(true)}
-                size="small"
-                sx={{ gridColumn: { xs: "1 / -1", sm: "auto" } }}
-              >
-                Load ALL EXPENSES
-              </Button>
-            </Box>
-          </Collapse>
-        </Card>
-
-        {/* Mobile table */}
-        <Paper
-          sx={{
-            flex: "1 1 auto",
-            minHeight: 0,
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <Box sx={{ p: 1.0, pt: 1 }}>
-            <Typography variant="subtitle1" fontWeight={600}>
-              Expenses
-            </Typography>
-          </Box>
-
-          <TableContainer sx={{ flex: 1, minHeight: 0 }}>
-            <Table size="small" stickyHeader>
-              <TableHead>
-                <TableRow>
-                  <TableCell>Date / Time</TableCell>
-                  <TableCell>Type</TableCell>
-                  <TableCell align="right">Total</TableCell>
-                  <TableCell>Staff</TableCell>
-                  <TableCell align="right">⋯</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {loading ? (
-                  <TableRow>
-                    <TableCell colSpan={5}>Loading…</TableCell>
-                  </TableRow>
-                ) : filteredRows.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={5}>
-                      No expenses for the selected filters.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  filteredRows.map((r) => (
-                    <TableRow key={r.id} hover selected={!!r.isDeleted}>
-                      <TableCell>{r._dateTime}</TableCell>
-                      <TableCell>
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                          <Typography variant="body2" fontWeight={600}>
-                            {r.expenseType || "—"}
-                          </Typography>
-                          {r.isEdited && (
-                            <HistoryIcon
-                              fontSize="inherit"
-                              style={{ opacity: 0.7 }}
-                              titleAccess="Edited"
-                            />
-                          )}
-                          {r.isDeleted && (
-                            <Typography
-                              component="span"
-                              sx={{
-                                fontSize: 10,
-                                color: "error.main",
-                                fontWeight: 500,
-                              }}
-                            >
-                              del
-                            </Typography>
-                          )}
-                        </Box>
-                      </TableCell>
-                      <TableCell align="right">{toCurrency(r.total)}</TableCell>
-                      <TableCell
-                        sx={{
-                          maxWidth: 120,
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                        title={r.expenseStaffName || ""}
-                      >
-                        {r.expenseStaffName || ""}
-                      </TableCell>
-                      <TableCell align="right">
-                        <IconButton size="small" onClick={() => startEdit(r)}>
-                          <EditIcon fontSize="inherit" />
-                        </IconButton>
-                        <IconButton
-                          size="small"
-                          onClick={() => handleSoftDelete(r)}
-                          color="warning"
-                        >
-                          <DeleteIcon fontSize="inherit" />
-                        </IconButton>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </Paper>
-      </Box>
-
-      {/* edit reason dialog */}
+      {/* Edit reason dialog */}
       <Dialog
         open={editReasonDialog.open}
         onClose={() => setEditReasonDialog({ open: false, reason: "", row: null })}
@@ -1371,9 +1003,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
           />
         </DialogContent>
         <DialogActions>
-          <Button
-            onClick={() => setEditReasonDialog({ open: false, reason: "", row: null })}
-          >
+          <Button onClick={() => setEditReasonDialog({ open: false, reason: "", row: null })}>
             Cancel
           </Button>
           <Button variant="contained" onClick={actuallySaveEdit}>
@@ -1382,7 +1012,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
         </DialogActions>
       </Dialog>
 
-      {/* ================== GLOBAL LOADER ================== */}
+      {/* Global loader */}
       {busy && <LoadingScreen overlay={true} message={busyMsg || "Working..."} />}
 
       <ConfirmationReasonDialog
@@ -1395,6 +1025,6 @@ export default function ExpenseManagement({ user, showSnackbar }) {
         confirmText={confirmDialog.confirmText}
         confirmColor={confirmDialog.confirmColor}
       />
-    </Box >
+    </Box>
   );
 }

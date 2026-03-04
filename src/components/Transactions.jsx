@@ -3,7 +3,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Typography,
-  Card,
   TextField,
   Select,
   MenuItem,
@@ -14,7 +13,6 @@ import {
   Stack,
   Divider,
   Checkbox,
-  FormControlLabel,
   Table,
   TableHead,
   TableRow,
@@ -27,9 +25,6 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  Collapse,
-  useMediaQuery,
-  useTheme,
   Chip,
   LinearProgress,
   CircularProgress,
@@ -41,8 +36,8 @@ import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
 import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import ExpandLessIcon from "@mui/icons-material/ExpandLess";
-import PrintIcon from "@mui/icons-material/Print"; // Added for reprint icon
+import PrintIcon from "@mui/icons-material/Print";
+import VisibilityIcon from "@mui/icons-material/Visibility";
 import {
   collection,
   onSnapshot,
@@ -54,11 +49,10 @@ import {
   serverTimestamp,
   writeBatch,
   deleteDoc,
-  getDoc, // Added for fetching full order details
+  getDoc,
   limit,
   startAfter,
-
-  getDocs // Added for fetching full order details
+  getDocs,
 } from "firebase/firestore";
 import { generateDisplayId, generateBatchIds } from "../utils/idGenerator";
 import { db, auth } from "../firebase";
@@ -68,8 +62,11 @@ import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice
 import LoadingScreen from './common/LoadingScreen';
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 import PageHeader from "./common/PageHeader";
+import DetailDrawer from "./common/DetailDrawer";
+import SummaryCards from "./common/SummaryCards";
 import { useStaffList } from "../hooks/useStaffList";
 import { useServiceList } from "../hooks/useServiceList";
+import { useShiftOptions } from "../hooks/useShiftOptions";
 import {
   fmtCurrency,
   toDateInput,
@@ -82,8 +79,7 @@ import {
   downloadCSV,
 } from "../utils/formatters";
 
-// Local helpers removed — now imported from ../utils/formatters
-// toTimeInput remains here as it is not in formatters.js
+// toTimeInput is not in formatters.js — kept here
 const toTimeInput = (d) => {
   const x = new Date(d);
   const HH = String(x.getHours()).padStart(2, '0');
@@ -107,10 +103,15 @@ const Transactions = ({ showSnackbar }) => {
   const [onlyEdited, setOnlyEdited] = useState(false);
   const [servicesFilter, setServicesFilter] = useState([]);
 
-  // Option lists from shared hooks (replaces manual onSnapshot blocks)
-  const { staffOptions } = useStaffList();
+  // Unified status filter that drives showDeleted / onlyDeleted / onlyEdited
+  const [filterStatus, setFilterStatus] = useState("all");
+
+  // Option lists from shared hooks
+  const { staffOptions, userMap } = useStaffList();
   const { parentServiceNames: serviceItems, expenseServiceNames: expenseServiceItems } = useServiceList();
-  const [shiftOptions, setShiftOptions] = useState([]);
+
+  // Shift options via hook (replaces manual useEffect + useState)
+  const { shiftOptions } = useShiftOptions({ startDate: start, endDate: end, emailToName: userMap });
 
   // Data
   const [tx, setTx] = useState([]);
@@ -147,9 +148,8 @@ const Transactions = ({ showSnackbar }) => {
   }, []);
 
   // Printing State
-
   const [reprintOrder, setReprintOrder] = useState(null);
-  const [printInvoiceData, setPrintInvoiceData] = useState(null); // NEW for Invoice
+  const [printInvoiceData, setPrintInvoiceData] = useState(null);
 
   // Confirmation Dialog State
   const [confirmDialog, setConfirmDialog] = useState({
@@ -162,78 +162,43 @@ const Transactions = ({ showSnackbar }) => {
     confirmColor: 'error'
   });
 
-  // --- Mobile state (collapsibles) ---
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
-  const [datesOpen, setDatesOpen] = useState(true);
-  const [peopleOpen, setPeopleOpen] = useState(false);
-  const [otherOpen, setOtherOpen] = useState(false);
-  const datesRef = useRef(null);
+  // Detail Drawer state
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailRow, setDetailRow] = useState(null);
 
-  /* Staff loading is handled by useStaffList() hook above */
-
-  /* ---- Load shifts ---- */
-  useEffect(() => {
-    const qRef = query(collection(db, "shifts"), orderBy("startTime", "desc"));
-    const unsub = onSnapshot(qRef, (snap) => {
-      const arr = snap.docs.map((d) => {
-        const v = d.data() || {};
-        const label = [
-          v.shiftPeriod || "",
-          v.staffEmail || "",
-          v.startTime?.seconds
-            ? new Date(v.startTime.seconds * 1000).toLocaleDateString()
-            : "",
-        ]
-          .filter(Boolean)
-          .join(" • ");
-        return { id: d.id, label };
-      });
-      setShiftOptions(arr);
-    });
-    return () => unsub();
-  }, []);
-
-  // Services loaded via useServiceList() hook above (replaces manual onSnapshot + hardcoded expense parent ID)
+  const openDetail = (row) => {
+    setDetailRow(row);
+    setDetailOpen(true);
+  };
 
   /* ---- Pagination State ---- */
   const [lastDoc, setLastDoc] = useState(null);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [initLoading, setInitLoading] = useState(true); // NEW STATE
+  const [initLoading, setInitLoading] = useState(true);
 
-  /* ---- Live transactions stream (limited to recent) ---- */
-  // We stream ONLY if the range is small (<= 31 days) AND we are not in "All" mode.
-  // Actually, let's simplify:
-  // Mode 1: "Live" (This Month or Custom Range < 45 days). Uses Snapshot.
-  // Mode 2: "Archive" (All Time or Wide Range). Uses Pagination (getDocs).
-
+  /* ---- Wide range detection ---- */
   const isWideRange = useMemo(() => {
     const duration = new Date(end) - new Date(start);
     return duration > 45 * 24 * 60 * 60 * 1000; // > 45 days
   }, [start, end]);
 
   const attachStream = async (mode = "month") => {
-    // Cleanup previous listener
     if (unsubRef.current) {
       unsubRef.current();
       unsubRef.current = null;
     }
 
-    setInitLoading(true); // Start loading
-
-    // Reset inputs
+    setInitLoading(true);
     setLastDoc(null);
     setHasMore(true);
 
     if (mode === "all" || isWideRange) {
-      // PAGINATED MODE (One-time fetch)
       setLiveMode(mode === "all" ? "all" : "archive");
-      setTx([]); // Clear current
+      setTx([]);
       await fetchNextPage(true, mode === "all");
-      setInitLoading(false); // Stop loading
+      setInitLoading(false);
     } else {
-      // LIVE MODE (Snapshot)
       setLiveMode("month");
       const s = new Date(start); s.setHours(0, 0, 0, 0);
       const e = new Date(end); e.setHours(23, 59, 59, 999);
@@ -243,15 +208,15 @@ const Transactions = ({ showSnackbar }) => {
         where("timestamp", ">=", s),
         where("timestamp", "<=", e),
         orderBy("timestamp", "desc"),
-        limit(200) // Safety limit for stream
+        limit(200)
       );
 
       const unsub = onSnapshot(qRef, (snap) => {
         setTx(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setInitLoading(false); // Stop loading
+        setInitLoading(false);
       }, (err) => {
         console.error("Stream error", err);
-        setInitLoading(false); // Stop loading on error
+        setInitLoading(false);
       });
       unsubRef.current = unsub;
     }
@@ -265,7 +230,6 @@ const Transactions = ({ showSnackbar }) => {
         limit(50)
       ];
 
-      // Date Constraints
       if (!forceAll && liveMode !== "all" && liveMode !== "archive_all") {
         const s = new Date(start); s.setHours(0, 0, 0, 0);
         const e = new Date(end); e.setHours(23, 59, 59, 999);
@@ -275,8 +239,6 @@ const Transactions = ({ showSnackbar }) => {
 
       if (!isReset && lastDoc) {
         constraints.push(startAfter(lastDoc));
-      } else if (!isReset && !lastDoc && tx.length > 0) {
-        // Should not happen if logic is correct
       }
 
       const q = query(collection(db, "transactions"), ...constraints);
@@ -306,16 +268,13 @@ const Transactions = ({ showSnackbar }) => {
     setInitLoading(true);
     setLiveMode("archive_all");
 
-    // Cleanup any existing real-time listener
     if (unsubRef.current) {
       unsubRef.current();
       unsubRef.current = null;
     }
 
     try {
-      let constraints = [
-        orderBy("timestamp", "desc"),
-      ];
+      let constraints = [orderBy("timestamp", "desc")];
 
       if (!forceAllTime) {
         const s = new Date(start); s.setHours(0, 0, 0, 0);
@@ -331,7 +290,7 @@ const Transactions = ({ showSnackbar }) => {
 
       setTx(newRows);
       setLastDoc(null);
-      setHasMore(false); // No more pages since we fetched everything
+      setHasMore(false);
 
       showSnackbar?.(`Loaded ${newRows.length} transactions.`, 'success');
     } catch (err) {
@@ -351,6 +310,7 @@ const Transactions = ({ showSnackbar }) => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
   useEffect(() => {
     if (liveMode !== "month") return;
     attachStream("month");
@@ -374,8 +334,7 @@ const Transactions = ({ showSnackbar }) => {
 
   /* ---- Totals (visible set) ---- */
   const totals = useMemo(() => {
-    let sales = 0,
-      expenses = 0;
+    let sales = 0, expenses = 0;
     rows.forEach((r) => {
       const amt = Number(r.total || 0);
       if (r.item === "Expenses" || r.item === "New Debt") expenses += amt;
@@ -383,6 +342,28 @@ const Transactions = ({ showSnackbar }) => {
     });
     return { sales, expenses, net: sales - expenses };
   }, [rows]);
+
+  /* ---- Handle filterStatus changes (unified status select) ---- */
+  const handleFilterStatus = (val) => {
+    setFilterStatus(val);
+    if (val === "all") {
+      setShowDeleted(true);
+      setOnlyDeleted(false);
+      setOnlyEdited(false);
+    } else if (val === "active") {
+      setShowDeleted(false);
+      setOnlyDeleted(false);
+      setOnlyEdited(false);
+    } else if (val === "deleted") {
+      setShowDeleted(true);
+      setOnlyDeleted(true);
+      setOnlyEdited(false);
+    } else if (val === "edited") {
+      setShowDeleted(true);
+      setOnlyDeleted(false);
+      setOnlyEdited(true);
+    }
+  };
 
   /* ---- Actions ---- */
   const exportCSV = () => {
@@ -431,12 +412,11 @@ const Transactions = ({ showSnackbar }) => {
     setOnlyDeleted(false);
     setOnlyEdited(false);
     setServicesFilter([]);
+    setFilterStatus("all");
     attachStream("month");
   };
 
-
-
-  /* ---- Reprint Handler (NEW) ---- */
+  /* ---- Reprint Handler ---- */
   const handleReprint = async (row) => {
     try {
       let rawOrder;
@@ -450,7 +430,6 @@ const Transactions = ({ showSnackbar }) => {
           return;
         }
       } else {
-        // Ad-hoc transaction mock
         rawOrder = {
           id: row.id,
           orderNumber: row.orderNumber || "ADHOC",
@@ -462,7 +441,6 @@ const Transactions = ({ showSnackbar }) => {
             quantity: row.quantity,
             price: row.price,
             total: row.total,
-            // For ad-hoc, subtotal is same as total
             subtotal: row.total
           }],
           total: row.total,
@@ -473,7 +451,6 @@ const Transactions = ({ showSnackbar }) => {
         };
       }
 
-      // Use shared normalizer for consistent receipt
       const printData = normalizeReceiptData(rawOrder, {
         staffName: rawOrder.staffName || 'Staff',
         isReprint: true
@@ -486,7 +463,6 @@ const Transactions = ({ showSnackbar }) => {
     }
   };
 
-  // EFFECT: Handle Reprinting safely
   const isPrintingReprint = useRef(false);
   useEffect(() => {
     let timer;
@@ -502,7 +478,7 @@ const Transactions = ({ showSnackbar }) => {
     return () => clearTimeout(timer);
   }, [reprintOrder]);
 
-  /* ---- Print Invoice Handler (NEW) ---- */
+  /* ---- Print Invoice Handler ---- */
   const handlePrintInvoice = async (row) => {
     try {
       let rawOrder;
@@ -516,7 +492,6 @@ const Transactions = ({ showSnackbar }) => {
           return;
         }
       } else {
-        // Ad-hoc transaction mock
         rawOrder = {
           id: row.id,
           orderNumber: row.orderNumber || "ADHOC",
@@ -538,7 +513,6 @@ const Transactions = ({ showSnackbar }) => {
         };
       }
 
-      // Normalize for Invoice
       const invData = normalizeInvoiceData(rawOrder, {
         staffName: rawOrder.staffName || 'Staff',
         isReprint: true
@@ -551,7 +525,6 @@ const Transactions = ({ showSnackbar }) => {
     }
   };
 
-  // EFFECT: Handle Invoice Printing safely
   const isPrintingInvoice = useRef(false);
   useEffect(() => {
     let timer;
@@ -828,324 +801,240 @@ const Transactions = ({ showSnackbar }) => {
   }
 
   /* ---- VIEW ---- */
-  /* ---- VIEW ---- */
   if (initLoading || loading) {
     return <LoadingScreen message={loading ? "Processing..." : "Loading transactions..."} />;
   }
 
-  return (
-    <Box
-      sx={{
-        position: "relative",
-        display: "flex",
-        width: "100%",
-        height: "100%",
-        p: 2,
-        gap: 2,
-        alignItems: "stretch",
-      }}
-    >
-      {/* Hidden Receipt Component for Re-printing */}
+  const isArchiveMode = liveMode === "archive" || liveMode === "all" || liveMode === "archive_all";
 
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', p: 2, gap: 2 }}>
+      {/* Hidden printers */}
       <SimpleReceipt order={reprintOrder} settings={systemSettings} />
       <ServiceInvoice order={printInvoiceData} settings={systemSettings} />
 
-      {/* LEFT: Filters / Controls (WEB) */}
-      <Card
-        sx={{
-          width: 240,
-          p: 2,
-          display: { xs: "none", sm: "flex" }, // unchanged web layout
-          flexDirection: "column",
-          gap: 2,
-        }}
-      >
-        <Typography variant="subtitle1" fontWeight={600}>
-          {liveMode === "all" ? "All Time" : "Current Month"}
-        </Typography>
-        <Divider />
+      {/* Page Header */}
+      <PageHeader
+        title="Transaction Log"
+        subtitle="Audit trail of all recorded sales and expenses."
+        actions={
+          selectedIds.length > 0 ? (
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Typography variant="body2" sx={{ opacity: 0.8 }}>{selectedIds.length} selected</Typography>
+              <Button size="small" variant="outlined" onClick={openBulkDateDialog}>Edit Dates</Button>
+              <Button size="small" variant="outlined" color="warning" onClick={bulkSoftDelete}>Soft Delete</Button>
+              <Button size="small" variant="contained" color="error" onClick={bulkHardDelete}>Hard Delete</Button>
+              <Button size="small" onClick={clearSelection}>Clear</Button>
+            </Stack>
+          ) : (
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Typography variant="body2" sx={{ opacity: 0.7 }}>
+                {rows.length.toLocaleString()} rows
+              </Typography>
+              {rows.length > 0 && (
+                <Button size="small" onClick={selectAllVisible}>Select All</Button>
+              )}
+            </Stack>
+          )
+        }
+      />
 
-        {/* Date range */}
-        <Stack spacing={1.5} sx={{ opacity: liveMode === "all" || liveMode === "archive_all" ? 0.5 : 1 }}>
+      {/* Summary Cards */}
+      <SummaryCards cards={[
+        { label: 'Total Sales', value: fmtCurrency(totals.sales), color: 'success.main', highlight: true },
+        { label: 'Expenses', value: fmtCurrency(totals.expenses), color: 'error.main', highlight: true },
+        { label: 'Net', value: fmtCurrency(totals.net), highlight: true },
+        { label: 'Rows', value: rows.length.toLocaleString(), sub: liveMode === 'month' ? 'Live' : 'Archive' },
+      ]} />
+
+      {/* Filter Bar */}
+      <Paper sx={{ p: 1.5 }}>
+        <Stack direction="row" spacing={1.5} flexWrap="wrap" alignItems="center" useFlexGap>
+          {/* Date range */}
           <TextField
             label="Start"
             type="date"
+            size="small"
             value={start}
             onChange={(e) => setStart(e.target.value)}
             InputLabelProps={{ shrink: true }}
             disabled={liveMode === "all" || liveMode === "archive_all"}
-            fullWidth
+            sx={{ minWidth: 140 }}
           />
           <TextField
             label="End"
             type="date"
+            size="small"
             value={end}
             onChange={(e) => setEnd(e.target.value)}
             InputLabelProps={{ shrink: true }}
             disabled={liveMode === "all" || liveMode === "archive_all"}
-            fullWidth
+            sx={{ minWidth: 140 }}
           />
-          <Stack direction="column" spacing={1}>
-            {liveMode === "archive" || liveMode === "all" || liveMode === "archive_all" ? (
-              <Button
-                startIcon={<RefreshIcon />}
-                variant="outlined"
-                onClick={() => attachStream("month")} // Back to live
-                fullWidth
-              >
-                Back to Live
-              </Button>
-            ) : (
-              <>
-                <Button
-                  startIcon={<ClearAllIcon />}
-                  variant="outlined"
-                  color="warning"
-                  onClick={() => attachStream("all")}
-                  fullWidth
-                >
-                  Load Archive (Paginated)
-                </Button>
-                <Button
-                  startIcon={<DownloadIcon />} // Reusing an icon, or you could use a different one
-                  variant="contained"
-                  color="secondary"
-                  onClick={() => fetchAllTransactions(false)}
-                  fullWidth
-                  size="small"
-                  sx={{ mt: 1 }}
-                >
-                  Load All Filtered
-                </Button>
-                <Button
-                  startIcon={<ClearAllIcon />}
-                  variant="contained"
-                  color="warning"
-                  onClick={() => fetchAllTransactions(true)}
-                  fullWidth
-                  size="small"
-                >
-                  Load ALL TRANSACTIONS
-                </Button>
-              </>
-            )}
-          </Stack>
-        </Stack>
 
-        <Divider sx={{ my: 1 }} />
+          {/* Staff */}
+          <FormControl size="small" sx={{ minWidth: 160 }}>
+            <InputLabel>Staff</InputLabel>
+            <Select
+              label="Staff"
+              value={staffEmail}
+              onChange={(e) => setStaffEmail(e.target.value)}
+            >
+              <MenuItem value="">All staff</MenuItem>
+              {staffOptions.map((s) => (
+                <MenuItem key={s.email} value={s.email}>
+                  {s.fullName}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
 
-        {/* Staff filter */}
-        <FormControl fullWidth>
-          <InputLabel>Staff</InputLabel>
-          <Select
-            label="Staff"
-            value={staffEmail}
-            onChange={(e) => setStaffEmail(e.target.value)}
-          >
-            <MenuItem value="">All staff</MenuItem>
-            {staffOptions.map((s) => (
-              <MenuItem key={s.email} value={s.email}>
-                {s.name} — {s.email}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
+          {/* Shift */}
+          <FormControl size="small" sx={{ minWidth: 220 }}>
+            <InputLabel>Shift</InputLabel>
+            <Select
+              label="Shift"
+              value={shiftId}
+              onChange={(e) => setShiftId(e.target.value)}
+            >
+              <MenuItem value="">All shifts</MenuItem>
+              {shiftOptions.map((s) => (
+                <MenuItem key={s.id} value={s.id}>
+                  {s.label}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
 
-        {/* Shift filter */}
-        <FormControl fullWidth>
-          <InputLabel>Shift</InputLabel>
-          <Select
-            label="Shift"
-            value={shiftId}
-            onChange={(e) => setShiftId(e.target.value)}
-          >
-            <MenuItem value="">All shifts</MenuItem>
-            {shiftOptions.map((s) => (
-              <MenuItem key={s.id} value={s.id}>
-                {s.label}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
+          {/* Type / Services */}
+          <FormControl size="small" sx={{ minWidth: 140 }}>
+            <InputLabel>Type</InputLabel>
+            <Select
+              multiple
+              label="Type"
+              value={servicesFilter}
+              onChange={(e) => setServicesFilter(e.target.value)}
+              renderValue={(selected) => selected.length === 1 ? selected[0] : `${selected.length} types`}
+            >
+              {serviceItems.map((svc) => (
+                <MenuItem key={svc} value={svc}>
+                  <Checkbox checked={servicesFilter.indexOf(svc) > -1} size="small" />
+                  {svc}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
 
-        {/* Services multi-select */}
-        <FormControl fullWidth>
-          <InputLabel>Services</InputLabel>
-          <Select
-            multiple
-            label="Services"
-            value={servicesFilter}
-            onChange={(e) => setServicesFilter(e.target.value)}
-            renderValue={(selected) => selected.join(", ")}
-          >
-            {serviceItems.map((svc) => (
-              <MenuItem key={svc} value={svc}>
-                <Checkbox checked={servicesFilter.indexOf(svc) > -1} />
-                {svc}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
+          {/* Status */}
+          <FormControl size="small" sx={{ minWidth: 120 }}>
+            <InputLabel>Status</InputLabel>
+            <Select
+              label="Status"
+              value={filterStatus}
+              onChange={(e) => handleFilterStatus(e.target.value)}
+            >
+              <MenuItem value="all">All</MenuItem>
+              <MenuItem value="active">Active</MenuItem>
+              <MenuItem value="deleted">Deleted</MenuItem>
+              <MenuItem value="edited">Edited</MenuItem>
+            </Select>
+          </FormControl>
 
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={showDeleted}
-              onChange={(e) => setShowDeleted(e.target.checked)}
-            />
-          }
-          label="Show Deleted"
-        />
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={onlyDeleted}
-              onChange={(e) => setOnlyDeleted(e.target.checked)}
-            />
-          }
-          label="Only Deleted"
-        />
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={onlyEdited}
-              onChange={(e) => setOnlyEdited(e.target.checked)}
-            />
-          }
-          label="Only Edited"
-        />
+          <Box sx={{ flex: 1 }} />
 
-        <Divider sx={{ my: 1 }} />
-        <Stack spacing={1}>
-          <Tooltip title="Export the visible list (after filters)">
-            <Button startIcon={<DownloadIcon />} variant="outlined" onClick={exportCSV}>
-              Export CSV
+          {/* Archive mode buttons */}
+          {isArchiveMode ? (
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<RefreshIcon />}
+              onClick={() => attachStream("month")}
+            >
+              Back to Live
             </Button>
+          ) : (
+            <>
+              <Button
+                size="small"
+                variant="outlined"
+                color="warning"
+                onClick={() => attachStream("all")}
+              >
+                Load Archive
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                color="secondary"
+                onClick={() => fetchAllTransactions(false)}
+              >
+                Load All Filtered
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                color="warning"
+                onClick={() => fetchAllTransactions(true)}
+              >
+                Load ALL
+              </Button>
+            </>
+          )}
+
+          <Tooltip title="Reset filters">
+            <IconButton size="small" onClick={resetFilters}>
+              <ClearAllIcon />
+            </IconButton>
           </Tooltip>
-          <Button variant="text" onClick={resetFilters}>
-            Reset filters
+
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<DownloadIcon />}
+            onClick={exportCSV}
+          >
+            CSV
           </Button>
         </Stack>
+      </Paper>
 
-        <Divider sx={{ my: 2 }} />
-
-        {/* quick totals */}
-        <Box sx={{ display: "grid", gap: 0.5 }}>
-          <Typography variant="caption" sx={{ opacity: 0.7 }}>
-            Visible Totals
-          </Typography>
-          <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-            <Typography>Sales</Typography>
-            <Typography>{currency(totals.sales)}</Typography>
-          </Box>
-          <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-            <Typography>Expenses</Typography>
-            <Typography>{currency(totals.expenses)}</Typography>
-          </Box>
-          <Divider sx={{ my: 0.5 }} />
-          <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-            <Typography variant="subtitle2">Net</Typography>
-            <Typography variant="subtitle2">{currency(totals.net)}</Typography>
-          </Box>
-        </Box>
-      </Card>
-
-      {/* RIGHT: Table (WEB) */}
-      <Paper
-        sx={{
-          flex: 1,
-          minWidth: 0,
-          display: { xs: "none", sm: "flex" }, // unchanged on web
-          flexDirection: "column",
-          position: "relative"
-        }}
-      >
-        {loadingMore && (
-          <LinearProgress
-            sx={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              height: 3,
-              zIndex: 10
-            }}
-          />
-        )}
-        <PageHeader
-          title="Transaction Log"
-          subtitle="Audit trail of all recorded sales and expenses."
-          actions={
-            <>
-              {selectedIds.length > 0 && (
-                <Stack direction="row" spacing={1}>
-                  <Typography variant="body2" sx={{ alignSelf: 'center', mr: 1 }}>{selectedIds.length} selected</Typography>
-                  <Button size="small" variant="outlined" onClick={openBulkDateDialog}>
-                    Edit Dates
-                  </Button>
-                  <Button size="small" variant="outlined" color="warning" onClick={bulkSoftDelete}>
-                    Soft Delete
-                  </Button>
-                  <Button size="small" variant="contained" color="error" onClick={bulkHardDelete}>
-                    Hard Delete
-                  </Button>
-                  <Button size="small" onClick={clearSelection}>
-                    Clear
-                  </Button>
-                </Stack>
-              )}
-              {selectedIds.length === 0 && (
-                <Stack direction="row" spacing={1}>
-                  <Typography variant="body2" sx={{ alignSelf: 'center', opacity: 0.7, mr: 1 }}>
-                    {rows.length.toLocaleString()} rows
-                  </Typography>
-                  {rows.length > 0 && (
-                    <Button size="small" onClick={selectAllVisible}>
-                      Select All
-                    </Button>
-                  )}
-                </Stack>
-              )}
-            </>
-          }
-        />
-
+      {/* Table */}
+      <Paper sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        {loadingMore && <LinearProgress />}
         <TableContainer sx={{ flex: 1, minHeight: 0 }}>
           <Table size="small" stickyHeader>
             <TableHead>
               <TableRow>
-                <TableCell padding="checkbox" />
-                <TableCell>ID</TableCell>
-                <TableCell>Time</TableCell>
-                <TableCell>Item</TableCell>
-                <TableCell align="right">Qty</TableCell>
-                <TableCell align="right">Price</TableCell>
-                <TableCell align="right">Total</TableCell>
-                <TableCell>Identifier (Type / Staff / Customer)</TableCell>
-                <TableCell>Notes</TableCell>
-                <TableCell>Staff Email</TableCell>
-                <TableCell>Shift ID</TableCell>
-                <TableCell align="center">Deleted</TableCell>
-                <TableCell>Deleted By</TableCell>
-                <TableCell>Delete Reason</TableCell>
-                <TableCell align="center">Edited</TableCell>
-                <TableCell>Edited By</TableCell>
-                <TableCell>Edit Reason</TableCell>
-                <TableCell>Last Updated</TableCell>
-                <TableCell>Source</TableCell>
-                <TableCell align="center">Admin Added</TableCell>
-                <TableCell align="center">Order #</TableCell>
-                <TableCell align="right">Controls</TableCell>
+                <TableCell padding="checkbox">
+                  <Checkbox
+                    size="small"
+                    checked={rows.length > 0 && selectedIds.length === rows.length}
+                    indeterminate={selectedIds.length > 0 && selectedIds.length < rows.length}
+                    onChange={() => selectedIds.length === rows.length ? clearSelection() : selectAllVisible()}
+                  />
+                </TableCell>
+                <TableCell>Date / Time</TableCell>
+                <TableCell>Type</TableCell>
+                <TableCell>Description</TableCell>
+                <TableCell>Staff</TableCell>
+                <TableCell>Shift</TableCell>
+                <TableCell>Order #</TableCell>
+                <TableCell align="right">Amount</TableCell>
+                <TableCell>Method</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {rows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={21}>No transactions for the current filters.</TableCell>
+                  <TableCell colSpan={11} sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
+                    No transactions for the current filters.
+                  </TableCell>
                 </TableRow>
               ) : (
                 rows.map((r) => (
-                  <TableRow key={r.id} hover sx={{ opacity: r.isDeleted ? 0.55 : 1 }}>
+                  <TableRow key={r.id} hover sx={{ opacity: r.isDeleted ? 0.5 : 1 }}>
                     <TableCell padding="checkbox">
                       <Checkbox
                         size="small"
@@ -1153,77 +1042,56 @@ const Transactions = ({ showSnackbar }) => {
                         onChange={() => toggleSelect(r.id)}
                       />
                     </TableCell>
-                    <TableCell sx={{ fontFamily: "monospace", fontWeight: "bold" }}>
-                      {r.displayId || r.id?.slice(-6).toUpperCase()}
+                    <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                      {fmtDateTime(r.timestamp)}
                     </TableCell>
-                    <TableCell>{fmtDateTime(r.timestamp)}</TableCell>
-                    <TableCell>{r.item}</TableCell>
-                    <TableCell align="right">{r.quantity}</TableCell>
-                    <TableCell align="right">{currency(r.price)}</TableCell>
-                    <TableCell align="right">{currency(r.total)}</TableCell>
-                    <TableCell>{identifierText(r)}</TableCell>
-                    <TableCell
-                      sx={{
-                        maxWidth: 320,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {r.notes || ""}
+                    <TableCell>
+                      <Chip
+                        label={
+                          r.item === 'Expenses' ? 'Expense'
+                          : r.item === 'New Debt' ? 'Debt'
+                          : r.item === 'Paid Debt' ? 'Paid Debt'
+                          : 'Sale'
+                        }
+                        size="small"
+                        color={
+                          r.item === 'Expenses' ? 'warning'
+                          : r.item?.includes('Debt') ? 'secondary'
+                          : 'success'
+                        }
+                        variant="outlined"
+                      />
                     </TableCell>
-                    <TableCell>{r.staffEmail || ""}</TableCell>
-                    <TableCell>{r.shiftId || ""}</TableCell>
-                    <TableCell align="center">{r.isDeleted ? "Yes" : "No"}</TableCell>
-                    <TableCell>{r.deletedBy || ""}</TableCell>
-                    <TableCell
-                      sx={{
-                        maxWidth: 220,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {r.deleteReason || ""}
+                    <TableCell sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {r.item === 'Expenses'
+                        ? `${r.expenseType || ''}${r.expenseStaffName ? ' · ' + r.expenseStaffName : ''}`
+                        : `${r.item}${r.customerName ? ' · ' + r.customerName : ''}${r.quantity > 1 ? ' (×' + r.quantity + ')' : ''}`
+                      }
                     </TableCell>
-                    <TableCell align="center">{r.isEdited ? "Yes" : "No"}</TableCell>
-                    <TableCell>{r.editedBy || ""}</TableCell>
-                    <TableCell
-                      sx={{
-                        maxWidth: 220,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {r.editReason || ""}
+                    <TableCell>
+                      {userMap[r.staffEmail] || r.staffEmail || '—'}
                     </TableCell>
-                    <TableCell>{fmtDateTime(r.lastUpdatedAt)}</TableCell>
-                    <TableCell>{r.source || ""}</TableCell>
-                    <TableCell align="center">{r.addedByAdmin ? "Yes" : "No"}</TableCell>
-                    {/* NEW COLUMN: Order # */}
-                    <TableCell align="center">
-                      {r.orderNumber ? (
-                        <Chip
-                          label={r.orderNumber}
-                          size="small"
-                          variant="outlined"
-                          onClick={() => handleReprint(r)}
-                          icon={<PrintIcon fontSize="small" />}
-                          clickable
-                        />
-                      ) : "—"}
+                    <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                      {shiftOptions.find(s => s.id === r.shiftId)?.displayId || (r.shiftId ? r.shiftId.slice(-8).toUpperCase() : '—')}
                     </TableCell>
-                    <TableCell align="right">
-                      <Tooltip title="Print Receipt (Thermal)">
-                        <IconButton size="small" onClick={() => handleReprint(r)}>
-                          <PrintIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Print Service Invoice (8.5x11)">
-                        <IconButton size="small" onClick={() => handlePrintInvoice(r)} sx={{ color: 'primary.main' }}>
-                          <PrintIcon fontSize="small" />
-                          <Typography variant="caption" sx={{ fontSize: '10px', fontWeight: 'bold', ml: 0.5 }}>A4</Typography>
+                    <TableCell>
+                      {r.orderNumber
+                        ? <Chip label={r.orderNumber} size="small" variant="outlined" />
+                        : '—'
+                      }
+                    </TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 600 }}>
+                      {currency(r.total)}
+                    </TableCell>
+                    <TableCell>{r.paymentMethod || '—'}</TableCell>
+                    <TableCell>
+                      {r.isDeleted && <Chip label="Deleted" size="small" color="error" />}
+                      {!r.isDeleted && r.isEdited && <Chip label="Edited" size="small" color="info" />}
+                    </TableCell>
+                    <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                      <Tooltip title="View Details">
+                        <IconButton size="small" onClick={() => openDetail(r)}>
+                          <VisibilityIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
                       <Tooltip title="Edit">
@@ -1231,7 +1099,12 @@ const Transactions = ({ showSnackbar }) => {
                           <EditIcon fontSize="inherit" />
                         </IconButton>
                       </Tooltip>
-                      <Tooltip title="Soft delete">
+                      <Tooltip title="Print Receipt">
+                        <IconButton size="small" onClick={() => handleReprint(r)}>
+                          <PrintIcon fontSize="inherit" />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Soft Delete">
                         <span>
                           <IconButton
                             size="small"
@@ -1243,7 +1116,7 @@ const Transactions = ({ showSnackbar }) => {
                           </IconButton>
                         </span>
                       </Tooltip>
-                      <Tooltip title="Hard delete (permanent)">
+                      <Tooltip title="Hard Delete">
                         <IconButton size="small" color="error" onClick={() => hardDelete(r)}>
                           <DeleteForeverIcon fontSize="inherit" />
                         </IconButton>
@@ -1256,501 +1129,218 @@ const Transactions = ({ showSnackbar }) => {
           </Table>
         </TableContainer>
 
-        {hasMore && liveMode !== "month" && (
+        {/* Load More */}
+        {hasMore && liveMode !== 'month' && (
           <Box sx={{ p: 2, display: 'flex', justifyContent: 'center', borderTop: '1px solid', borderColor: 'divider' }}>
             <Button
               variant="outlined"
               size="small"
-              onClick={() => fetchNextPage(false, liveMode === "all")}
+              onClick={() => fetchNextPage(false, liveMode === 'all')}
               disabled={loadingMore}
               startIcon={loadingMore ? <CircularProgress size={16} color="inherit" /> : null}
             >
-              {loadingMore ? "Loading..." : "Load More Transactions"}
+              {loadingMore ? 'Loading...' : 'Load More'}
             </Button>
           </Box>
         )}
       </Paper>
 
-      {/* --------- MOBILE LAYOUT --------- */}
-      <Box
-        sx={{
-          display: { xs: "flex", sm: "none" },
-          flexDirection: "column",
-          gap: 1.25,
-          height: "100%",
-          overflowY: "auto",
-          WebkitOverflowScrolling: "touch",
-          pb: "calc(env(safe-area-inset-bottom, 0) + 8px)",
-        }}
+      {/* Detail Drawer */}
+      <DetailDrawer
+        open={detailOpen}
+        onClose={() => setDetailOpen(false)}
+        title={detailRow?.orderNumber || detailRow?.displayId || 'Transaction Detail'}
+        subtitle={detailRow ? fmtDateTime(detailRow.timestamp) : ''}
+        actions={
+          <>
+            <Button size="small" onClick={() => { setDetailOpen(false); openEdit(detailRow); }}>Edit</Button>
+            <Button size="small" onClick={() => handleReprint(detailRow)}>Print Receipt</Button>
+            <Button size="small" onClick={() => handlePrintInvoice(detailRow)}>Print Invoice</Button>
+          </>
+        }
       >
-        {/* GROUP 1: Dates & Range */}
-        <Card
-          ref={datesRef}
-          sx={{
-            p: 1,
-            overflow: "visible",
-            position: "relative",
-            mb: datesOpen ? 1.25 : 1,
-          }}
-        >
-          <Box sx={{ display: "flex", alignItems: "center" }}>
-            <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
-              {liveMode === "all" ? "All Time" : "Date Range"}
-            </Typography>
-            <IconButton size="small" onClick={() => setDatesOpen((v) => !v)}>
-              {datesOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-            </IconButton>
-          </Box>
-          <Collapse in={datesOpen} unmountOnExit={false} timeout={250} sx={{ overflow: "visible" }}>
-            <Box sx={{ pt: 1 }}>
-              <Stack spacing={1.25} sx={{ opacity: liveMode === "all" || liveMode === "archive_all" ? 0.6 : 1 }}>
-                <TextField
-                  label="Start"
-                  type="date"
-                  value={start}
-                  onChange={(e) => setStart(e.target.value)}
-                  InputLabelProps={{ shrink: true }}
-                  disabled={liveMode === "all" || liveMode === "archive_all"}
-                  fullWidth
-                  size="small"
-                />
-                <TextField
-                  label="End"
-                  type="date"
-                  value={end}
-                  onChange={(e) => setEnd(e.target.value)}
-                  InputLabelProps={{ shrink: true }}
-                  disabled={liveMode === "all" || liveMode === "archive_all"}
-                  fullWidth
-                  size="small"
-                />
-                <Stack direction="column" spacing={1}>
-                  {liveMode === "all" || liveMode === "archive_all" || liveMode === "archive" ? (
-                    <Button
-                      startIcon={<RefreshIcon />}
-                      variant="outlined"
-                      onClick={() => attachStream("month")}
-                      fullWidth
-                      size="small"
-                    >
-                      Back to Month
-                    </Button>
-                  ) : (
-                    <>
-                      <Button
-                        startIcon={<ClearAllIcon />}
-                        variant="outlined"
-                        color="warning"
-                        onClick={() => attachStream("all")}
-                        fullWidth
-                        size="small"
-                      >
-                        Load Archive
-                      </Button>
-                      <Button
-                        variant="contained"
-                        color="secondary"
-                        onClick={() => fetchAllTransactions(false)}
-                        fullWidth
-                        size="small"
-                      >
-                        Load All Filtered
-                      </Button>
-                      <Button
-                        variant="contained"
-                        color="warning"
-                        onClick={() => fetchAllTransactions(true)}
-                        fullWidth
-                        size="small"
-                      >
-                        Load ALL TRANSACTIONS
-                      </Button>
-                    </>
-                  )}
-                </Stack>
-              </Stack>
-            </Box>
-          </Collapse>
-        </Card>
-
-        {/* GROUP 2: Staff / Shift / Services */}
-        <Card
-          sx={{
-            p: 1,
-            overflow: "visible",
-            position: "relative",
-            mb: peopleOpen ? 1.25 : 1,
-          }}
-        >
-          <Box sx={{ display: "flex", alignItems: "center" }}>
-            <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
-              Staff • Shift • Services
-            </Typography>
-            <IconButton size="small" onClick={() => setPeopleOpen((v) => !v)}>
-              {peopleOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-            </IconButton>
-          </Box>
-          <Collapse in={peopleOpen} unmountOnExit={false} timeout={250} sx={{ overflow: "visible" }}>
-            <Stack spacing={1.25} sx={{ pt: 1 }}>
-              <FormControl fullWidth size="small">
-                <InputLabel>Staff</InputLabel>
-                <Select
-                  label="Staff"
-                  value={staffEmail}
-                  onChange={(e) => setStaffEmail(e.target.value)}
-                >
-                  <MenuItem value="">All staff</MenuItem>
-                  {staffOptions.map((s) => (
-                    <MenuItem key={s.email} value={s.email}>
-                      {s.name} — {s.email}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-
-              <FormControl fullWidth size="small">
-                <InputLabel>Shift</InputLabel>
-                <Select
-                  label="Shift"
-                  value={shiftId}
-                  onChange={(e) => setShiftId(e.target.value)}
-                >
-                  <MenuItem value="">All shifts</MenuItem>
-                  {shiftOptions.map((s) => (
-                    <MenuItem key={s.id} value={s.id}>
-                      {s.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-
-              <FormControl fullWidth size="small">
-                <InputLabel>Services</InputLabel>
-                <Select
-                  multiple
-                  label="Services"
-                  value={servicesFilter}
-                  onChange={(e) => setServicesFilter(e.target.value)}
-                  renderValue={(selected) => selected.join(", ")}
-                >
-                  {serviceItems.map((svc) => (
-                    <MenuItem key={svc} value={svc}>
-                      <Checkbox checked={servicesFilter.indexOf(svc) > -1} />
-                      {svc}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+        {detailRow && (
+          <Stack spacing={2.5}>
+            {/* Type + Status chips */}
+            <Stack direction="row" spacing={1} flexWrap="wrap">
+              <Chip label={detailRow.item} size="small" />
+              {detailRow.paymentMethod && <Chip label={detailRow.paymentMethod} size="small" variant="outlined" />}
+              {detailRow.isDeleted && <Chip label="Deleted" size="small" color="error" />}
+              {detailRow.isEdited && <Chip label="Edited" size="small" color="info" />}
             </Stack>
-          </Collapse>
-        </Card>
 
-        {/* GROUP 3: Other Controls */}
-        <Card
-          sx={{
-            p: 1,
-            overflow: "visible",
-            position: "relative",
-            mb: otherOpen ? 1.25 : 1,
-          }}
-        >
-          <Box sx={{ display: "flex", alignItems: "center" }}>
-            <Typography variant="subtitle1" fontWeight={600} sx={{ flexGrow: 1 }}>
-              Other Controls
-            </Typography>
-            <IconButton size="small" onClick={() => setOtherOpen((v) => !v)}>
-              {otherOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-            </IconButton>
-          </Box>
-          <Collapse in={otherOpen} unmountOnExit={false} timeout={250} sx={{ overflow: "visible" }}>
-            <Stack spacing={1} sx={{ pt: 1 }}>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={showDeleted}
-                    onChange={(e) => setShowDeleted(e.target.checked)}
-                    size="small"
-                  />
-                }
-                label="Show Deleted"
-              />
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={onlyDeleted}
-                    onChange={(e) => setOnlyDeleted(e.target.checked)}
-                    size="small"
-                  />
-                }
-                label="Only Deleted"
-              />
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={onlyEdited}
-                    onChange={(e) => setOnlyEdited(e.target.checked)}
-                    size="small"
-                  />
-                }
-                label="Only Edited"
-              />
-
-              {/* Bulk actions */}
-              {selectedIds.length > 0 ? (
-                <Stack direction="row" spacing={1}>
-                  <Button size="small" variant="outlined" onClick={openBulkDateDialog} fullWidth>
-                    Edit Dates
-                  </Button>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    color="warning"
-                    onClick={bulkSoftDelete}
-                    fullWidth
-                  >
-                    Soft Delete
-                  </Button>
-                  <Button
-                    size="small"
-                    variant="contained"
-                    color="error"
-                    onClick={bulkHardDelete}
-                    fullWidth
-                  >
-                    Hard Delete
-                  </Button>
-                </Stack>
-              ) : (
-                <Stack direction="row" spacing={1}>
-                  <Button size="small" onClick={selectAllVisible} fullWidth>
-                    Select All Visible
-                  </Button>
-                  <Button size="small" onClick={clearSelection} fullWidth>
-                    Clear Selection
-                  </Button>
-                </Stack>
-              )}
-
-              <Stack direction="row" spacing={1}>
-                <Button
-                  startIcon={<DownloadIcon />}
-                  variant="outlined"
-                  size="small"
-                  onClick={exportCSV}
-                  fullWidth
-                >
-                  Export CSV
-                </Button>
-                <Button variant="text" size="small" onClick={resetFilters} fullWidth>
-                  Reset
-                </Button>
-              </Stack>
-
-              {/* Visible totals */}
-              <Box sx={{ display: "grid", gap: 0.5, mt: 0.5 }}>
-                <Typography variant="caption" sx={{ opacity: 0.7 }}>
-                  Visible Totals
-                </Typography>
-                <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-                  <Typography>Sales</Typography>
-                  <Typography>{currency(totals.sales)}</Typography>
+            {/* Financials */}
+            <Box>
+              <Typography variant="caption" color="text.secondary">FINANCIALS</Typography>
+              <Box sx={{ mt: 1, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 1 }}>
+                <Box>
+                  <Typography variant="caption" color="text.secondary">Qty</Typography>
+                  <Typography fontWeight={600}>{detailRow.quantity}</Typography>
                 </Box>
-                <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-                  <Typography>Expenses</Typography>
-                  <Typography>{currency(totals.expenses)}</Typography>
+                <Box>
+                  <Typography variant="caption" color="text.secondary">Price</Typography>
+                  <Typography fontWeight={600}>{currency(detailRow.price)}</Typography>
                 </Box>
-                <Divider sx={{ my: 0.5 }} />
-                <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-                  <Typography variant="subtitle2">Net</Typography>
-                  <Typography variant="subtitle2">{currency(totals.net)}</Typography>
+                <Box>
+                  <Typography variant="caption" color="text.secondary">Total</Typography>
+                  <Typography variant="h6" fontWeight={700} color="success.main">{currency(detailRow.total)}</Typography>
                 </Box>
               </Box>
-            </Stack>
-          </Collapse>
-        </Card>
-
-        {/* TABLE (mobile compact) */}
-        <Paper
-          sx={{
-            flex: "1 1 auto",
-            minHeight: 0,
-            display: "flex",
-            flexDirection: "column",
-            position: "relative",
-            zIndex: 0,
-          }}
-        >
-          {loadingMore && (
-            <LinearProgress
-              sx={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                right: 0,
-                height: 3,
-                zIndex: 10
-              }}
-            />
-          )}
-          <Box sx={{ p: 1, pt: 1, display: "flex", alignItems: "center", gap: 1 }}>
-            <Typography variant="subtitle1" fontWeight={600}>
-              Transactions
-            </Typography>
-            <Box sx={{ flexGrow: 1 }} />
-            <Typography variant="caption" sx={{ opacity: 0.7 }}>
-              {rows.length.toLocaleString()} rows
-            </Typography>
-          </Box>
-
-          <TableContainer sx={{ flex: 1, minHeight: 0 }}>
-            <Table
-              size="small"
-              stickyHeader
-              sx={{
-                "& th, & td": {
-                  py: 0.5,
-                  px: 0.75,
-                  borderBottomWidth: 0.5,
-                },
-                "& thead th": {
-                  fontSize: "0.72rem",
-                  whiteSpace: "nowrap",
-                },
-                "& tbody td": {
-                  fontSize: "0.82rem",
-                },
-              }}
-            >
-              <TableHead>
-                <TableRow>
-                  <TableCell padding="checkbox" />
-                  <TableCell>Time</TableCell>
-                  <TableCell>Item</TableCell>
-                  <TableCell align="right">Total</TableCell>
-                  <TableCell align="right">⋯</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {rows.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={5}>No transactions for the current filters.</TableCell>
-                  </TableRow>
-                ) : (
-                  rows.map((r) => (
-                    <TableRow key={r.id} hover sx={{ opacity: r.isDeleted ? 0.55 : 1 }}>
-                      <TableCell padding="checkbox">
-                        <Checkbox
-                          size="small"
-                          checked={selectedIds.includes(r.id)}
-                          onChange={() => toggleSelect(r.id)}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2">
-                          {fmtDateTime(r.timestamp).split(",")[0] || ""}
-                        </Typography>
-                        <Typography variant="caption" sx={{ opacity: 0.8 }}>
-                          {fmtDateTime(r.timestamp).split(",")[1]?.trim() || ""}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
-                          <Typography variant="body2" fontWeight={600}>
-                            {r.item}
-                          </Typography>
-                          {/* Flags */}
-                          {r.isEdited && (
-                            <Typography variant="caption" sx={{ opacity: 0.8 }}>
-                              • Edited
-                            </Typography>
-                          )}
-                          {r.isDeleted && (
-                            <Typography variant="caption" sx={{ opacity: 0.8 }}>
-                              • Deleted
-                            </Typography>
-                          )}
-                        </Box>
-                        <Typography variant="caption" sx={{ display: "block", opacity: 0.8 }}>
-                          {identifierText(r)}
-                        </Typography>
-                        {r.notes && (
-                          <Typography
-                            variant="caption"
-                            sx={{
-                              display: "block",
-                              maxWidth: 260,
-                              whiteSpace: "nowrap",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              opacity: 0.8,
-                            }}
-                            title={r.notes}
-                          >
-                            {r.notes}
-                          </Typography>
-                        )}
-                      </TableCell>
-                      <TableCell align="right">{currency(r.total)}</TableCell>
-                      <TableCell align="right">
-                        <Tooltip title="Edit">
-                          <IconButton size="small" onClick={() => openEdit(r)}>
-                            <EditIcon fontSize="inherit" />
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title="Print Receipt (Thermal)">
-                          <IconButton size="small" onClick={() => handleReprint(r)}>
-                            <PrintIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                        {/* Invoice Button */}
-                        <Tooltip title="Print Service Invoice (8.5x11)">
-                          <IconButton size="small" onClick={() => handlePrintInvoice(r)} sx={{ color: 'primary.main' }}>
-                            <PrintIcon fontSize="small" />
-                            <Typography variant="caption" sx={{ fontSize: '10px', fontWeight: 'bold', ml: 0.5 }}>A4</Typography>
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title="Soft delete">
-                          <span>
-                            <IconButton
-                              size="small"
-                              color="warning"
-                              onClick={() => softDelete(r)}
-                              disabled={r.isDeleted}
-                            >
-                              <DeleteIcon fontSize="inherit" />
-                            </IconButton>
-                          </span>
-                        </Tooltip>
-                        <Tooltip title="Hard delete (permanent)">
-                          <IconButton size="small" color="error" onClick={() => hardDelete(r)}>
-                            <DeleteForeverIcon fontSize="inherit" />
-                          </IconButton>
-                        </Tooltip>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </TableContainer>
-
-          {hasMore && liveMode !== "month" && (
-            <Box sx={{ p: 2, display: 'flex', justifyContent: 'center', borderTop: '1px solid', borderColor: 'divider' }}>
-              <Button
-                variant="outlined"
-                fullWidth
-                onClick={() => fetchNextPage(false, liveMode === "all")}
-                disabled={loadingMore}
-                startIcon={loadingMore ? <CircularProgress size={16} color="inherit" /> : null}
-              >
-                {loadingMore ? "Loading..." : "Load More"}
-              </Button>
             </Box>
-          )}
-        </Paper>
-      </Box>
 
-      {/* EDIT DIALOG (single) */}
+            <Divider />
+
+            {/* References */}
+            <Box>
+              <Typography variant="caption" color="text.secondary">REFERENCES</Typography>
+              <Stack spacing={0.5} sx={{ mt: 1 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Typography variant="body2" color="text.secondary">Order #</Typography>
+                  <Typography variant="body2">{detailRow.orderNumber || '—'}</Typography>
+                </Box>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Typography variant="body2" color="text.secondary">Shift</Typography>
+                  <Typography variant="body2">
+                    {shiftOptions.find(s => s.id === detailRow.shiftId)?.displayId || (detailRow.shiftId ? detailRow.shiftId.slice(-8).toUpperCase() : '—')}
+                  </Typography>
+                </Box>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Typography variant="body2" color="text.secondary">Staff</Typography>
+                  <Typography variant="body2">{userMap[detailRow.staffEmail] || detailRow.staffEmail || '—'}</Typography>
+                </Box>
+              </Stack>
+            </Box>
+
+            {/* Expense details */}
+            {detailRow.item === 'Expenses' && (
+              <>
+                <Divider />
+                <Box>
+                  <Typography variant="caption" color="text.secondary">EXPENSE DETAILS</Typography>
+                  <Stack spacing={0.5} sx={{ mt: 1 }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <Typography variant="body2" color="text.secondary">Type</Typography>
+                      <Typography variant="body2">{detailRow.expenseType || '—'}</Typography>
+                    </Box>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <Typography variant="body2" color="text.secondary">For Staff</Typography>
+                      <Typography variant="body2">{detailRow.expenseStaffName || '—'}</Typography>
+                    </Box>
+                    {detailRow.financialCategory && (
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <Typography variant="body2" color="text.secondary">Category</Typography>
+                        <Typography variant="body2">{detailRow.financialCategory}</Typography>
+                      </Box>
+                    )}
+                  </Stack>
+                </Box>
+              </>
+            )}
+
+            {/* Customer */}
+            {detailRow.customerName && (
+              <>
+                <Divider />
+                <Box>
+                  <Typography variant="caption" color="text.secondary">CUSTOMER</Typography>
+                  <Stack spacing={0.5} sx={{ mt: 1 }}>
+                    <Typography variant="body2">{detailRow.customerName}</Typography>
+                    {detailRow.customerPhone && (
+                      <Typography variant="body2" color="text.secondary">{detailRow.customerPhone}</Typography>
+                    )}
+                  </Stack>
+                </Box>
+              </>
+            )}
+
+            {/* Notes */}
+            {detailRow.notes && (
+              <>
+                <Divider />
+                <Box>
+                  <Typography variant="caption" color="text.secondary">NOTES</Typography>
+                  <Typography variant="body2" sx={{ mt: 0.5 }}>{detailRow.notes}</Typography>
+                </Box>
+              </>
+            )}
+
+            {/* Audit Trail */}
+            <Divider />
+            <Box>
+              <Typography variant="caption" color="text.secondary">AUDIT TRAIL</Typography>
+              <Stack spacing={0.5} sx={{ mt: 1 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Typography variant="body2" color="text.secondary">Created</Typography>
+                  <Typography variant="body2">{fmtDateTime(detailRow.timestamp)}</Typography>
+                </Box>
+                {detailRow.isEdited && (
+                  <>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <Typography variant="body2" color="text.secondary">Edited by</Typography>
+                      <Typography variant="body2">{userMap[detailRow.editedBy] || detailRow.editedBy || '—'}</Typography>
+                    </Box>
+                    {detailRow.editReason && (
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <Typography variant="body2" color="text.secondary">Edit reason</Typography>
+                        <Typography variant="body2">{detailRow.editReason}</Typography>
+                      </Box>
+                    )}
+                  </>
+                )}
+                {detailRow.isDeleted && (
+                  <>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <Typography variant="body2" color="text.secondary">Deleted by</Typography>
+                      <Typography variant="body2">{userMap[detailRow.deletedBy] || detailRow.deletedBy || '—'}</Typography>
+                    </Box>
+                    {detailRow.deleteReason && (
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <Typography variant="body2" color="text.secondary">Delete reason</Typography>
+                        <Typography variant="body2">{detailRow.deleteReason}</Typography>
+                      </Box>
+                    )}
+                  </>
+                )}
+                {detailRow.source && (
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <Typography variant="body2" color="text.secondary">Source</Typography>
+                    <Typography variant="body2">{detailRow.source}</Typography>
+                  </Box>
+                )}
+              </Stack>
+            </Box>
+
+            {/* Danger zone actions */}
+            <Divider />
+            <Stack spacing={1}>
+              {!detailRow.isDeleted && (
+                <Button
+                  fullWidth
+                  variant="outlined"
+                  color="warning"
+                  size="small"
+                  startIcon={<DeleteIcon />}
+                  onClick={() => { setDetailOpen(false); softDelete(detailRow); }}
+                >
+                  Delete (Soft)
+                </Button>
+              )}
+              <Button
+                fullWidth
+                variant="outlined"
+                color="error"
+                size="small"
+                startIcon={<DeleteForeverIcon />}
+                onClick={() => { setDetailOpen(false); hardDelete(detailRow); }}
+              >
+                Permanently Delete
+              </Button>
+            </Stack>
+          </Stack>
+        )}
+      </DetailDrawer>
+
+      {/* EDIT DIALOG (single row) */}
       <Dialog open={editOpen} onClose={closeEdit} fullWidth maxWidth="sm">
         <DialogTitle>Edit Transaction</DialogTitle>
         <DialogContent dividers>
@@ -1763,9 +1353,7 @@ const Transactions = ({ showSnackbar }) => {
                 onChange={(e) => setEditItem(e.target.value)}
               >
                 {serviceItems.map((svc) => (
-                  <MenuItem key={svc} value={svc}>
-                    {svc}
-                  </MenuItem>
+                  <MenuItem key={svc} value={svc}>{svc}</MenuItem>
                 ))}
               </Select>
             </FormControl>
@@ -1780,9 +1368,7 @@ const Transactions = ({ showSnackbar }) => {
                     onChange={(e) => setEditExpenseType(e.target.value)}
                   >
                     {expenseServiceItems.map((t) => (
-                      <MenuItem key={t} value={t}>
-                        {t}
-                      </MenuItem>
+                      <MenuItem key={t} value={t}>{t}</MenuItem>
                     ))}
                   </Select>
                 </FormControl>
@@ -1795,13 +1381,11 @@ const Transactions = ({ showSnackbar }) => {
                       onChange={(e) => setEditExpenseStaffId(e.target.value)}
                     >
                       {staffOptions.length === 0 ? (
-                        <MenuItem value="" disabled>
-                          No staff available
-                        </MenuItem>
+                        <MenuItem value="" disabled>No staff available</MenuItem>
                       ) : (
                         staffOptions.map((s) => (
                           <MenuItem key={s.id} value={s.id}>
-                            {s.name} — {s.email}
+                            {s.fullName} — {s.email}
                           </MenuItem>
                         ))
                       )}
@@ -1811,7 +1395,6 @@ const Transactions = ({ showSnackbar }) => {
               </>
             )}
 
-            {/* Date & Time editors */}
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
               <TextField
                 label="Date"
@@ -1857,9 +1440,7 @@ const Transactions = ({ showSnackbar }) => {
         </DialogContent>
         <DialogActions>
           <Button onClick={closeEdit}>Cancel</Button>
-          <Button variant="contained" onClick={saveEdit}>
-            Save
-          </Button>
+          <Button variant="contained" onClick={saveEdit}>Save</Button>
         </DialogActions>
       </Dialog>
 
@@ -1883,12 +1464,11 @@ const Transactions = ({ showSnackbar }) => {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setBulkOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={saveBulkDate}>
-            Save
-          </Button>
+          <Button variant="contained" onClick={saveBulkDate}>Save</Button>
         </DialogActions>
       </Dialog>
-      {/* Confirmation Dialog */}
+
+      {/* Confirmation / Reason Dialog */}
       <ConfirmationReasonDialog
         open={confirmDialog.open}
         onClose={() => setConfirmDialog(prev => ({ ...prev, open: false }))}
@@ -1902,4 +1482,5 @@ const Transactions = ({ showSnackbar }) => {
     </Box>
   );
 };
+
 export default React.memo(Transactions);
