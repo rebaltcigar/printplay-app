@@ -11,12 +11,18 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import ReorderIcon from '@mui/icons-material/Reorder';
 import SaveIcon from '@mui/icons-material/Save';
+import CategoryIcon from '@mui/icons-material/Category';
+import StoreIcon from '@mui/icons-material/Store';
+import AssignmentIcon from '@mui/icons-material/Assignment';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import {
   collection, addDoc, updateDoc, deleteDoc, doc, query, where, onSnapshot, writeBatch
 } from 'firebase/firestore';
 import { db } from '../../firebase';
 import ConfirmationReasonDialog from '../ConfirmationReasonDialog';
 import PageHeader from '../common/PageHeader';
+import SummaryCards from '../common/SummaryCards';
+import DetailDrawer from '../common/DetailDrawer';
 
 export default function ServiceCatalog({ showSnackbar }) {
   const [items, setItems] = useState([]);
@@ -88,6 +94,41 @@ export default function ServiceCatalog({ showSnackbar }) {
 
     return result;
   }, [items, editOrderMode, orderedItems]);
+
+  const summaryCards = useMemo(() => {
+    const totalItems = items.length;
+    const serviceCount = items.filter(i => i.type === 'service').length;
+    const retailCount = items.filter(i => i.type === 'retail').length;
+    const inactiveCount = items.filter(i => !i.active).length;
+
+    return [
+      {
+        label: "Total Items",
+        value: String(totalItems),
+        icon: <CategoryIcon />,
+        color: "primary.main",
+        highlight: true
+      },
+      {
+        label: "Services",
+        value: String(serviceCount),
+        icon: <AssignmentIcon />,
+        color: "info.main"
+      },
+      {
+        label: "Retail Goods",
+        value: String(retailCount),
+        icon: <StoreIcon />,
+        color: "success.main"
+      },
+      {
+        label: "Inactive",
+        value: String(inactiveCount),
+        icon: <VisibilityOffIcon />,
+        color: inactiveCount > 0 ? "warning.main" : "text.secondary"
+      }
+    ];
+  }, [items]);
 
   const resetAndOpen = () => {
     setEditing(null);
@@ -279,6 +320,8 @@ export default function ServiceCatalog({ showSnackbar }) {
         }
       />
 
+      <SummaryCards cards={summaryCards} sx={{ mb: 3 }} />
+
       <Card>
         <CardContent>
           <TableContainer>
@@ -352,59 +395,97 @@ export default function ServiceCatalog({ showSnackbar }) {
         </CardContent>
       </Card>
 
-      <Dialog open={open} onClose={close} fullWidth maxWidth="sm">
-        <DialogTitle>{editing ? 'Edit Item' : 'Add Item'}</DialogTitle>
-        <DialogContent dividers>
-          <Stack spacing={2} sx={{ pt: 1 }}>
-            <FormControl fullWidth>
-              <InputLabel>Parent Item (For grouping)</InputLabel>
-              <Select value={form.parentServiceId || ''} label="Parent Item (For grouping)" onChange={handleParentChange}>
-                <MenuItem value=""><em>None (Top Level)</em></MenuItem>
-                {items.filter(i => !i.parentServiceId).map(p => <MenuItem key={p.id} value={p.id}>{p.serviceName}</MenuItem>)}
-              </Select>
-            </FormControl>
+      {/* Add/Edit Item DetailDrawer */}
+      <DetailDrawer
+        open={open}
+        onClose={close}
+        title={editing ? 'Edit Catalog Item' : 'Add New Catalog Item'}
+        subtitle={editing ? editing.serviceName : 'Configure a new service or retail product'}
+        actions={
+          <>
+            <Button onClick={close}>Cancel</Button>
+            <Button variant="contained" onClick={save}>Save Catalog Item</Button>
+          </>
+        }
+      >
+        <Stack spacing={3}>
+          <FormControl fullWidth>
+            <InputLabel>Parent Item (For grouping)</InputLabel>
+            <Select value={form.parentServiceId || ''} label="Parent Item (For grouping)" onChange={handleParentChange}>
+              <MenuItem value=""><em>None (Top Level)</em></MenuItem>
+              {items.filter(i => !i.parentServiceId && i.id !== editing?.id).map(p => (
+                <MenuItem key={p.id} value={p.id}>{p.serviceName}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
 
-            <TextField label="Item Name" value={form.serviceName} onChange={(e) => onChange('serviceName', e.target.value)} fullWidth autoFocus />
+          <TextField
+            label="Item Name"
+            value={form.serviceName}
+            onChange={(e) => onChange('serviceName', e.target.value)}
+            fullWidth
+            autoFocus
+          />
 
-            <Stack direction="row" spacing={2}>
-              <TextField label="Price (Retail)" type="number" fullWidth value={form.price} onChange={(e) => onChange('price', e.target.value)} />
-              {/* Cost Price is hidden here, manage it in Inventory */}
-            </Stack>
+          <TextField
+            label="Price (Retail)"
+            type="number"
+            fullWidth
+            value={form.price}
+            onChange={(e) => onChange('price', e.target.value)}
+          />
 
-            <FormControl fullWidth>
-              <InputLabel>Type</InputLabel>
-              <Select value={form.type} label="Type" onChange={(e) => onChange('type', e.target.value)}>
-                <MenuItem value="service">Service (Labor/Time)</MenuItem>
-                <MenuItem value="retail">Retail (Physical Good)</MenuItem>
-              </Select>
-            </FormControl>
+          <FormControl fullWidth>
+            <InputLabel>Type</InputLabel>
+            <Select value={form.type} label="Type" onChange={(e) => onChange('type', e.target.value)}>
+              <MenuItem value="service">Service (Labor/Time)</MenuItem>
+              <MenuItem value="retail">Retail (Physical Good)</MenuItem>
+            </Select>
+          </FormControl>
 
-            {form.type === 'retail' && (
-              <Card variant="outlined" sx={{ p: 2, bgcolor: '#f9f9f9' }}>
-                <Typography variant="subtitle2" gutterBottom>Quick Inventory Setup</Typography>
-                <Typography variant="caption" display="block" mb={1} color="text.secondary">
-                  Use Inventory Tab for full management (Restocking, Audits).
-                </Typography>
-                <FormControlLabel control={<Checkbox checked={form.trackStock} onChange={(e) => onChange('trackStock', e.target.checked)} />} label="Track Stock Levels" />
+          {form.type === 'retail' && (
+            <Box sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+              <Typography variant="subtitle2" gutterBottom>INVENTORY SETTINGS</Typography>
+              <FormControlLabel
+                control={<Checkbox checked={form.trackStock} onChange={(e) => onChange('trackStock', e.target.checked)} />}
+                label="Track Stock Levels"
+              />
 
-                {form.trackStock && (
-                  <Stack direction="row" spacing={2} sx={{ mt: 1 }}>
-                    <TextField label="Initial Stock" type="number" fullWidth size="small" value={form.stockCount} onChange={(e) => onChange('stockCount', e.target.value)} />
-                    <TextField label="Low Stock Alert" type="number" fullWidth size="small" value={form.lowStockThreshold} onChange={(e) => onChange('lowStockThreshold', e.target.value)} />
-                  </Stack>
-                )}
-              </Card>
-            )}
+              {form.trackStock && (
+                <Stack direction="row" spacing={2} sx={{ mt: 2 }}>
+                  <TextField
+                    label="Current Stock"
+                    type="number"
+                    fullWidth
+                    size="small"
+                    value={form.stockCount}
+                    onChange={(e) => onChange('stockCount', e.target.value)}
+                  />
+                  <TextField
+                    label="Low Stock Alert"
+                    type="number"
+                    fullWidth
+                    size="small"
+                    value={form.lowStockThreshold}
+                    onChange={(e) => onChange('lowStockThreshold', e.target.value)}
+                  />
+                </Stack>
+              )}
+            </Box>
+          )}
 
-            <FormControlLabel control={<Checkbox checked={form.active} onChange={(e) => onChange('active', e.target.checked)} />} label="Active (Show in POS)" />
-            <FormControlLabel control={<Checkbox checked={form.adminOnly} onChange={(e) => onChange('adminOnly', e.target.checked)} />} label="Admin Allowed Only" />
+          <Stack direction="row" spacing={2}>
+            <FormControlLabel
+              control={<Checkbox checked={form.active} onChange={(e) => onChange('active', e.target.checked)} />}
+              label="Active (Show in POS)"
+            />
+            <FormControlLabel
+              control={<Checkbox checked={form.adminOnly} onChange={(e) => onChange('adminOnly', e.target.checked)} />}
+              label="Admin Only"
+            />
           </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={close}>Cancel</Button>
-          <Button variant="contained" onClick={save}>Save Catalog Item</Button>
-        </DialogActions>
-      </Dialog>
+        </Stack>
+      </DetailDrawer>
 
       {/* Confirmation Dialog */}
       <ConfirmationReasonDialog

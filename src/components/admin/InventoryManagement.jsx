@@ -11,6 +11,12 @@ import { db, auth } from '../../firebase';
 import { fmtPeso } from '../../utils/analytics';
 import { generateDisplayId } from '../../utils/idGenerator';
 import PageHeader from '../common/PageHeader';
+import SummaryCards from '../common/SummaryCards';
+import DetailDrawer from '../common/DetailDrawer';
+import InventoryIcon from '@mui/icons-material/Inventory';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import TollIcon from '@mui/icons-material/Toll';
+import SellIcon from '@mui/icons-material/Sell';
 
 export default function InventoryManagement({ showSnackbar }) {
     const [items, setItems] = useState([]);
@@ -121,6 +127,43 @@ export default function InventoryManagement({ showSnackbar }) {
         setRestockForm({ ...restockForm, qtyAdded: val, totalCost: (Number(val) * unit).toFixed(2) });
     };
 
+    // --- Summary Calculations ---
+    const summaryCards = useMemo(() => {
+        const totalValue = items.reduce((acc, i) => acc + ((i.stockCount || 0) * (i.costPrice || 0)), 0);
+        const lowStockCount = items.filter(i => (i.stockCount || 0) <= (i.lowStockThreshold || 5)).length;
+        const totalItems = items.length;
+        const totalRetailValue = items.reduce((acc, i) => acc + ((i.stockCount || 0) * (i.price || 0)), 0);
+
+        return [
+            {
+                label: "Total Value (Cost)",
+                value: fmtPeso(totalValue),
+                icon: <TollIcon />,
+                color: "primary.main",
+                highlight: true
+            },
+            {
+                label: "Est. Retail Value",
+                value: fmtPeso(totalRetailValue),
+                icon: <SellIcon />,
+                color: "success.main"
+            },
+            {
+                label: "Tracked Items",
+                value: String(totalItems),
+                icon: <InventoryIcon />,
+                color: "info.main"
+            },
+            {
+                label: "Low Stock Alert",
+                value: String(lowStockCount),
+                icon: <WarningAmberIcon />,
+                color: lowStockCount > 0 ? "error.main" : "text.secondary",
+                highlight: lowStockCount > 0
+            }
+        ];
+    }, [items]);
+
     return (
         <Box sx={{ p: 3 }}>
             <PageHeader
@@ -133,16 +176,7 @@ export default function InventoryManagement({ showSnackbar }) {
                 }
             />
 
-            <Grid container spacing={2} sx={{ mb: 3 }}>
-                <Grid item xs={12} sm={4}>
-                    <Card sx={{ p: 2 }}>
-                        <Typography variant="caption" color="text.secondary">Total Inventory Value</Typography>
-                        <Typography variant="h6" fontWeight="bold">
-                            {fmtPeso(items.reduce((acc, i) => acc + ((i.stockCount || 0) * (i.costPrice || 0)), 0))}
-                        </Typography>
-                    </Card>
-                </Grid>
-            </Grid>
+            <SummaryCards cards={summaryCards} loading={loading} sx={{ mb: 3 }} />
 
             <Card>
                 <TableContainer>
@@ -208,60 +242,86 @@ export default function InventoryManagement({ showSnackbar }) {
                 </TableContainer>
             </Card>
 
-            {/* Restock Dialog */}
-            <Dialog open={restockDialog.open} onClose={() => setRestockDialog({ open: false, item: null })} maxWidth="xs" fullWidth>
-                <DialogTitle>Restock Inventory</DialogTitle>
-                <DialogContent>
-                    <Box sx={{ mb: 2 }}>
-                        <Typography variant="subtitle1" fontWeight="bold">{restockDialog.item?.serviceName}</Typography>
-                        <Typography variant="body2" color="text.secondary">Current Stock: {restockDialog.item?.stockCount}</Typography>
+            {/* Restock DetailDrawer */}
+            <DetailDrawer
+                open={restockDialog.open}
+                onClose={() => setRestockDialog({ open: false, item: null })}
+                title="Restock Inventory"
+                subtitle={restockDialog.item?.serviceName}
+                actions={
+                    <>
+                        <Button onClick={() => setRestockDialog({ open: false, item: null })}>Cancel</Button>
+                        <Button variant="contained" onClick={handlePerformRestock}>Confirm Restock</Button>
+                    </>
+                }
+            >
+                <Stack spacing={3}>
+                    <Box sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>CURRENT STATUS</Typography>
+                        <Stack direction="row" justifyContent="space-between">
+                            <Typography variant="body2">Current Stock:</Typography>
+                            <Typography variant="body2" fontWeight="bold">{restockDialog.item?.stockCount || 0} units</Typography>
+                        </Stack>
+                        <Stack direction="row" justifyContent="space-between">
+                            <Typography variant="body2">Current Cost:</Typography>
+                            <Typography variant="body2" fontWeight="bold">{fmtPeso(restockDialog.item?.costPrice || 0)}</Typography>
+                        </Stack>
                     </Box>
-                    <Stack spacing={2}>
+
+                    <TextField
+                        label="Quantity Added"
+                        type="number"
+                        fullWidth
+                        autoFocus
+                        value={restockForm.qtyAdded}
+                        onChange={e => onQtyChange(e.target.value)}
+                        placeholder="How many units were received?"
+                    />
+
+                    <Stack direction="row" spacing={2}>
                         <TextField
-                            label="Quantity Added"
+                            label="Unit Cost"
                             type="number"
                             fullWidth
-                            autoFocus
-                            value={restockForm.qtyAdded}
-                            onChange={e => onQtyChange(e.target.value)}
+                            value={restockForm.unitCost}
+                            onChange={e => onUnitChange(e.target.value)}
+                            InputProps={{ startAdornment: <InputAdornment position="start">₱</InputAdornment> }}
                         />
-                        <Stack direction="row" spacing={2}>
-                            <TextField
-                                label="Unit Cost"
-                                type="number"
-                                fullWidth
-                                value={restockForm.unitCost}
-                                onChange={e => onUnitChange(e.target.value)}
-                                InputProps={{ startAdornment: <InputAdornment position="start">₱</InputAdornment> }}
-                            />
-                            <TextField
-                                label="Total Cost"
-                                type="number"
-                                fullWidth
-                                value={restockForm.totalCost}
-                                onChange={e => onTotalChange(e.target.value)}
-                                InputProps={{ startAdornment: <InputAdornment position="start">₱</InputAdornment> }}
-                            />
-                        </Stack>
-                        {restockForm.qtyAdded && restockForm.unitCost && (
-                            <Box sx={{ bgcolor: 'action.hover', p: 1, borderRadius: 1 }}>
-                                <Typography variant="caption" display="block">New Weighted Cost will be:</Typography>
-                                {(() => {
-                                    const oldQ = restockDialog.item?.stockCount || 0;
-                                    const oldC = restockDialog.item?.costPrice || 0;
-                                    const newQ = oldQ + Number(restockForm.qtyAdded);
-                                    const newVal = (oldQ * oldC) + Number(restockForm.totalCost);
-                                    return <Typography fontWeight="bold">{fmtPeso(newVal / newQ)}</Typography>
-                                })()}
-                            </Box>
-                        )}
+                        <TextField
+                            label="Total Cost"
+                            type="number"
+                            fullWidth
+                            value={restockForm.totalCost}
+                            onChange={e => onTotalChange(e.target.value)}
+                            InputProps={{ startAdornment: <InputAdornment position="start">₱</InputAdornment> }}
+                        />
                     </Stack>
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setRestockDialog({ open: false, item: null })}>Cancel</Button>
-                    <Button variant="contained" onClick={handlePerformRestock}>Confirm Restock</Button>
-                </DialogActions>
-            </Dialog>
+
+                    {restockForm.qtyAdded && restockForm.unitCost && (
+                        <Box sx={{ p: 2, border: '1px dashed', borderColor: 'divider', borderRadius: 1 }}>
+                            <Typography variant="caption" display="block" color="text.secondary" gutterBottom>
+                                NEW VALUATION (Weighted Average)
+                            </Typography>
+                            {(() => {
+                                const oldQ = restockDialog.item?.stockCount || 0;
+                                const oldC = restockDialog.item?.costPrice || 0;
+                                const newQ = oldQ + Number(restockForm.qtyAdded);
+                                const newVal = (oldQ * oldC) + Number(restockForm.totalCost);
+                                return (
+                                    <Stack direction="row" justifyContent="space-between" alignItems="center">
+                                        <Typography variant="h6" color="primary.main" fontWeight="bold">
+                                            {fmtPeso(newVal / newQ)}
+                                        </Typography>
+                                        <Typography variant="caption" color="text.secondary">
+                                            Per unit
+                                        </Typography>
+                                    </Stack>
+                                );
+                            })()}
+                        </Box>
+                    )}
+                </Stack>
+            </DetailDrawer>
         </Box >
     );
 }

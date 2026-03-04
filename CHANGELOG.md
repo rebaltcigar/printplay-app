@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
  
+## [0.1.26] - 2026-03-04
+
+### UI Standardization
+- **Universal Components**: Standardized internal admin tools to use `SummaryCards` and `DetailDrawer` components.
+- **Inventory Management**: Implemented `SummaryCards` for cost/retail valuation and `DetailDrawer` for restocking.
+- **Service Catalog**: Implemented `SummaryCards` for item type counts and `DetailDrawer` for item management.
+- **Expense Settings**: Implemented `SummaryCards` for OPEX/CAPEX/COGS breakdown and `DetailDrawer` for expense type management.
+- **Visual Cleanup**: Standardized page headers and icon usage across all admin modules.
+
 ## [0.1.25] - 2026-03-04
 
 ### Added

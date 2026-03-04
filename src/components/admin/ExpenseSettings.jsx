@@ -15,6 +15,12 @@ import {
 import { db } from '../../firebase';
 import ConfirmationReasonDialog from '../ConfirmationReasonDialog';
 import PageHeader from '../common/PageHeader';
+import SummaryCards from '../common/SummaryCards';
+import DetailDrawer from '../common/DetailDrawer';
+import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
+import BusinessIcon from '@mui/icons-material/Business';
+import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import HighlightOffIcon from '@mui/icons-material/HighlightOff';
 
 export default function ExpenseSettings({ showSnackbar }) {
     const [types, setTypes] = useState([]);
@@ -47,6 +53,42 @@ export default function ExpenseSettings({ showSnackbar }) {
         });
         return () => unsub();
     }, []);
+
+    const summaryCards = useMemo(() => {
+        const total = types.length;
+        const opexCount = types.filter(t => t.financialCategory === 'OPEX' || !t.financialCategory).length;
+        const capexCount = types.filter(t => t.financialCategory === 'CAPEX').length;
+        const cogsCount = types.filter(t => t.financialCategory === 'COGS').length;
+        const inactive = types.filter(t => t.active === false).length;
+
+        return [
+            {
+                label: "Total Budget Types",
+                value: String(total),
+                icon: <ReceiptLongIcon />,
+                color: "primary.main",
+                highlight: true
+            },
+            {
+                label: "OPEX / COGS",
+                value: `${opexCount} / ${cogsCount}`,
+                icon: <AccountBalanceWalletIcon />,
+                color: "info.main"
+            },
+            {
+                label: "CAPEX (Assets)",
+                value: String(capexCount),
+                icon: <BusinessIcon />,
+                color: "secondary.main"
+            },
+            {
+                label: "Inactive",
+                value: String(inactive),
+                icon: <HighlightOffIcon />,
+                color: inactive > 0 ? "warning.main" : "text.secondary"
+            }
+        ];
+    }, [types]);
 
     const handleOpen = (item = null) => {
         if (item) {
@@ -132,6 +174,8 @@ export default function ExpenseSettings({ showSnackbar }) {
                 }
             />
 
+            <SummaryCards cards={summaryCards} loading={loading} sx={{ mb: 3 }} />
+
             <Card>
                 <TableContainer>
                     <Table>
@@ -184,65 +228,70 @@ export default function ExpenseSettings({ showSnackbar }) {
                 </TableContainer>
             </Card>
 
-            {/* Editor Dialog */}
-            <Dialog open={open} onClose={handleClose} maxWidth="xs" fullWidth>
-                <DialogTitle>{editing ? 'Edit Expense Type' : 'New Expense Type'}</DialogTitle>
-                <DialogContent>
-                    <Stack spacing={2} sx={{ mt: 1 }}>
-                        <TextField
-                            label="Name (e.g. Rent, Internet)"
-                            fullWidth
-                            value={form.name}
-                            onChange={e => setForm({ ...form, name: e.target.value })}
-                            autoFocus
-                        />
-                        <FormControl fullWidth>
-                            <InputLabel>Financial Category</InputLabel>
-                            <Select
-                                value={form.financialCategory}
-                                label="Financial Category"
-                                onChange={e => setForm({ ...form, financialCategory: e.target.value })}
-                            >
-                                <MenuItem value="OPEX">
-                                    <Box>
-                                        <Typography variant="body1">OPEX (Operating Expense)</Typography>
-                                        <Typography variant="caption" color="text.secondary">Recurring costs (Rent, Salaries, Utilities)</Typography>
-                                    </Box>
-                                </MenuItem>
-                                <MenuItem value="CAPEX">
-                                    <Box>
-                                        <Typography variant="body1">CAPEX (Capital Expenditure)</Typography>
-                                        <Typography variant="caption" color="text.secondary">Assets, Equipment, Renovations</Typography>
-                                    </Box>
-                                </MenuItem>
-                                <MenuItem value="COGS">
-                                    <Box>
-                                        <Typography variant="body1">COGS (Cost of Goods Sold)</Typography>
-                                        <Typography variant="caption" color="text.secondary">Direct costs: raw materials, resold goods</Typography>
-                                    </Box>
-                                </MenuItem>
-                            </Select>
-                        </FormControl>
+            {/* Editor DetailDrawer */}
+            <DetailDrawer
+                open={open}
+                onClose={handleClose}
+                title={editing ? 'Edit Expense Type' : 'New Expense Type'}
+                subtitle={editing ? editing.serviceName : 'Configure a category of business spending'}
+                actions={
+                    <>
+                        <Button onClick={handleClose}>Cancel</Button>
+                        <Button variant="contained" onClick={handleSave}>Save</Button>
+                    </>
+                }
+            >
+                <Stack spacing={3}>
+                    <TextField
+                        label="Name (e.g. Rent, Internet)"
+                        fullWidth
+                        value={form.name}
+                        onChange={e => setForm({ ...form, name: e.target.value })}
+                        autoFocus
+                        placeholder="What is this expense for?"
+                    />
 
-                        <FormControl>
-                            <InputLabel shrink>Status</InputLabel>
-                            <Select
-                                value={form.active ? 'active' : 'inactive'}
-                                label="Status"
-                                onChange={e => setForm({ ...form, active: e.target.value === 'active' })}
-                                native={false}
-                            >
-                                <MenuItem value="active">Active</MenuItem>
-                                <MenuItem value="inactive">Inactive (Hidden)</MenuItem>
-                            </Select>
-                        </FormControl>
-                    </Stack>
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={handleClose}>Cancel</Button>
-                    <Button variant="contained" onClick={handleSave}>Save</Button>
-                </DialogActions>
-            </Dialog>
+                    <FormControl fullWidth>
+                        <InputLabel>Financial Category</InputLabel>
+                        <Select
+                            value={form.financialCategory}
+                            label="Financial Category"
+                            onChange={e => setForm({ ...form, financialCategory: e.target.value })}
+                        >
+                            <MenuItem value="OPEX">
+                                <Box sx={{ py: 0.5 }}>
+                                    <Typography variant="body2" fontWeight={600}>OPEX (Operating Expense)</Typography>
+                                    <Typography variant="caption" color="text.secondary" display="block">Recurring costs (Rent, Salaries, Utilities)</Typography>
+                                </Box>
+                            </MenuItem>
+                            <MenuItem value="CAPEX">
+                                <Box sx={{ py: 0.5 }}>
+                                    <Typography variant="body2" fontWeight={600}>CAPEX (Capital Expenditure)</Typography>
+                                    <Typography variant="caption" color="text.secondary" display="block">Assets, Equipment, Renovations</Typography>
+                                </Box>
+                            </MenuItem>
+                            <MenuItem value="COGS">
+                                <Box sx={{ py: 0.5 }}>
+                                    <Typography variant="body2" fontWeight={600}>COGS (Cost of Goods Sold)</Typography>
+                                    <Typography variant="caption" color="text.secondary" display="block">Direct costs: raw materials, resold goods</Typography>
+                                </Box>
+                            </MenuItem>
+                        </Select>
+                    </FormControl>
+
+                    <FormControl fullWidth>
+                        <InputLabel>Status</InputLabel>
+                        <Select
+                            value={form.active ? 'active' : 'inactive'}
+                            label="Status"
+                            onChange={e => setForm({ ...form, active: e.target.value === 'active' })}
+                        >
+                            <MenuItem value="active">Active (Visible in POS)</MenuItem>
+                            <MenuItem value="inactive">Inactive (Hidden)</MenuItem>
+                        </Select>
+                    </FormControl>
+                </Stack>
+            </DetailDrawer>
 
             {/* Confirmation Wrapper */}
             <ConfirmationReasonDialog
