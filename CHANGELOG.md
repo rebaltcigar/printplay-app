@@ -2,7 +2,17 @@
 
 All notable changes to this project will be documented in this file.
  
+## [0.1.25] - 2026-03-04
+
+### Added
+- **Inventory & POS Synchronization**: Implemented real-time stock deduction for retail items. When a checkout is completed in the POS, any item marked as `trackStock: true` in the catalogue will have its `stockCount` automatically decremented via Firestore atomicity.
+- **Improved COGS Reporting**: Standardized the transaction schema to use `unitCost` across POS and P&L reports, ensuring that Cost of Goods Sold is accurately tracked and displayed in the Profit & Loss statement.
+
+### Fixed
+- **Inventory Legacy Query**: Fixed a remaining legacy query in `InventoryManagement.jsx` that was still looking for `'Debit'` instead of `'Sale'`.
+
 ## [0.1.24] - 2026-03-04
+
 
 ### Removed
 - **Data Migration Tool**: Removed `Settings → Data Migration` panel and the `migrateCategoryValues.js` script after successful production migration. The `services` collection category values have been permanently updated (`'Debit'` → `'Sale'`, `'Credit'` → `'Expense'`).

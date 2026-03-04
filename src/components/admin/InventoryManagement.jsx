@@ -24,7 +24,7 @@ export default function InventoryManagement({ showSnackbar }) {
     useEffect(() => {
         // We only care about items that are "retail" OR "trackStock" is true
         // Filtering client side is easier since composite indexes might be missing
-        const q = query(collection(db, 'services'), where('category', '==', 'Debit'));
+        const q = query(collection(db, 'services'), where('category', '==', 'Sale'));
         const unsub = onSnapshot(q, (snap) => {
             const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
             setItems(list.filter(i => i.type === 'retail' || i.trackStock));

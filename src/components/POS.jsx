@@ -55,7 +55,7 @@ import { SimpleReceipt } from './SimpleReceipt';
 import { auth, db } from '../firebase';
 import {
   collection, addDoc, query, onSnapshot, orderBy, doc, writeBatch,
-  updateDoc, where, setDoc, serverTimestamp, getDocs, getDoc
+  updateDoc, where, setDoc, serverTimestamp, getDocs, getDoc, increment
 } from 'firebase/firestore';
 
 // Helpers
@@ -474,9 +474,11 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
     const svc = services.find(s => s.serviceName === item);
     const cartItem = {
       id: Date.now(),
+      serviceId: svc?.id || null, // CAPTURE ID
       serviceName: item,
       price: priceNum,
       costPrice: svc?.costPrice || 0, // CAPTURE COST
+      trackStock: svc?.trackStock || false, // CAPTURE FLAG
       quantity: qtyNum,
     };
 
@@ -595,7 +597,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
           displayId: txIds[index],
           item: item.serviceName,
           price: Number(item.price),
-          costPrice: Number(item.costPrice || 0), // SAVE COST
+          unitCost: Number(item.costPrice || 0), // RENAMED FROM costPrice for P&L
           quantity: Number(item.quantity),
           total: Number(item.price) * Number(item.quantity),
           timestamp: serverTimestamp(),
@@ -611,6 +613,14 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
           invoiceStatus: isUnpaid ? 'UNPAID' : 'PAID', // ADD STATUS
           isDeleted: false
         });
+
+        // INVENTORY DEDUCTION
+        if (item.trackStock && item.serviceId) {
+          const svcRef = doc(db, 'services', item.serviceId);
+          batch.update(svcRef, {
+            stockCount: increment(-Number(item.quantity))
+          });
+        }
       });
       await batch.commit();
 
