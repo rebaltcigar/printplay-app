@@ -29,6 +29,11 @@ import {
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
 import DeleteIcon from "@mui/icons-material/Delete";
+import EditIcon from "@mui/icons-material/Edit";
+import PeopleIcon from "@mui/icons-material/People";
+import ScheduleIcon from "@mui/icons-material/Schedule";
+import AttachMoneyIcon from "@mui/icons-material/AttachMoney";
+import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
 import { db } from "../../firebase";
 import {
   collection,
@@ -50,9 +55,10 @@ import {
 } from "../../utils/payrollHelpers";
 import ConfirmationReasonDialog from "../ConfirmationReasonDialog";
 import DetailDrawer from "../common/DetailDrawer";
+import SummaryCards from "../common/SummaryCards";
 import PaystubDialog from "../Paystub";
 
-export default function AllRuns({ showSnackbar }) {
+export default function AllRuns({ showSnackbar, onEditRun }) {
   const [runs, setRuns] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -101,6 +107,44 @@ export default function AllRuns({ showSnackbar }) {
       return okDate && okStatus;
     });
   }, [runs, fromDate, toDate, statusFilter]);
+
+  // summary card data computed from filtered runs
+  const summaryCards = useMemo(() => {
+    const totalNet = filtered
+      .filter((r) => r.status === "posted")
+      .reduce((s, r) => s + Number(r.totals?.net || 0), 0);
+    const posted = filtered.filter((r) => r.status === "posted").length;
+    const pending = filtered.filter((r) => r.status === "draft" || r.status === "approved").length;
+    return [
+      {
+        label: "Total Runs",
+        value: String(filtered.length),
+        sub: "in current filter",
+        icon: <ScheduleIcon fontSize="small" />,
+      },
+      {
+        label: "Posted",
+        value: String(posted),
+        color: "success.main",
+        icon: <CheckCircleOutlineIcon fontSize="small" />,
+        highlight: true,
+      },
+      {
+        label: "Draft / Approved",
+        value: String(pending),
+        color: pending > 0 ? "warning.main" : "text.secondary",
+        icon: <PeopleIcon fontSize="small" />,
+      },
+      {
+        label: "Total Net Paid",
+        value: peso(totalNet),
+        sub: "posted runs only",
+        color: "primary.main",
+        icon: <AttachMoneyIcon fontSize="small" />,
+        highlight: true,
+      },
+    ];
+  }, [filtered]);
 
   // open run in DetailDrawer and load its lines
   const openRunDrawer = async (run) => {
@@ -173,7 +217,6 @@ export default function AllRuns({ showSnackbar }) {
           stubsSnap.forEach((s) => deleteDoc(s.ref));
           await deleteDoc(doc(db, "payrollRuns", r.id));
           showSnackbar?.("Run deleted.", "success");
-          // close drawer if the deleted run was open
           if (runDrawer.run?.id === r.id) closeRunDrawer();
         },
       });
@@ -191,145 +234,174 @@ export default function AllRuns({ showSnackbar }) {
 
   const drawerRun = runDrawer.run;
 
+  // SummaryCards for the DetailDrawer totals section
+  const drawerSummaryCards = useMemo(() => {
+    if (!drawerRun) return [];
+    const t = drawerRun.totals || {};
+    return [
+      { label: "Staff", value: String(t.staffCount || 0) },
+      { label: "Hours", value: toHours(t.minutes || 0) },
+      { label: "Gross", value: peso(t.gross || 0) },
+      ...(Number(t.additions || 0) > 0
+        ? [{ label: "Additions", value: peso(t.additions || 0), color: "success.main" }]
+        : []),
+      { label: "Advances", value: peso(t.advances || 0) },
+      { label: "Shortages", value: peso(t.shortages || 0) },
+      { label: "NET", value: peso(t.net || 0), color: "primary.main", highlight: true },
+    ];
+  }, [drawerRun]);
+
   return (
     <>
-      <Card>
-        {/* filters */}
-        <Box
-          sx={{
-            p: 2,
-            display: "grid",
-            gridTemplateColumns: "repeat(3, minmax(200px, 1fr))",
-            gap: 2,
-          }}
-        >
-          <TextField
-            type="date"
-            label="From"
-            value={fromDate}
-            onChange={(e) => setFromDate(e.target.value)}
-            InputLabelProps={{ shrink: true }}
-          />
-          <TextField
-            type="date"
-            label="To"
-            value={toDate}
-            onChange={(e) => setToDate(e.target.value)}
-            InputLabelProps={{ shrink: true }}
-          />
-          <FormControl>
-            <InputLabel>Statuses</InputLabel>
-            <Select
-              multiple
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              input={<OutlinedInput label="Statuses" />}
-              renderValue={(selected) => selected.map(cap).join(", ")}
-            >
-              {STATUSES.map((s) => (
-                <MenuItem key={s} value={s}>
-                  <Checkbox checked={statusFilter.includes(s)} />
-                  <ListItemText primary={cap(s)} />
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-        </Box>
+      <Stack spacing={2}>
+        {/* Summary cards */}
+        <SummaryCards cards={summaryCards} loading={!runs.length && runs.length === 0 && filtered.length === 0} />
 
-        {/* table */}
-        <TableContainer component={Paper}>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Period</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell align="right">Staff</TableCell>
-                <TableCell align="right">Hours</TableCell>
-                <TableCell align="right">Gross</TableCell>
-                <TableCell align="right">Adv</TableCell>
-                <TableCell align="right">Short</TableCell>
-                <TableCell align="right">NET</TableCell>
-                <TableCell align="right">Actions</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {filtered.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell>
-                    {toLocaleDateStringPHT(r.periodStart)} –{" "}
-                    {toLocaleDateStringPHT(r.periodEnd)}
-                  </TableCell>
-                  <TableCell>
-                    <Chip
-                      label={cap(r.status)}
-                      size="small"
-                      color={statusColor(r.status)}
-                      variant="outlined"
-                    />
-                  </TableCell>
-                  <TableCell align="right">
-                    {r.totals?.staffCount || 0}
-                  </TableCell>
-                  <TableCell align="right">
-                    {toHours(r.totals?.minutes || 0)}
-                  </TableCell>
-                  <TableCell align="right">
-                    {peso(r.totals?.gross || 0)}
-                  </TableCell>
-                  <TableCell align="right">
-                    {peso(r.totals?.advances || 0)}
-                  </TableCell>
-                  <TableCell align="right">
-                    {peso(r.totals?.shortages || 0)}
-                  </TableCell>
-                  <TableCell align="right">
-                    <b>{peso(r.totals?.net || 0)}</b>
-                  </TableCell>
-                  <TableCell align="right">
-                    <Tooltip title="View Run Details">
-                      <IconButton onClick={() => openRunDrawer(r)}>
-                        <VisibilityIcon />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Paystubs">
-                      <IconButton onClick={() => setPaystubDrawerRunId(r.id)}>
-                        <ReceiptLongIcon />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title={r.status === "posted" ? "Void" : "Delete"}>
-                      <IconButton onClick={() => onDelete(r)}>
-                        <DeleteIcon />
-                      </IconButton>
-                    </Tooltip>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {!filtered.length && (
+        <Card>
+          {/* filters */}
+          <Box
+            sx={{
+              p: 2,
+              display: "grid",
+              gridTemplateColumns: "repeat(3, minmax(200px, 1fr))",
+              gap: 2,
+            }}
+          >
+            <TextField
+              type="date"
+              label="From"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+            />
+            <TextField
+              type="date"
+              label="To"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+            />
+            <FormControl>
+              <InputLabel>Statuses</InputLabel>
+              <Select
+                multiple
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                input={<OutlinedInput label="Statuses" />}
+                renderValue={(selected) => selected.map(cap).join(", ")}
+              >
+                {STATUSES.map((s) => (
+                  <MenuItem key={s} value={s}>
+                    <Checkbox checked={statusFilter.includes(s)} />
+                    <ListItemText primary={cap(s)} />
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Box>
+
+          {/* table */}
+          <TableContainer component={Paper}>
+            <Table size="small">
+              <TableHead>
                 <TableRow>
-                  <TableCell
-                    colSpan={9}
-                    align="center"
-                    sx={{ py: 4, color: "text.secondary" }}
-                  >
-                    No runs match your filters.
-                  </TableCell>
+                  <TableCell>Period</TableCell>
+                  <TableCell>Status</TableCell>
+                  <TableCell align="right">Staff</TableCell>
+                  <TableCell align="right">Hours</TableCell>
+                  <TableCell align="right">Gross</TableCell>
+                  <TableCell align="right">Adv</TableCell>
+                  <TableCell align="right">Short</TableCell>
+                  <TableCell align="right">NET</TableCell>
+                  <TableCell align="right">Actions</TableCell>
                 </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
+              </TableHead>
+              <TableBody>
+                {filtered.map((r) => (
+                  <TableRow key={r.id}>
+                    <TableCell>
+                      {toLocaleDateStringPHT(r.periodStart)} –{" "}
+                      {toLocaleDateStringPHT(r.periodEnd)}
+                    </TableCell>
+                    <TableCell>
+                      <Chip
+                        label={cap(r.status)}
+                        size="small"
+                        color={statusColor(r.status)}
+                        variant="outlined"
+                      />
+                    </TableCell>
+                    <TableCell align="right">
+                      {r.totals?.staffCount || 0}
+                    </TableCell>
+                    <TableCell align="right">
+                      {toHours(r.totals?.minutes || 0)}
+                    </TableCell>
+                    <TableCell align="right">
+                      {peso(r.totals?.gross || 0)}
+                    </TableCell>
+                    <TableCell align="right">
+                      {peso(r.totals?.advances || 0)}
+                    </TableCell>
+                    <TableCell align="right">
+                      {peso(r.totals?.shortages || 0)}
+                    </TableCell>
+                    <TableCell align="right">
+                      <b>{peso(r.totals?.net || 0)}</b>
+                    </TableCell>
+                    <TableCell align="right">
+                      {(r.status === "draft" || r.status === "approved") && onEditRun && (
+                        <Tooltip title="Edit Run">
+                          <IconButton color="primary" onClick={() => onEditRun(r.id)}>
+                            <EditIcon />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                      <Tooltip title="View Run Details">
+                        <IconButton onClick={() => openRunDrawer(r)}>
+                          <VisibilityIcon />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Paystubs">
+                        <IconButton onClick={() => setPaystubDrawerRunId(r.id)}>
+                          <ReceiptLongIcon />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title={r.status === "posted" ? "Void" : "Delete"}>
+                        <IconButton onClick={() => onDelete(r)}>
+                          <DeleteIcon />
+                        </IconButton>
+                      </Tooltip>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {!filtered.length && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={9}
+                      align="center"
+                      sx={{ py: 4, color: "text.secondary" }}
+                    >
+                      No runs match your filters.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
 
-        <ConfirmationReasonDialog
-          open={confirmDialog.open}
-          onClose={() => setConfirmDialog((p) => ({ ...p, open: false }))}
-          title={confirmDialog.title}
-          message={confirmDialog.message}
-          requireReason={confirmDialog.requireReason}
-          onConfirm={confirmDialog.onConfirm}
-          confirmText={confirmDialog.confirmText}
-          confirmColor={confirmDialog.confirmColor}
-        />
-      </Card>
+          <ConfirmationReasonDialog
+            open={confirmDialog.open}
+            onClose={() => setConfirmDialog((p) => ({ ...p, open: false }))}
+            title={confirmDialog.title}
+            message={confirmDialog.message}
+            requireReason={confirmDialog.requireReason}
+            onConfirm={confirmDialog.onConfirm}
+            confirmText={confirmDialog.confirmText}
+            confirmColor={confirmDialog.confirmColor}
+          />
+        </Card>
+      </Stack>
 
       {/* ── Run Detail Drawer ──────────────────────────────────────────────── */}
       <DetailDrawer
@@ -350,9 +422,7 @@ export default function AllRuns({ showSnackbar }) {
                 <Button
                   variant="outlined"
                   startIcon={<ReceiptLongIcon />}
-                  onClick={() => {
-                    setPaystubDrawerRunId(drawerRun.id);
-                  }}
+                  onClick={() => setPaystubDrawerRunId(drawerRun.id)}
                 >
                   View Paystubs
                 </Button>
@@ -401,30 +471,10 @@ export default function AllRuns({ showSnackbar }) {
 
             <Divider />
 
-            {/* Totals summary */}
+            {/* Totals as SummaryCards */}
             <Box>
               <Typography variant="subtitle2" gutterBottom>Totals</Typography>
-              <Stack direction="row" flexWrap="wrap" gap={1}>
-                <Chip label={`Staff: ${drawerRun.totals?.staffCount || 0}`} size="small" />
-                <Chip label={`Hours: ${toHours(drawerRun.totals?.minutes || 0)}`} size="small" />
-                <Chip label={`Gross: ${peso(drawerRun.totals?.gross || 0)}`} size="small" />
-                {(drawerRun.totals?.additions || 0) > 0 && (
-                  <Chip
-                    label={`Adds: ${peso(drawerRun.totals?.additions || 0)}`}
-                    size="small"
-                    color="success"
-                    variant="outlined"
-                  />
-                )}
-                <Chip label={`Adv: ${peso(drawerRun.totals?.advances || 0)}`} size="small" />
-                <Chip label={`Short: ${peso(drawerRun.totals?.shortages || 0)}`} size="small" />
-                <Chip
-                  label={`NET: ${peso(drawerRun.totals?.net || 0)}`}
-                  size="small"
-                  color="primary"
-                  variant="filled"
-                />
-              </Stack>
+              <SummaryCards cards={drawerSummaryCards} sx={{ gap: 1 }} />
             </Box>
 
             <Divider />
@@ -451,8 +501,6 @@ export default function AllRuns({ showSnackbar }) {
                         const minutes = Number(line.minutes || 0);
                         const rate = Number(line.rate || 0);
                         const gross = Number(line.gross || 0);
-
-                        // Calculate net from adjustments
                         const adjustments = Array.isArray(line.adjustments) ? line.adjustments : [];
                         const deductionsTotal = adjustments
                           .filter((a) => a.type === "manual-deduction" || a.type === "extra-advance")
@@ -460,9 +508,6 @@ export default function AllRuns({ showSnackbar }) {
                         const additionsTotal = adjustments
                           .filter((a) => a.type === "manual-addition")
                           .reduce((s, a) => s + Number(a.amount || 0), 0);
-
-                        // net is stored on line doc via totals or must be computed
-                        // We compute a best-effort net here; exact net is in the run's totals
                         const net = Number(line.net != null ? line.net : (gross + additionsTotal - deductionsTotal).toFixed(2));
 
                         return (

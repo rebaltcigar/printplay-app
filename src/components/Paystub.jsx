@@ -5,11 +5,6 @@ import {
   Typography,
   Button,
   Stack,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Grid,
   Divider,
   Table,
   TableBody,
@@ -20,6 +15,7 @@ import {
   Tooltip,
   IconButton,
 } from "@mui/material";
+import DetailDrawer from "./common/DetailDrawer";
 import DownloadIcon from "@mui/icons-material/Download";
 import { db } from "../firebase";
 import { collection, getDocs } from "firebase/firestore";
@@ -354,7 +350,7 @@ function Paystub({ stub }) {
   );
 }
 
-// ---------- Paystub Dialog (Container) ----------
+// ---------- Paystub Drawer (Container) ----------
 export default function PaystubDialog({ open, onClose, runId }) {
   const [stubs, setStubs] = useState([]);
   const [active, setActive] = useState(null);
@@ -370,9 +366,7 @@ export default function PaystubDialog({ open, onClose, runId }) {
         collection(db, "payrollRuns", runId, "paystubs")
       );
       const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() || {}) }));
-      list.sort((a, b) =>
-        (a.staffName || "").localeCompare(b.staffName || "")
-      );
+      list.sort((a, b) => (a.staffName || "").localeCompare(b.staffName || ""));
       setStubs(list);
       setActive(list[0]?.id || null);
     })();
@@ -383,72 +377,47 @@ export default function PaystubDialog({ open, onClose, runId }) {
     [stubs, active]
   );
 
-  // print css to keep width when someone hits CTRL+P
-  const printCss = `
-@media print {
-      .MuiDialog - paper {
-    margin: 0!important;
-    max - width: none!important;
-    width: auto!important;
-    box - shadow: none!important;
-  }
-      .paystub - print - area {
-    width: ${PAYSLIP_WIDTH} !important;
-    margin: 0 auto!important;
-    box - shadow: none!important;
-  }
-      .paystub - dialog - left,
-      .MuiDialogActions - root {
-    display: none!important;
-  }
-      body {
-    background: #fff!important;
-  }
-}
-`;
-
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
-      {/* inject print styles */}
-      <style>{printCss}</style>
+    <DetailDrawer
+      open={open}
+      onClose={onClose}
+      title="Paystubs"
+      subtitle={stubs.length ? `${stubs.length} staff member${stubs.length !== 1 ? "s" : ""}` : undefined}
+      width={800}
+      actions={<Button onClick={onClose}>Close</Button>}
+    >
+      <Stack direction="row" spacing={2} sx={{ height: "100%" }}>
+        {/* LEFT: staff list */}
+        <Stack spacing={1} sx={{ minWidth: 150, flexShrink: 0 }}>
+          {stubs.map((s) => (
+            <Button
+              key={s.id}
+              variant={s.id === active ? "contained" : "outlined"}
+              size="small"
+              onClick={() => setActive(s.id)}
+              sx={{ justifyContent: "flex-start" }}
+            >
+              {s.staffName || s.staffEmail}
+            </Button>
+          ))}
+          {!stubs.length && (
+            <Typography color="text.secondary" variant="body2">
+              No paystubs for this run.
+            </Typography>
+          )}
+        </Stack>
 
-      <DialogTitle>Paystubs</DialogTitle>
-      <DialogContent dividers>
-        <Grid container spacing={2} sx={{ minHeight: "60vh" }}>
-          {/* LEFT: per staff list (kept exactly like you had it) */}
-          <Grid item xs={12} md={3} className="paystub-dialog-left">
-            <Stack spacing={1}>
-              {stubs.map((s) => (
-                <Button
-                  key={s.id}
-                  variant={s.id === active ? "contained" : "outlined"}
-                  onClick={() => setActive(s.id)}
-                  sx={{ justifyContent: "flex-start" }}
-                >
-                  {s.staffName || s.staffEmail}
-                </Button>
-              ))}
-              {!stubs.length && (
-                <Typography color="text.secondary">
-                  No paystubs for this run.
-                </Typography>
-              )}
-            </Stack>
-          </Grid>
+        <Divider orientation="vertical" flexItem />
 
-          {/* RIGHT: payslip (now fixed width, black text) */}
-          <Grid item xs={12} md={9}>
-            {activeStub ? (
-              <Paystub stub={activeStub} />
-            ) : (
-              <Typography color="text.secondary">Select a paystub.</Typography>
-            )}
-          </Grid>
-        </Grid>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>Close</Button>
-      </DialogActions>
-    </Dialog>
+        {/* RIGHT: paystub content */}
+        <Box sx={{ flex: 1, overflow: "auto" }}>
+          {activeStub ? (
+            <Paystub stub={activeStub} />
+          ) : (
+            <Typography color="text.secondary">Select a paystub.</Typography>
+          )}
+        </Box>
+      </Stack>
+    </DetailDrawer>
   );
 }

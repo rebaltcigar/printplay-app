@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
  
+## [0.1.28] - 2026-03-05
+
+### Payroll — Expanded Row & Paystub Fixes
+
+- **Expanded row full-width**: Moved per-staff detail panel outside the `TableContainer`. It now renders at full Card width below the table, eliminating horizontal scroll caused by the 9-column shifts sub-table overflowing the 6-column outer table.
+- **Expanded row vertical scroll**: Added `maxHeight: 60vh` + `overflowY: auto` on the detail panel so tall content (many shifts, deductions) scrolls within the panel instead of overflowing.
+- **Single expand**: Changed `expanded` state from a map `{ [id]: bool }` to a single ID string — only one staff row can be expanded at a time, consistent with the full-width panel.
+- **Paystub — DetailDrawer**: Converted `PaystubDialog` from a full MUI Dialog to `DetailDrawer` (width=800). Staff selector stays on the left, paystub content on the right. Removed broken print CSS (Dialog-specific selectors).
+- **Dead code removal**: Deleted `RunDialog.jsx` — its content was inlined into `RunPayroll.jsx` in v0.1.27; the file was no longer imported anywhere.
+- **Admin popup audit**: Confirmed all remaining Dialog usages in admin components are small appropriate forms (Shifts add/edit/delete, UserManagement add/edit, RunPayroll confirm dialogs). No further large content dialogs found.
+
+## [0.1.27] - 2026-03-05
+
+### Payroll — UX Rework
+
+- **2-Step Wizard**: Removed redundant Step 2 (Confirm/Summary). Flow is now Setup → Review & Post. "Post Payroll" opens a small confirmation dialog inline.
+- **SummaryCards in Review step**: Replaced 8 crammed StatChips with a proper `SummaryCards` row showing Staff, Hours, Gross, Additions, Deductions, NET.
+- **Simplified table**: Main staff table reduced from 11 columns to 6 (Expand, Staff, Hours, Gross, Additions, NET). Rate/hr editing and deduction breakdown moved into the expandable row where they belong.
+- **Removed "Load Existing Run"** dropdown from Setup form. Draft/approved runs are now opened from the All Runs tab instead.
+- **All Runs — Edit button**: Draft and approved runs now have an Edit button that switches to Run Payroll tab with that run loaded.
+- **All Runs — SummaryCards**: Added KPI row above the runs table (Total Runs, Posted, Draft/Approved, Total Net Paid).
+- **All Runs — Drawer SummaryCards**: Replaced manual Chips in the run detail drawer with SummaryCards.
+- **Payroll.jsx wiring**: `openRunId` + `onEditRun` prop chain connecting AllRuns → RunPayroll tab switch.
+
+### Order Management — Standards Pass
+
+- **SummaryCards**: Added KPI row above the table (Total Orders, Revenue, Unpaid/Charge count, Voided count).
+- **Details Dialog → DetailDrawer**: Order details now open in a right-side drawer (width 620). Same content — items table, payment info, void/edit history — plus Receipt and Invoice print buttons in the footer.
+- **Edit Dialog → DetailDrawer**: Edit order form now lives in the same DrawerDetails (mode: 'edit'). Closes on save, `disableClose` during save prevents accidental dismissal.
+- **State consolidation**: 6 separate dialog state vars (`selectedOrder`, `detailsOpen`, `editDialogOpen`, `editingOrder`, etc.) replaced with a single `orderDrawer = { open, mode, order, saving }` object.
+- **Bug fix**: `user.email` in `confirmRestore` was `ReferenceError` — fixed to `auth.currentUser?.email`.
+- **Import fix**: Removed unused `onSnapshot` import. Fixed broken interleaved `const currency = fmtCurrency` between ESM imports (renamed to inline alias).
+
 ## [0.1.26] - 2026-03-04
 
 ### UI Standardization

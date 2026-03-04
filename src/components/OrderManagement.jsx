@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
     Box, Typography, Paper, Table, TableHead, TableBody, TableRow, TableCell,
-    TableContainer, IconButton, Stack, TextField, Button, Dialog, DialogTitle,
-    DialogContent, DialogActions, Tooltip, FormControl, InputLabel, Select,
-    MenuItem, useMediaQuery, Divider, InputAdornment, Autocomplete
+    TableContainer, IconButton, Stack, TextField, Button, Chip, Tooltip,
+    FormControl, InputLabel, Select, MenuItem, useMediaQuery, Divider,
+    InputAdornment, Autocomplete
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import {
     collection, query, orderBy, limit, getDocs, startAfter, where,
-    doc, getDoc, writeBatch, serverTimestamp, onSnapshot, deleteField
+    doc, getDoc, writeBatch, serverTimestamp, deleteField
 } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, auth } from '../firebase';
 import { generateBatchIds } from '../utils/idGenerator';
 
 // Icons
@@ -30,14 +30,13 @@ import DeleteIcon from '@mui/icons-material/Delete';
 // Components & Helpers
 import LoadingScreen from './common/LoadingScreen';
 import PageHeader from './common/PageHeader';
+import SummaryCards from './common/SummaryCards';
+import DetailDrawer from './common/DetailDrawer';
 import { SimpleReceipt } from './SimpleReceipt';
 import { ServiceInvoice } from './ServiceInvoice';
 import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice } from '../utils/printHelper';
 import ConfirmationReasonDialog from './ConfirmationReasonDialog';
-import { fmtCurrency, fmtDateTime } from '../utils/formatters';
-
-// currency and fmtDateTime are imported from ../utils/formatters
-const currency = fmtCurrency;
+import { fmtCurrency as currency, fmtDateTime } from '../utils/formatters';
 import { usePOSServices } from '../hooks/usePOSServices';
 import { useStaffList } from '../hooks/useStaffList';
 
@@ -64,13 +63,25 @@ export default function OrderManagement({ showSnackbar }) {
     const [dateStart, setDateStart] = useState('');
     const [dateEnd, setDateEnd] = useState('');
 
-    // Dialogs
-    const [selectedOrder, setSelectedOrder] = useState(null);
-    const [detailsOpen, setDetailsOpen] = useState(false);
+    // Unified drawer state — mode: 'view' | 'edit'
+    const [orderDrawer, setOrderDrawer] = useState({ open: false, mode: null, order: null, saving: false });
+
+    const openViewDrawer = (order) => setOrderDrawer({ open: true, mode: 'view', order, saving: false });
+    const openEditDrawer = (order) => {
+        setEditItems([...(order.items || [])]);
+        setEditForm({
+            customerName: order.customerName || '',
+            paymentMethod: order.paymentMethod || 'Cash',
+            amountTendered: order.amountTendered || 0,
+            editReason: ''
+        });
+        setOrderDrawer({ open: true, mode: 'edit', order, saving: false });
+    };
+    const closeDrawer = () => setOrderDrawer({ open: false, mode: null, order: null, saving: false });
+
+    // Void / Restore confirmations (stay as lightweight dialogs)
     const [voidDialogOpen, setVoidDialogOpen] = useState(false);
     const [orderToVoid, setOrderToVoid] = useState(null);
-
-    // RESTORE STATE
     const [orderToRestore, setOrderToRestore] = useState(null);
     const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
 
@@ -78,9 +89,7 @@ export default function OrderManagement({ showSnackbar }) {
     const [reprintOrder, setReprintOrder] = useState(null);
     const [printInvoiceData, setPrintInvoiceData] = useState(null);
 
-    // Editing
-    const [editDialogOpen, setEditDialogOpen] = useState(false);
-    const [editingOrder, setEditingOrder] = useState(null);
+    // Edit form state
     const [editItems, setEditItems] = useState([]);
     const [editForm, setEditForm] = useState({
         customerName: '',
@@ -177,11 +186,6 @@ export default function OrderManagement({ showSnackbar }) {
     }, [orders, searchTerm, staffFilter, dateStart, dateEnd]);
 
     // 4. Action Handlers
-    const handleOpenDetails = (order) => {
-        setSelectedOrder(order);
-        setDetailsOpen(true);
-    };
-
     const handleVoidOrder = (order) => {
         setOrderToVoid(order);
         setVoidDialogOpen(true);
@@ -248,7 +252,7 @@ export default function OrderManagement({ showSnackbar }) {
                 voidedAt: deleteField(),
                 restoredAt: serverTimestamp(),
                 restoreReason: reason,
-                restoredBy: user.email
+                restoredBy: auth.currentUser?.email || 'admin'
             });
 
             // Update associated transactions
@@ -276,17 +280,7 @@ export default function OrderManagement({ showSnackbar }) {
         }
     };
 
-    const handleEditOrder = (order) => {
-        setEditingOrder(order);
-        setEditItems([...(order.items || [])]);
-        setEditForm({
-            customerName: order.customerName || '',
-            paymentMethod: order.paymentMethod || 'Cash',
-            amountTendered: order.amountTendered || 0,
-            editReason: ''
-        });
-        setEditDialogOpen(true);
-    };
+    const handleEditOrder = (order) => openEditDrawer(order);
 
     const handleUpdateEditItem = (index, field, value) => {
         const newItems = [...editItems];
@@ -318,12 +312,13 @@ export default function OrderManagement({ showSnackbar }) {
     };
 
     const saveEditOrder = async () => {
+        const editingOrder = orderDrawer.order;
         if (!editingOrder || !editForm.editReason.trim()) {
             showSnackbar?.("Edit reason is required.", "warning");
             return;
         }
 
-        setLoading(true);
+        setOrderDrawer(p => ({ ...p, saving: true }));
         try {
             const batch = writeBatch(db);
             const newTotal = editItems.reduce((sum, i) => sum + (Number(i.total) || 0), 0);
@@ -395,13 +390,13 @@ export default function OrderManagement({ showSnackbar }) {
 
             await batch.commit();
             showSnackbar?.("Order updated successfully.", "success");
-            setEditDialogOpen(false);
-            fetchOrders(); // Refresh list
+            closeDrawer();
+            fetchOrders();
         } catch (e) {
             console.error("Save edit failed:", e);
             showSnackbar?.("Failed to update order.", "error");
         } finally {
-            setLoading(false);
+            setOrderDrawer(p => ({ ...p, saving: false }));
         }
     };
 
@@ -452,6 +447,16 @@ export default function OrderManagement({ showSnackbar }) {
         return () => clearTimeout(timer);
     }, [printInvoiceData]);
 
+    // Summary card data
+    const summaryData = useMemo(() => {
+        const revenue = filteredOrders
+            .filter(o => o.status !== 'VOIDED')
+            .reduce((s, o) => s + Number(o.total || 0), 0);
+        const unpaid = filteredOrders.filter(o => o.paymentMethod === 'Charge' && o.status !== 'VOIDED').length;
+        const voided = filteredOrders.filter(o => o.status === 'VOIDED').length;
+        return { revenue, unpaid, voided };
+    }, [filteredOrders]);
+
     if (loading && orders.length === 0) return <LoadingScreen message="Loading orders..." />;
 
     return (
@@ -461,6 +466,17 @@ export default function OrderManagement({ showSnackbar }) {
                 title="Order Management"
                 subtitle="View, edit, and void customer orders."
                 actions={<Button variant="contained" onClick={() => fetchOrders()}>Refresh List</Button>}
+            />
+
+            <SummaryCards
+                loading={loading && orders.length === 0}
+                cards={[
+                    { label: "Orders", value: String(filteredOrders.length), sub: "in current filter" },
+                    { label: "Revenue", value: currency(summaryData.revenue), color: "success.main", highlight: true },
+                    { label: "Unpaid / Charge", value: String(summaryData.unpaid), color: summaryData.unpaid > 0 ? "warning.main" : "text.secondary" },
+                    { label: "Voided", value: String(summaryData.voided), color: summaryData.voided > 0 ? "error.main" : "text.secondary" },
+                ]}
+                sx={{ mb: 2 }}
             />
 
             {/* Filter Controls */}
@@ -582,7 +598,7 @@ export default function OrderManagement({ showSnackbar }) {
                                     <TableCell align="right">
                                         <Stack direction="row" spacing={0.5} justifyContent="flex-end">
                                             <Tooltip title="View Details">
-                                                <IconButton size="small" onClick={() => handleOpenDetails(o)}>
+                                                <IconButton size="small" onClick={() => openViewDrawer(o)}>
                                                     <VisibilityIcon fontSize="small" />
                                                 </IconButton>
                                             </Tooltip>
@@ -638,142 +654,270 @@ export default function OrderManagement({ showSnackbar }) {
                 )}
             </TableContainer>
 
-            {/* Details Dialog */}
-            <Dialog open={detailsOpen} onClose={() => setDetailsOpen(false)} maxWidth="sm" fullWidth>
-                <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Box>
-                        <Typography variant="h6">Order {selectedOrder?.orderNumber}</Typography>
-                        <Typography variant="caption" color="text.secondary">
-                            {fmtDateTime(selectedOrder?.timestamp)}
-                        </Typography>
-                    </Box>
-                    {selectedOrder?.status === 'VOIDED' && (
-                        <Typography color="error" variant="caption" fontWeight="bold">VOIDED</Typography>
-                    )}
-                </DialogTitle>
-                <DialogContent dividers>
-                    <Table size="small">
-                        <TableHead>
-                            <TableRow>
-                                <TableCell>Item</TableCell>
-                                <TableCell align="right" width={60}>Qty</TableCell>
-                                <TableCell align="right">Price</TableCell>
-                                <TableCell align="right">Total</TableCell>
-                            </TableRow>
-                        </TableHead>
-                        <TableBody>
-                            {selectedOrder?.items?.map((item, idx) => (
-                                <TableRow key={idx} sx={{ opacity: item.isVoided ? 0.4 : 1 }}>
-                                    <TableCell sx={{ textDecoration: item.isVoided ? 'line-through' : 'none' }}>
-                                        {item.name || item.serviceName}
-                                        {item.isVoided && <Typography variant="caption" color="error" sx={{ ml: 1 }}>(Voided)</Typography>}
-                                    </TableCell>
-                                    <TableCell align="right">{item.quantity}</TableCell>
-                                    <TableCell align="right">{currency(item.price)}</TableCell>
-                                    <TableCell align="right">{currency(item.total)}</TableCell>
-                                </TableRow>
-                            ))}
-                        </TableBody>
-                    </Table>
+            {/* ── Order Drawer (View + Edit) ─────────────────────────────────────── */}
+            <DetailDrawer
+                open={orderDrawer.open}
+                onClose={closeDrawer}
+                disableClose={orderDrawer.saving}
+                loading={orderDrawer.saving}
+                title={
+                    orderDrawer.mode === 'edit'
+                        ? `Edit Order ${orderDrawer.order?.orderNumber}`
+                        : `Order ${orderDrawer.order?.orderNumber}`
+                }
+                subtitle={
+                    orderDrawer.mode === 'view'
+                        ? fmtDateTime(orderDrawer.order?.timestamp)
+                        : undefined
+                }
+                width={620}
+                actions={
+                    orderDrawer.mode === 'view' ? (
+                        <>
+                            <Button size="small" startIcon={<ReceiptIcon />} onClick={() => handlePrintReceipt(orderDrawer.order)}>Receipt</Button>
+                            <Button size="small" startIcon={<PrintIcon />} onClick={() => handlePrintInvoice(orderDrawer.order)}>Invoice</Button>
+                            {orderDrawer.order?.status !== 'VOIDED' && (
+                                <Button size="small" variant="contained" startIcon={<EditIcon />} onClick={() => openEditDrawer(orderDrawer.order)}>
+                                    Edit Order
+                                </Button>
+                            )}
+                        </>
+                    ) : (
+                        <>
+                            <Button size="small" onClick={closeDrawer} disabled={orderDrawer.saving}>Cancel</Button>
+                            <Button
+                                size="small"
+                                variant="contained"
+                                startIcon={<SaveIcon />}
+                                onClick={saveEditOrder}
+                                disabled={!editForm.editReason.trim() || orderDrawer.saving}
+                            >
+                                Save Changes
+                            </Button>
+                        </>
+                    )
+                }
+            >
+                {/* View mode content */}
+                {orderDrawer.mode === 'view' && orderDrawer.order && (() => {
+                    const o = orderDrawer.order;
+                    return (
+                        <Stack spacing={2}>
+                            {o.status === 'VOIDED' && (
+                                <Chip label="VOIDED" color="error" size="small" sx={{ alignSelf: 'flex-start' }} />
+                            )}
+                            <TableContainer component={Paper} variant="outlined">
+                                <Table size="small">
+                                    <TableHead>
+                                        <TableRow>
+                                            <TableCell>Item</TableCell>
+                                            <TableCell align="right" width={60}>Qty</TableCell>
+                                            <TableCell align="right">Price</TableCell>
+                                            <TableCell align="right">Total</TableCell>
+                                        </TableRow>
+                                    </TableHead>
+                                    <TableBody>
+                                        {o.items?.map((item, idx) => (
+                                            <TableRow key={idx} sx={{ opacity: item.isVoided ? 0.4 : 1 }}>
+                                                <TableCell sx={{ textDecoration: item.isVoided ? 'line-through' : 'none' }}>
+                                                    {item.name || item.serviceName}
+                                                    {item.isVoided && <Typography variant="caption" color="error" sx={{ ml: 1 }}>(Voided)</Typography>}
+                                                </TableCell>
+                                                <TableCell align="right">{item.quantity}</TableCell>
+                                                <TableCell align="right">{currency(item.price)}</TableCell>
+                                                <TableCell align="right">{currency(item.total)}</TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </TableContainer>
 
-                    <Box sx={{ mt: 3, p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
-                        <Typography variant="caption" color="primary" fontWeight="bold" sx={{ mb: 1, display: 'block', textTransform: 'uppercase' }}>
-                            Order Details & Payment
-                        </Typography>
-                        <Stack spacing={1.5}>
-                            <Box display="flex" justifyContent="space-between">
-                                <Typography variant="body2" color="text.secondary">Staff / Cashier:</Typography>
-                                <Typography variant="body2" fontWeight="bold">
-                                    {users[selectedOrder?.staffEmail] || '---'}
-                                </Typography>
+                            <Box sx={{ p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
+                                <Stack spacing={1.5}>
+                                    <Box display="flex" justifyContent="space-between">
+                                        <Typography variant="body2" color="text.secondary">Cashier:</Typography>
+                                        <Typography variant="body2" fontWeight="bold">{users[o.staffEmail] || '---'}</Typography>
+                                    </Box>
+                                    <Divider sx={{ borderStyle: 'dashed' }} />
+                                    <Box>
+                                        <Typography variant="caption" color="text.secondary" display="block">Customer:</Typography>
+                                        <Typography variant="body2" fontWeight="bold">{o.customerName || 'Walk-in'}</Typography>
+                                        {o.customerPhone && <Typography variant="caption" display="block">Phone: {o.customerPhone}</Typography>}
+                                        {o.customerAddress && <Typography variant="caption" display="block">Addr: {o.customerAddress}</Typography>}
+                                        {o.customerTin && <Typography variant="caption" display="block">TIN: {o.customerTin}</Typography>}
+                                    </Box>
+                                    <Divider sx={{ borderStyle: 'dashed' }} />
+                                    <Box display="flex" justifyContent="space-between">
+                                        <Typography variant="body2" color="text.secondary">Payment:</Typography>
+                                        <Typography variant="body2" fontWeight="bold" color="primary">
+                                            {o.paymentMethod === 'Charge' ? 'UNPAID (Charge)' : o.paymentMethod}
+                                        </Typography>
+                                    </Box>
+                                    {o.paymentMethod === 'GCash' && o.gcashRef && (
+                                        <Box display="flex" justifyContent="space-between">
+                                            <Typography variant="body2" color="text.secondary">GCash Ref:</Typography>
+                                            <Typography variant="body2" fontWeight="bold">{o.gcashRef}</Typography>
+                                        </Box>
+                                    )}
+                                    <Box display="flex" justifyContent="space-between" sx={{ pt: 1 }}>
+                                        <Typography variant="subtitle1" fontWeight="bold">Total:</Typography>
+                                        <Typography variant="subtitle1" fontWeight="bold" color="primary">{currency(o.total)}</Typography>
+                                    </Box>
+                                    {o.amountTendered > 0 && (
+                                        <>
+                                            <Box display="flex" justifyContent="space-between">
+                                                <Typography variant="body2" color="text.secondary">Tendered:</Typography>
+                                                <Typography variant="body2">{currency(o.amountTendered)}</Typography>
+                                            </Box>
+                                            <Box display="flex" justifyContent="space-between">
+                                                <Typography variant="body2" color="text.secondary">Change:</Typography>
+                                                <Typography variant="body2">{currency(o.change)}</Typography>
+                                            </Box>
+                                        </>
+                                    )}
+                                </Stack>
                             </Box>
 
-                            <Divider sx={{ borderStyle: 'dashed' }} />
-
-                            <Box>
-                                <Typography variant="caption" color="text.secondary" display="block">Customer Info:</Typography>
-                                <Typography variant="body2" fontWeight="bold">{selectedOrder?.customerName || 'Walk-in'}</Typography>
-                                {selectedOrder?.customerPhone && (
-                                    <Typography variant="caption" display="block">Phone: {selectedOrder.customerPhone}</Typography>
-                                )}
-                                {selectedOrder?.customerAddress && (
-                                    <Typography variant="caption" display="block">Addr: {selectedOrder.customerAddress}</Typography>
-                                )}
-                                {selectedOrder?.customerTin && (
-                                    <Typography variant="caption" display="block">TIN: {selectedOrder.customerTin}</Typography>
-                                )}
-                            </Box>
-
-                            <Divider sx={{ borderStyle: 'dashed' }} />
-
-                            <Box display="flex" justifyContent="space-between">
-                                <Typography variant="body2" color="text.secondary">Payment Method:</Typography>
-                                <Typography variant="body2" fontWeight="bold" color="primary">
-                                    {selectedOrder?.paymentMethod === 'Charge' ? 'UNPAID (Charge)' : selectedOrder?.paymentMethod}
-                                </Typography>
-                            </Box>
-
-                            {selectedOrder?.paymentMethod === 'GCash' && selectedOrder?.gcashRef && (
-                                <Box display="flex" justifyContent="space-between">
-                                    <Typography variant="body2" color="text.secondary">GCash Ref:</Typography>
-                                    <Typography variant="body2" fontWeight="bold">{selectedOrder.gcashRef}</Typography>
+                            {o.status === 'VOIDED' && (
+                                <Box sx={{ p: 2, bgcolor: 'error.main', opacity: 0.85, borderRadius: 1 }}>
+                                    <Typography variant="caption" fontWeight="bold" display="block" sx={{ color: '#fff' }}>VOID REASON</Typography>
+                                    <Typography variant="body2" sx={{ color: '#fff', fontStyle: 'italic' }}>{o.voidReason || "No reason provided."}</Typography>
+                                    <Typography variant="caption" sx={{ color: '#fff', opacity: 0.8 }} display="block">Voided: {fmtDateTime(o.voidedAt)}</Typography>
                                 </Box>
                             )}
 
-                            <Box display="flex" justifyContent="space-between" sx={{ pt: 1 }}>
-                                <Typography variant="subtitle1" fontWeight="bold">Total Amount:</Typography>
-                                <Typography variant="subtitle1" fontWeight="bold" color="primary">{currency(selectedOrder?.total)}</Typography>
-                            </Box>
-
-                            {selectedOrder?.amountTendered > 0 && (
-                                <>
-                                    <Box display="flex" justifyContent="space-between">
-                                        <Typography variant="body2" color="text.secondary">Amount Tendered:</Typography>
-                                        <Typography variant="body2">{currency(selectedOrder.amountTendered)}</Typography>
-                                    </Box>
-                                    <Box display="flex" justifyContent="space-between">
-                                        <Typography variant="body2" color="text.secondary">Change:</Typography>
-                                        <Typography variant="body2">{currency(selectedOrder.change)}</Typography>
-                                    </Box>
-                                </>
-                            )}
-
-                            {selectedOrder?.status === 'VOIDED' && (
-                                <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
-                                    <Typography variant="caption" color="error" display="block" fontWeight="bold">VOID REASON:</Typography>
-                                    <Typography variant="body2" color="error" sx={{ fontStyle: 'italic' }}>
-                                        {selectedOrder?.voidReason || "No reason provided."}
-                                    </Typography>
-                                    <Typography variant="caption" color="error" display="block" sx={{ mt: 0.5 }}>
-                                        Voided on: {fmtDateTime(selectedOrder?.voidedAt)}
-                                    </Typography>
-                                </Box>
-                            )}
-
-                            {selectedOrder?.isEdited && (
-                                <Box sx={{ mt: 2, pt: 1, borderTop: 1, borderColor: 'divider', opacity: 0.8 }}>
-                                    <Typography variant="caption" color="warning.main" display="block" fontWeight="bold">EDIT HISTORY:</Typography>
-                                    <Typography variant="body2" sx={{ fontStyle: 'italic' }}>
-                                        Reason: {selectedOrder?.editReason || "Modified by admin."}
-                                    </Typography>
-                                    <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
-                                        Last Edited: {fmtDateTime(selectedOrder?.editedAt)}
-                                    </Typography>
+                            {o.isEdited && (
+                                <Box sx={{ p: 2, bgcolor: 'warning.main', opacity: 0.85, borderRadius: 1 }}>
+                                    <Typography variant="caption" fontWeight="bold" display="block" sx={{ color: '#fff' }}>EDIT HISTORY</Typography>
+                                    <Typography variant="body2" sx={{ color: '#fff', fontStyle: 'italic' }}>{o.editReason || "Modified by admin."}</Typography>
+                                    <Typography variant="caption" sx={{ color: '#fff', opacity: 0.8 }} display="block">Edited: {fmtDateTime(o.editedAt)}</Typography>
                                 </Box>
                             )}
                         </Stack>
-                    </Box>
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setDetailsOpen(false)}>Close</Button>
-                    <Button startIcon={<ReceiptIcon />} onClick={() => handlePrintReceipt(selectedOrder)}>Print Receipt</Button>
-                    {selectedOrder?.status !== 'VOIDED' && (
-                        <Button startIcon={<EditIcon />} color="primary" onClick={() => { setDetailsOpen(false); handleEditOrder(selectedOrder); }}>
-                            Edit Order
-                        </Button>
-                    )}
-                </DialogActions>
-            </Dialog>
+                    );
+                })()}
+
+                {/* Edit mode content */}
+                {orderDrawer.mode === 'edit' && (
+                    <Stack spacing={3}>
+                        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+                            <TextField
+                                label="Customer Name"
+                                fullWidth
+                                value={editForm.customerName}
+                                onChange={(e) => setEditForm(prev => ({ ...prev, customerName: e.target.value }))}
+                            />
+                            <FormControl fullWidth>
+                                <InputLabel>Payment Method</InputLabel>
+                                <Select
+                                    value={editForm.paymentMethod}
+                                    label="Payment Method"
+                                    onChange={(e) => setEditForm(prev => ({ ...prev, paymentMethod: e.target.value }))}
+                                >
+                                    <MenuItem value="Cash">Cash</MenuItem>
+                                    <MenuItem value="GCash">GCash</MenuItem>
+                                    <MenuItem value="Charge">Charge (Debt)</MenuItem>
+                                </Select>
+                            </FormControl>
+                            {editForm.paymentMethod === 'Cash' && (
+                                <TextField
+                                    label="Amount Tendered"
+                                    type="number"
+                                    fullWidth
+                                    value={editForm.amountTendered}
+                                    onChange={(e) => setEditForm(prev => ({ ...prev, amountTendered: e.target.value }))}
+                                    InputProps={{ startAdornment: <InputAdornment position="start">₱</InputAdornment> }}
+                                />
+                            )}
+                        </Box>
+
+                        <Divider>Items</Divider>
+
+                        <TableContainer sx={{ maxHeight: 280 }}>
+                            <Table size="small">
+                                <TableHead>
+                                    <TableRow>
+                                        <TableCell>Item</TableCell>
+                                        <TableCell align="right" width={70}>Qty</TableCell>
+                                        <TableCell align="right" width={100}>Price</TableCell>
+                                        <TableCell align="right" width={100}>Total</TableCell>
+                                        <TableCell align="right" width={90}>Actions</TableCell>
+                                    </TableRow>
+                                </TableHead>
+                                <TableBody>
+                                    {editItems.map((item, idx) => (
+                                        <TableRow key={idx} sx={{ opacity: item.isVoided ? 0.4 : 1 }}>
+                                            <TableCell>
+                                                <Autocomplete
+                                                    size="small"
+                                                    freeSolo
+                                                    options={services.map(s => s.serviceName)}
+                                                    value={item.name}
+                                                    onChange={(e, newValue) => {
+                                                        const svc = services.find(s => s.serviceName === newValue);
+                                                        handleUpdateEditItem(idx, 'name', newValue || '');
+                                                        if (svc && svc.price) handleUpdateEditItem(idx, 'price', svc.price);
+                                                    }}
+                                                    renderInput={(params) => (
+                                                        <TextField
+                                                            {...params}
+                                                            label="Item / Service"
+                                                            onChange={(e) => handleUpdateEditItem(idx, 'name', e.target.value)}
+                                                            sx={{ textDecoration: item.isVoided ? 'line-through' : 'none' }}
+                                                        />
+                                                    )}
+                                                />
+                                            </TableCell>
+                                            <TableCell align="right">
+                                                <TextField size="small" type="number" value={item.quantity} onChange={(e) => handleUpdateEditItem(idx, 'quantity', e.target.value)} />
+                                            </TableCell>
+                                            <TableCell align="right">
+                                                <TextField size="small" type="number" value={item.price} onChange={(e) => handleUpdateEditItem(idx, 'price', e.target.value)} />
+                                            </TableCell>
+                                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>{currency(item.total)}</TableCell>
+                                            <TableCell align="right">
+                                                <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                                                    <Tooltip title={item.isVoided ? "Unvoid Item" : "Void Item"}>
+                                                        <IconButton size="small" onClick={() => handleVoidEditItem(idx)}>
+                                                            {item.isVoided ? <RestoreFromTrashIcon fontSize="small" color="success" /> : <BlockIcon fontSize="small" color="error" />}
+                                                        </IconButton>
+                                                    </Tooltip>
+                                                    <IconButton size="small" onClick={() => handleRemoveEditItem(idx)}>
+                                                        <DeleteIcon fontSize="small" />
+                                                    </IconButton>
+                                                </Stack>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </TableContainer>
+
+                        <Button startIcon={<AddIcon />} onClick={handleAddEditItem}>Add Item</Button>
+
+                        <Box sx={{ p: 2, bgcolor: 'background.default', borderRadius: 1, textAlign: 'right' }}>
+                            <Typography variant="h6" fontWeight="bold">
+                                New Total: {currency(editItems.reduce((sum, i) => sum + (Number(i.total) || 0), 0))}
+                            </Typography>
+                        </Box>
+
+                        <Divider>Audit Trail</Divider>
+
+                        <TextField
+                            label="Reason for Edit (Required)"
+                            fullWidth
+                            multiline
+                            rows={2}
+                            placeholder="e.g., Corrected quantity, Changed payment method..."
+                            value={editForm.editReason}
+                            onChange={(e) => setEditForm(prev => ({ ...prev, editReason: e.target.value }))}
+                            required
+                            error={!editForm.editReason.trim() && editForm.editReason.length > 0}
+                            helperText={!editForm.editReason.trim() ? "A reason is required to save changes." : ""}
+                        />
+                    </Stack>
+                )}
+            </DetailDrawer>
 
             {/* Confirmation Dialog for Void */}
             <ConfirmationReasonDialog
@@ -810,165 +954,6 @@ export default function OrderManagement({ showSnackbar }) {
                 />
             )}
 
-            {/* Edit Order Dialog */}
-            <Dialog open={editDialogOpen} onClose={() => setEditDialogOpen(false)} maxWidth="md" fullWidth>
-                <DialogTitle>Edit Order #{editingOrder?.orderNumber}</DialogTitle>
-                <DialogContent dividers>
-                    <Stack spacing={3}>
-                        {/* BASIC INFO */}
-                        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                            <TextField
-                                label="Customer Name"
-                                fullWidth
-                                value={editForm.customerName}
-                                onChange={(e) => setEditForm(prev => ({ ...prev, customerName: e.target.value }))}
-                            />
-                            <FormControl fullWidth>
-                                <InputLabel>Payment Method</InputLabel>
-                                <Select
-                                    value={editForm.paymentMethod}
-                                    label="Payment Method"
-                                    onChange={(e) => setEditForm(prev => ({ ...prev, paymentMethod: e.target.value }))}
-                                >
-                                    <MenuItem value="Cash">Cash</MenuItem>
-                                    <MenuItem value="GCash">GCash</MenuItem>
-                                    <MenuItem value="Charge">Charge (Debt)</MenuItem>
-                                </Select>
-                            </FormControl>
-                            {editForm.paymentMethod === 'Cash' && (
-                                <TextField
-                                    label="Amount Tendered"
-                                    type="number"
-                                    fullWidth
-                                    value={editForm.amountTendered}
-                                    onChange={(e) => setEditForm(prev => ({ ...prev, amountTendered: e.target.value }))}
-                                    InputProps={{
-                                        startAdornment: <InputAdornment position="start">₱</InputAdornment>,
-                                    }}
-                                />
-                            )}
-                        </Box>
-
-                        <Divider>Items</Divider>
-
-                        {/* ITEMS TABLE */}
-                        <TableContainer sx={{ maxHeight: 300 }}>
-                            <Table size="small">
-                                <TableHead>
-                                    <TableRow>
-                                        <TableCell>Item Name</TableCell>
-                                        <TableCell align="right" width={80}>Qty</TableCell>
-                                        <TableCell align="right" width={110}>Price</TableCell>
-                                        <TableCell align="right" width={110}>Total</TableCell>
-                                        <TableCell align="right" width={100}>Actions</TableCell>
-                                    </TableRow>
-                                </TableHead>
-                                <TableBody>
-                                    {editItems.map((item, idx) => (
-                                        <TableRow key={idx} sx={{ opacity: item.isVoided ? 0.4 : 1 }}>
-                                            <TableCell>
-                                                <Autocomplete
-                                                    size="small"
-                                                    freeSolo
-                                                    options={services.map(s => s.serviceName)}
-                                                    value={item.name}
-                                                    onChange={(e, newValue) => {
-                                                        const svc = services.find(s => s.serviceName === newValue);
-                                                        handleUpdateEditItem(idx, 'name', newValue || '');
-                                                        if (svc && svc.price) {
-                                                            handleUpdateEditItem(idx, 'price', svc.price);
-                                                        }
-                                                    }}
-                                                    renderInput={(params) => (
-                                                        <TextField
-                                                            {...params}
-                                                            label="Item / Service"
-                                                            onChange={(e) => handleUpdateEditItem(idx, 'name', e.target.value)}
-                                                            sx={{ textDecoration: item.isVoided ? 'line-through' : 'none' }}
-                                                        />
-                                                    )}
-                                                />
-                                            </TableCell>
-                                            <TableCell align="right">
-                                                <TextField
-                                                    size="small"
-                                                    type="number"
-                                                    value={item.quantity}
-                                                    onChange={(e) => handleUpdateEditItem(idx, 'quantity', e.target.value)}
-                                                />
-                                            </TableCell>
-                                            <TableCell align="right">
-                                                <TextField
-                                                    size="small"
-                                                    type="number"
-                                                    value={item.price}
-                                                    onChange={(e) => handleUpdateEditItem(idx, 'price', e.target.value)}
-                                                />
-                                            </TableCell>
-                                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>
-                                                {currency(item.total)}
-                                            </TableCell>
-                                            <TableCell align="right">
-                                                <Stack direction="row" spacing={0.5} justifyContent="flex-end">
-                                                    <Tooltip title={item.isVoided ? "Unvoid Item" : "Void Item"}>
-                                                        <IconButton size="small" onClick={() => handleVoidEditItem(idx)}>
-                                                            {item.isVoided ? (
-                                                                <RestoreFromTrashIcon fontSize="small" color="success" />
-                                                            ) : (
-                                                                <BlockIcon fontSize="small" color="error" />
-                                                            )}
-                                                        </IconButton>
-                                                    </Tooltip>
-                                                    <IconButton size="small" onClick={() => handleRemoveEditItem(idx)}>
-                                                        <DeleteIcon fontSize="small" />
-                                                    </IconButton>
-                                                </Stack>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
-                        </TableContainer>
-
-                        <Button startIcon={<AddIcon />} onClick={handleAddEditItem}>
-                            Add Item
-                        </Button>
-
-                        <Box sx={{ p: 2, bgcolor: 'background.default', borderRadius: 1, textAlign: 'right' }}>
-                            <Typography variant="h6" fontWeight="bold">
-                                New Total: {currency(editItems.reduce((sum, i) => sum + (Number(i.total) || 0), 0))}
-                            </Typography>
-                        </Box>
-
-                        <Divider>Audit Trail</Divider>
-
-                        <TextField
-                            label="Reason for Edit (Required)"
-                            fullWidth
-                            multiline
-                            rows={2}
-                            placeholder="e.g., Corrected quantity, Changed payment method..."
-                            value={editForm.editReason}
-                            onChange={(e) => setEditForm(prev => ({ ...prev, editReason: e.target.value }))}
-                            required
-                            error={!editForm.editReason.trim() && editForm.editReason.length > 0}
-                            helperText={!editForm.editReason.trim() ? "A reason is required to save changes." : ""}
-                        />
-                    </Stack>
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setEditDialogOpen(false)}>Cancel</Button>
-                    <Button
-                        variant="contained"
-                        color="primary"
-                        startIcon={<SaveIcon />}
-                        onClick={saveEditOrder}
-                        disabled={!editForm.editReason.trim()}
-                    >
-                        Save Changes
-                    </Button>
-                </DialogActions>
-            </Dialog>
         </Box>
     );
 }

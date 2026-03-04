@@ -400,7 +400,7 @@ export default function AdminDashboard({ user, onLogout }) {
               </Box>
             } />
             <Route path="payroll" element={
-              <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
+              <Box sx={{ p: 2, height: '100%', overflowY: 'auto' }}>
                 <Payroll showSnackbar={showSnackbar} />
               </Box>
             } />

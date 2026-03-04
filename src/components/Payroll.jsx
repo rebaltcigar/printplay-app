@@ -1,4 +1,4 @@
-// src/components/Payroll.jsx
+// src/components/Payroll.jsx — v0.1.27
 import React, { useState, useRef } from "react";
 import { Box, Card, Tab, Tabs } from "@mui/material";
 import RunPayroll from "./payroll/RunPayroll";
@@ -8,7 +8,13 @@ import PageHeader from "./common/PageHeader";
 
 export default function Payroll({ user, showSnackbar }) {
   const [tab, setTab] = useState(0);
+  const [openRunId, setOpenRunId] = useState(null);
   const requestOpenDialogRef = useRef(null);
+
+  const onEditRun = (id) => {
+    setOpenRunId(id);
+    setTab(0);
+  };
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2, p: 3 }}>
@@ -33,6 +39,8 @@ export default function Payroll({ user, showSnackbar }) {
         {tab === 0 && (
           <RunPayroll
             user={user}
+            openRunId={openRunId}
+            onOpenedFromHistory={() => setOpenRunId(null)}
             requestOpenDialogRef={requestOpenDialogRef}
             showSnackbar={showSnackbar}
           />
@@ -40,6 +48,7 @@ export default function Payroll({ user, showSnackbar }) {
         {tab === 1 && (
           <AllRuns
             showSnackbar={showSnackbar}
+            onEditRun={onEditRun}
           />
         )}
         {tab === 2 && <PayRates showSnackbar={showSnackbar} />}
