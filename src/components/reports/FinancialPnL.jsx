@@ -108,7 +108,7 @@ export default function FinancialPnL() {
                 // Note: txAmount returns positive for sales, negative for expenses usually, 
                 // but let's stick to the analytics helper logic or explicit checks.
 
-                if (t.item === 'New Debt' || t.item === 'Paid Debt' || t.category === 'credit') return; // Skip debt flow for P&L revenue
+                if (t.item === 'New Debt' || t.item === 'Paid Debt' || t.category === 'expense' || t.category === 'credit') return; // Skip debt/expense for P&L revenue
 
                 // Check if purely expense
                 const type = (t.expenseType || "").toLowerCase();

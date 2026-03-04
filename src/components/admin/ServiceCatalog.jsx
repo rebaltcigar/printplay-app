@@ -28,7 +28,7 @@ export default function ServiceCatalog({ showSnackbar }) {
     serviceName: '',
     price: '',
     active: true,
-    category: 'Debit', // Always Debit for Catalog
+    category: 'Sale', // Always Sale for Catalog
     parentServiceId: null,
     adminOnly: false,
     type: 'service',
@@ -52,9 +52,9 @@ export default function ServiceCatalog({ showSnackbar }) {
     confirmColor: 'error'
   });
 
-  // Load ONLY Debit items (Services/Retail)
+  // Load ONLY Sale items (Services/Retail)
   useEffect(() => {
-    const q = query(collection(db, 'services'), where('category', '==', 'Debit'));
+    const q = query(collection(db, 'services'), where('category', '==', 'Sale'));
     const unsub = onSnapshot(q, snap => {
       setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
@@ -93,7 +93,7 @@ export default function ServiceCatalog({ showSnackbar }) {
     setEditing(null);
     setForm({
       serviceName: '', price: '', active: true,
-      category: 'Debit', parentServiceId: null, adminOnly: false,
+      category: 'Sale', parentServiceId: null, adminOnly: false,
       type: 'service', costPrice: '', trackStock: false, stockCount: 0, lowStockThreshold: 5
     });
     setOpen(true);
@@ -105,7 +105,7 @@ export default function ServiceCatalog({ showSnackbar }) {
       serviceName: item.serviceName || '',
       price: Number(item.price || 0),
       active: Boolean(item.active ?? true),
-      category: 'Debit',
+      category: 'Sale',
       parentServiceId: item.parentServiceId || null,
       adminOnly: Boolean(item.adminOnly ?? false),
       type: item.type || 'service',
@@ -136,7 +136,7 @@ export default function ServiceCatalog({ showSnackbar }) {
       serviceName: String(form.serviceName).trim(),
       price: Number(form.price || 0),
       active: Boolean(form.active),
-      category: 'Debit',
+      category: 'Sale',
       parentServiceId: form.parentServiceId || null,
       adminOnly: Boolean(form.adminOnly),
       // Fields

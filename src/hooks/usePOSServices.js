@@ -32,7 +32,7 @@ export function usePOSServices() {
 
             // Main POS service list:
             //   - Must be active
-            //   - Not a Credit (debt) item
+            //   - Not an Expense (cost) item
             //   - Not "New Debt" or "Paid Debt" internal items
             //   - Not the Expenses parent itself
             //   - Not a child of the Expenses parent
@@ -40,7 +40,7 @@ export function usePOSServices() {
             let list = items.filter(
                 (i) =>
                     i.active &&
-                    i.category !== 'Credit' &&
+                    i.category !== 'Expense' &&
                     i.serviceName !== 'New Debt' &&
                     i.serviceName !== 'Paid Debt' &&
                     i.id !== expenseParentId &&

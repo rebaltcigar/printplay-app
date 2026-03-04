@@ -2,7 +2,21 @@
 
 All notable changes to this project will be documented in this file.
  
+## [0.1.23] - 2026-03-04
+
+### Added
+- **Data Migration Tool** (`Settings → Data Migration`): Admin panel for running one-time Firestore data migrations. Features a live progress bar, real-time timestamped log console with colour-coded levels (INFO / WARN / ERROR / DEBUG), DEBUG toggle to show per-document change details, copy-to-clipboard log export, idempotency pre-run warning, and a result summary card showing updated vs. skipped counts. Retry and re-run supported after both success and failure.
+- **COGS expense sub-type**: Added "COGS (Cost of Goods Sold)" as a third `financialCategory` option in Expense Types settings alongside OPEX and CAPEX, for tracking direct cost of resold goods.
+
+### Changed
+- **Catalogue category values redesigned**: Renamed `category` field values in the `services` Firestore collection from accounting jargon (`'Debit'` / `'Credit'`) to plain English (`'Sale'` / `'Expense'`). All reads, writes, and filters across the codebase updated accordingly (`ServiceCatalog`, `ExpenseSettings`, `usePOSServices`, `ExpenseManagement`, `POS`).
+- **Analytics classification** (`analytics.js` → `classifyTx`): Updated to recognise both new values (`'sale'` / `'expense'`) and legacy values (`'debit'` / `'credit'`) for backward compatibility with existing transaction history.
+- **Shift financials** (`shiftFinancials.js` → `aggregateShiftTransactions`): Updated category comparison and fallback assignment to use new values with legacy fallback.
+- **Dashboard KPI** (`AdminHome.jsx`): Expense detection now checks `category === 'expense'` (new) in addition to `category === 'credit'` (legacy) so existing transactions continue to display correctly.
+- **P&L Report** (`FinancialPnL.jsx`): Legacy fallback skip-filter updated to exclude both `'expense'` and `'credit'` category transactions from the revenue line.
+
 ## [0.1.22] - 2026-03-04
+
 
 ### Added
 - **Shared components**: new zero-duplication UI elements for universal use across the app.

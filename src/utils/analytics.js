@@ -108,11 +108,13 @@ export function classifyTx(t, serviceMap) {
   const item = normalize(t.item);
   if (serviceMap.has(item)) {
     const cat = normalize(serviceMap.get(item).category);
-    if (cat === "debit") return "sale";
-    if (cat === "credit") return "expense";
+    // New values: 'sale' / 'expense'
+    // Legacy fallback: 'debit' (old sale) / 'credit' (old expense)
+    if (cat === 'sale' || cat === 'debit') return 'sale';
+    if (cat === 'expense' || cat === 'credit') return 'expense';
   }
-  if (String(t.item) === "Expenses") return "expense";
-  if (item) return "unknownSale";
+  if (String(t.item) === 'Expenses') return 'expense';
+  if (item) return 'unknownSale';
   return null;
 }
 

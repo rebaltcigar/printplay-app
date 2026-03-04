@@ -233,10 +233,12 @@ export const aggregateShiftTransactions = (txList = [], serviceMeta = []) => {
 
         const isPcRental = itemName === 'pc rental';
 
-        // Determine category (debit = sale, credit = expense)
+        // Determine category (sale = revenue, expense = cost)
+        // New values: 'Sale' / 'Expense'
+        // Legacy fallback: 'debit' (old sale) / 'credit' (old expense)
         let cat = nameToCategory[itemName];
         if (!cat) {
-            cat = itemName === 'expenses' ? 'credit' : 'debit';
+            cat = itemName === 'expenses' ? 'expense' : 'sale';
         }
 
         let amt = Number(tx.total);
@@ -253,7 +255,7 @@ export const aggregateShiftTransactions = (txList = [], serviceMeta = []) => {
 
         serviceTotals[displayName] = (serviceTotals[displayName] || 0) + amt;
 
-        if (normalize(cat) === 'debit') {
+        if (normalize(cat) === 'sale' || normalize(cat) === 'debit') {
             if (!isPcRental) {
                 sales += amt;
             }

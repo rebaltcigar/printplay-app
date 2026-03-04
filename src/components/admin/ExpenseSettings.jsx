@@ -32,9 +32,9 @@ export default function ExpenseSettings({ showSnackbar }) {
     // Confirm Delete
     const [confirmDialog, setConfirmDialog] = useState({ open: false });
 
-    // Load "Credit" services (Expense Types)
+    // Load "Expense" services (Expense Types)
     useEffect(() => {
-        const q = query(collection(db, 'services'), where('category', '==', 'Credit'));
+        const q = query(collection(db, 'services'), where('category', '==', 'Expense'));
         const unsub = onSnapshot(q, (snap) => {
             const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
             // Sort: Active first, then alphabet
@@ -77,7 +77,7 @@ export default function ExpenseSettings({ showSnackbar }) {
         try {
             const payload = {
                 serviceName: form.name.trim(),
-                category: 'Credit', // Always Credit for Expenses
+                category: 'Expense', // Always Expense for expense types
                 financialCategory: form.financialCategory,
                 active: form.active,
                 lastUpdated: serverTimestamp()
@@ -213,6 +213,12 @@ export default function ExpenseSettings({ showSnackbar }) {
                                     <Box>
                                         <Typography variant="body1">CAPEX (Capital Expenditure)</Typography>
                                         <Typography variant="caption" color="text.secondary">Assets, Equipment, Renovations</Typography>
+                                    </Box>
+                                </MenuItem>
+                                <MenuItem value="COGS">
+                                    <Box>
+                                        <Typography variant="body1">COGS (Cost of Goods Sold)</Typography>
+                                        <Typography variant="caption" color="text.secondary">Direct costs: raw materials, resold goods</Typography>
                                     </Box>
                                 </MenuItem>
                             </Select>

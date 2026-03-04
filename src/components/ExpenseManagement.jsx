@@ -151,13 +151,13 @@ export default function ExpenseManagement({ user, showSnackbar }) {
     requireReason: false,
   });
 
-  /** ===================== LOAD CREDIT SERVICES ===================== */
+  /** ===================== LOAD EXPENSE SERVICES ===================== */
   useEffect(() => {
-    const fetchCreditServices = async () => {
+    const fetchExpenseServices = async () => {
       try {
         const qServices = query(
           collection(db, "services"),
-          where("category", "==", "Credit")
+          where("category", "==", "Expense")
         );
         const snap = await getDocs(qServices);
         const servicesData = snap.docs.map((d) => {
@@ -169,10 +169,10 @@ export default function ExpenseManagement({ user, showSnackbar }) {
         });
         setCreditServices(servicesData);
       } catch (e) {
-        console.warn("Failed to load credit services for expenses dropdown.", e);
+        console.warn("Failed to load expense services for expenses dropdown.", e);
       }
     };
-    fetchCreditServices();
+    fetchExpenseServices();
   }, []);
 
   const expenseTypes = useMemo(() => {

@@ -4,6 +4,7 @@ import SettingsLayout from './SettingsLayout';
 import StoreSettings from './StoreSettings';
 import DataAggregator from './DataAggregator';
 import ExpenseSettings from './ExpenseSettings';
+import DataMigration from './DataMigration';
 
 export default function Settings({ user, showSnackbar, isActive = true }) {
     if (!isActive) return null;
@@ -37,6 +38,9 @@ export default function Settings({ user, showSnackbar, isActive = true }) {
 
                 {/* Data Core */}
                 <Route path="datacore" element={<DataAggregator showSnackbar={showSnackbar} />} />
+
+                {/* Data Migration */}
+                <Route path="datamigration" element={<DataMigration showSnackbar={showSnackbar} />} />
 
                 {/* Fallback */}
                 <Route path="*" element={<Navigate to="" replace />} />

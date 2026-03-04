@@ -455,7 +455,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
           timestamp: serverTimestamp(),
           staffEmail: user.email,
           shiftId: activeShiftId,
-          category: item === 'Expenses' ? 'Credit' : 'Debt',
+          category: item === 'Expenses' ? 'Expense' : 'Debt',
           isDeleted: false
         });
         setItem(''); setQuantity(''); setPrice(''); setNotes('');

@@ -155,7 +155,8 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
 
       const amt = txAmount(t);
       const isExp =
-        t.category === "credit" ||
+        t.category === "expense" ||
+        t.category === "credit" || // legacy fallback
         (t.amount < 0 && !t.serviceId) ||
         t.expenseType ||
         t.item === "Expenses";
