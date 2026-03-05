@@ -4,6 +4,7 @@ import SettingsLayout from './SettingsLayout';
 import StoreSettings from './StoreSettings';
 import DataAggregator from './DataAggregator';
 import ExpenseSettings from './ExpenseSettings';
+import ShiftTemplateSettings from './ShiftTemplateSettings';
 
 export default function Settings({ user, showSnackbar, isActive = true }) {
     if (!isActive) return null;
@@ -31,6 +32,9 @@ export default function Settings({ user, showSnackbar, isActive = true }) {
 
                 {/* Expense Types */}
                 <Route path="expensetypes" element={<ExpenseSettings showSnackbar={showSnackbar} />} />
+
+                {/* Shift Templates */}
+                <Route path="shifttemplates" element={<ShiftTemplateSettings showSnackbar={showSnackbar} />} />
 
                 {/* ID System */}
                 <Route path="ids" element={<StoreSettings section="ids" user={user} showSnackbar={showSnackbar} />} />

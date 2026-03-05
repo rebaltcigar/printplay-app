@@ -9,6 +9,7 @@ import LockIcon from "@mui/icons-material/Lock";
 import StorageIcon from "@mui/icons-material/Storage";
 import ListAltIcon from "@mui/icons-material/ListAlt";
 import TagIcon from "@mui/icons-material/Tag";
+import AccessTimeIcon from "@mui/icons-material/AccessTime";
 import { useNavigate, useLocation } from 'react-router-dom';
 
 export default function SettingsLayout({ children }) {
@@ -22,6 +23,7 @@ export default function SettingsLayout({ children }) {
         { id: 'security', path: 'security', label: 'Security & Biometrics', icon: <LockIcon /> },
         { id: 'hardware', path: 'hardware', label: 'Hardware & Hotkeys', icon: <ComputerIcon /> },
         { id: 'expensetypes', path: 'expensetypes', label: 'Expense Types', icon: <ListAltIcon /> },
+        { id: 'shifttemplates', path: 'shifttemplates', label: 'Shift Templates', icon: <AccessTimeIcon /> },
         { id: 'ids', path: 'ids', label: 'ID System', icon: <TagIcon /> },
         { id: 'datacore', path: 'datacore', label: 'Data Core', icon: <StorageIcon /> },
     ];

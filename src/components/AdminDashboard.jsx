@@ -34,6 +34,7 @@ import CategoryIcon from "@mui/icons-material/Category";
 import InventoryIcon from "@mui/icons-material/Inventory";
 import PeopleIcon from "@mui/icons-material/People";
 import BadgeIcon from "@mui/icons-material/Badge";
+import EventNoteIcon from "@mui/icons-material/EventNote";
 import ListItemIcon from "@mui/material/ListItemIcon";
 
 import StoreSettings from "./admin/StoreSettings"; // Used in Settings wrapper? No, replaced by Settings.jsx
@@ -59,6 +60,7 @@ import Transactions from "./Transactions";
 import Payroll from "./Payroll";
 import Reports from "./Reports";
 import OrderManagement from "./OrderManagement";
+import Schedule from "./admin/Schedule";
 
 export default function AdminDashboard({ user, onLogout }) {
   // Router hooks
@@ -129,6 +131,7 @@ export default function AdminDashboard({ user, onLogout }) {
     { label: "Catalog", path: "catalog", icon: <CategoryIcon /> },
     { label: "Inventory", path: "inventory", icon: <InventoryIcon /> },
     { label: "Users", path: "users", icon: <PeopleIcon /> },
+    { label: "Schedule", path: "schedule", icon: <EventNoteIcon /> },
     { label: "Payroll", path: "payroll", icon: <BadgeIcon /> },
     { label: "Settings", path: "settings", icon: <SettingsIcon /> },
   ];
@@ -397,6 +400,11 @@ export default function AdminDashboard({ user, onLogout }) {
             <Route path="users" element={
               <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
                 <UserManagement showSnackbar={showSnackbar} />
+              </Box>
+            } />
+            <Route path="schedule" element={
+              <Box sx={{ p: 0, height: '100%', overflow: 'hidden' }}>
+                <Schedule showSnackbar={showSnackbar} />
               </Box>
             } />
             <Route path="payroll" element={

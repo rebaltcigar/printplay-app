@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "print-and-play-app"
+    "default": "print-and-play-app",
+    "dev": "print-and-play-app",
+    "prod": "printplay-prod-23f4e"
   }
 }

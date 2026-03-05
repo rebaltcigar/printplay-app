@@ -1,7 +1,33 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
- 
+
+## [0.1.31] - 2026-03-05
+
+### Staff Scheduling, Multi-Staff Login & Login Redesign
+
+#### Added
+- **Staff Scheduling**: New Schedule tab in the admin panel. Week-view calendar with shift templates as rows and staff chips per cell. Add, edit, mark absent, assign coverage, copy last week.
+- **Shift Templates**: Manage templates (name, start/end time) in Settings → Shift Templates. Disable/enable instead of hard delete. Cannot disable last active template. Seeds Morning / Afternoon / Evening defaults on first load.
+- **Multi-staff clock-in**: A second staff member can log in while a cashier's shift is active. Shown a "Clock In" confirmation, then routed to a minimal dashboard (My Schedule, My Paystubs, Clock Out). No POS access. Clock-in time logged to `payroll_logs`.
+- **Coverage flow**: Admin can mark staff absent and assign a covering staff member. Status tracks `absent` → `covered` with `coveredByEmail/Name`.
+- **Copy Last Week**: One-click schedule copy to current week (status reset to `scheduled`).
+- **Login page redesign**: Full-screen dark layout with animated grid lines, rising particle canvas, and glassmorphism card. Logo and store name displayed at top of card. Four-phase flow: credentials → shift confirm / fallback / clock-in.
+- **Loading screen shimmer**: Message text in the universal `LoadingScreen` now uses an animated shimmer effect.
+
+#### Changed
+- **Admin login bypass**: Admin / owner accounts are no longer blocked by the shift lock — they always go straight to the admin dashboard.
+- **Staff profile display-only**: Name and role fields in My Account are read-only; changes must go through an administrator.
+- **Login loads immediately**: App no longer shows an "Initializing…" screen before rendering the login page.
+
+#### Fixed
+- **Paystubs blank on staff's POS**: Corrected Firestore index from composite to single-field `fieldOverrides` for the `paystubs` collectionGroup query on `staffEmail`.
+
+#### Firestore
+- New collections: `/schedules`, `/shiftTemplates`
+- New rules: `schedules`, `shiftTemplates`, `payroll_logs` (staff may update their own `clockOut`)
+- Updated indexes: `paystubs` single-field collectionGroup index on `staffEmail`
+
 ## [0.1.28] - 2026-03-05
 
 ### Payroll — Expanded Row & Paystub Fixes

@@ -45,6 +45,7 @@ import CheckoutDialog from './CheckoutDialog';
 import ExpenseDialog from './ExpenseDialog';
 import DrawerDialog from './DrawerDialog';
 import EndShiftDialog from './EndShiftDialog';
+import POSSidebar from './pos/POSSidebar';
 import EditTransactionDialog from './EditTransactionDialog';
 import DeleteTransactionDialog from './DeleteTransactionDialog'; // ADDED
 import ChangeDisplayDialog from './ChangeDisplayDialog'; // ADDED
@@ -111,6 +112,10 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
   // --- LEGACY SHIFT STATE ---
   const [shiftStart, setShiftStart] = useState(null);
   const [elapsed, setElapsed] = useState('00:00:00');
+  const [elapsedMs, setElapsedMs] = useState(0);
+
+  // --- SIDEBAR ---
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [transactions, setTransactions] = useState([]);
   const [staffDisplayName, setStaffDisplayName] = useState(user?.email || '');
 
@@ -308,6 +313,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
     if (!shiftStart) return;
     const id = setInterval(() => {
       const diffMs = Date.now() - shiftStart.getTime();
+      setElapsedMs(diffMs);
       const h = Math.floor(diffMs / 3600000);
       const m = Math.floor((diffMs % 3600000) / 60000);
       const s = Math.floor((diffMs % 60000) / 1000);
@@ -316,6 +322,15 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
     }, 1000);
     return () => clearInterval(id);
   }, [shiftStart]);
+
+  // Shift alert state (soft enforce)
+  const shiftDurationMs  = (systemSettings.shiftDurationHours  || 12) * 3_600_000;
+  const alertThresholdMs = (systemSettings.shiftAlertMinutes   || 30) *    60_000;
+  const shiftAlertState  = elapsedMs === 0 ? 'normal'
+    : elapsedMs >= shiftDurationMs                        ? 'danger'
+    : elapsedMs >= shiftDurationMs - alertThresholdMs     ? 'warning'
+    : 'normal';
+  const minsRemaining = Math.ceil((shiftDurationMs - elapsedMs) / 60_000);
 
   // Load Transactions Log
   useEffect(() => {
@@ -987,7 +1002,13 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
       {/* --- HEADER --- */}
       <AppBar position="static" color="default" elevation={1} sx={{ bgcolor: 'background.paper', borderBottom: 1, borderColor: 'divider' }}>
         <Toolbar sx={{ gap: 1 }}>
-          <Box onClick={(e) => setStaffMenuAnchor(e.currentTarget)} sx={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          {/* Hamburger → opens staff sidebar */}
+          <IconButton size="small" onClick={() => setSidebarOpen(true)} sx={{ mr: 0.5 }}>
+            <MenuIcon />
+          </IconButton>
+
+          {/* Branding */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
             {systemSettings.logoUrl ? (
               <img src={systemSettings.logoUrl} alt="logo" height={32} style={{ maxWidth: 120, objectFit: 'contain' }} />
             ) : (
@@ -1005,6 +1026,13 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
 
           <Box sx={{ flexGrow: 1 }} />
 
+          {/* Shift timer */}
+          {elapsed !== '00:00:00' && (
+            <Typography variant="caption" color="text.secondary" sx={{ display: { xs: 'none', sm: 'block' }, fontFamily: 'monospace', mr: 1 }}>
+              {elapsed}
+            </Typography>
+          )}
+
           {/* Action Buttons */}
           <Box sx={{ display: { xs: 'none', sm: 'flex' }, gap: 1 }}>
             <Button size="small" variant="outlined" color="error" onClick={() => setOpenDrawerDialog(true)}>Drawer</Button>
@@ -1013,33 +1041,35 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
           </Box>
 
           {/* Mobile Menu */}
-          <IconButton sx={{ ml: 'auto', display: { xs: 'flex', sm: 'none' } }} onClick={(e) => setMenuAnchor(e.currentTarget)}>
-            <MenuIcon />
-          </IconButton>
-
           <MuiMenu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)}>
             <MenuItem onClick={() => { setMenuAnchor(null); setOpenExpense(true); }}>+ Expense</MenuItem>
             <MenuItem onClick={() => { setMenuAnchor(null); setOpenDebtDialog(true); }}>Debt Log</MenuItem>
             <MenuItem onClick={() => { setMenuAnchor(null); setOpenEndShiftDialog(true); }}>End Shift</MenuItem>
           </MuiMenu>
-
-          <MuiMenu id="staff-menu" anchorEl={staffMenuAnchor} open={Boolean(staffMenuAnchor)} onClose={() => setStaffMenuAnchor(null)}>
-            <MenuItem onClick={() => { setStaffMenuAnchor(null); setOpenDebtDialog(true); }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <MoneyOffIcon fontSize="small" color="action" /> Debt Log
-              </Box>
-            </MenuItem>
-
-
-
-            <MenuItem onClick={() => { setStaffMenuAnchor(null); handleLogoutOnly(); }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <LogoutIcon fontSize="small" /> Logout
-              </Box>
-            </MenuItem>
-          </MuiMenu>
         </Toolbar>
       </AppBar>
+
+      {/* Shift duration warning banners */}
+      {shiftAlertState === 'warning' && (
+        <Alert severity="warning" sx={{ borderRadius: 0, py: 0.5 }}>
+          Shift ending in {minsRemaining} min — prepare your cash count and end shift when ready.
+        </Alert>
+      )}
+      {shiftAlertState === 'danger' && (
+        <Alert severity="error" sx={{ borderRadius: 0, py: 0.5 }}>
+          Shift limit reached. Please perform your cash count and end shift.
+        </Alert>
+      )}
+
+      {/* Staff sidebar */}
+      <POSSidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        user={user}
+        onLogout={handleLogoutOnly}
+        showSnackbar={showSnackbar}
+        onOpenDebt={() => setOpenDebtDialog(true)}
+      />
 
       {/* --- 2-COLUMN LAYOUT (50/50) --- */}
       <Box sx={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', alignItems: 'center', bgcolor: '#0e0e0e' }}>

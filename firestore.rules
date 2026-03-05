@@ -61,12 +61,12 @@ service cloud.firestore {
 
       // updates:
       // 1. Admin can update anything.
-      // 2. User can update their own doc (except critical role/payroll).
+      // 2. User can update their own doc (except critical fields — name is admin-only for payroll integrity).
       // 3. Any Staff can update 'isClockedIn' status (for shared terminal).
-      allow update: if isAdmin() || 
+      allow update: if isAdmin() ||
         (
           uid == request.auth.uid &&
-          !request.resource.data.diff(resource.data).changedKeys().hasAny(['role','payroll'])
+          !request.resource.data.diff(resource.data).changedKeys().hasAny(['role','payroll','fullName','name','displayName'])
         ) ||
         (
           isStaff() && 
@@ -77,7 +77,14 @@ service cloud.firestore {
     /* ---------- Payroll Logs (Time Clock) ---------- */
     match /payroll_logs/{logId} {
       allow create, read: if isSignedIn();
-      allow update, delete: if isAdmin(); 
+      // Staff can only write their own clockOut timestamp (clock-in dashboard)
+      allow update: if isAdmin() ||
+        (
+          isStaff() &&
+          resource.data.staffUid == request.auth.uid &&
+          request.resource.data.diff(resource.data).changedKeys().hasOnly(['clockOut'])
+        );
+      allow delete: if isAdmin();
     }
 
     /* ---------- Shifts ---------- */
@@ -144,6 +151,20 @@ service cloud.firestore {
       allow read, write: if isSignedIn();
     }
 
+    /* ---------- Schedules ---------- */
+    match /schedules/{id} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() || isStaff();
+      allow update: if isAdmin() || (isStaff() && resource.data.staffEmail == request.auth.token.email);
+      allow delete: if isAdmin();
+    }
+
+    /* ---------- Shift Templates ---------- */
+    match /shiftTemplates/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
     /* ---------- Payroll & Scheduling ---------- */
     match /payPeriods/{id} {
       allow read, write: if isAdmin();
@@ -158,6 +179,11 @@ service cloud.firestore {
         match /shifts/{sid} { allow read, write: if isAdmin(); }
       }
       match /paystubs/{stubId} { allow read, write: if isAdmin(); }
+    }
+
+    /* ---------- Paystubs (collectionGroup — staff self-service) ---------- */
+    match /{path=**}/paystubs/{stubId} {
+      allow read: if isAdmin() || (isStaff() && resource.data.staffEmail == request.auth.token.email);
     }
 
     /* ---------- Expenses (Legacy) ---------- */
