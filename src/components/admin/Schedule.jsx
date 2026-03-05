@@ -1,16 +1,16 @@
 // src/components/admin/Schedule.jsx
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Box, Typography, Button, Stack, Chip, IconButton, Tabs, Tab,
   Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
   TextField, MenuItem, Select, FormControl, InputLabel,
-  Tooltip, Divider,
+  Tooltip, Divider, Switch,
   Dialog, DialogTitle, DialogContent, DialogActions,
   Card, CircularProgress, Alert,
 } from '@mui/material';
 import {
   collection, query, where, getDocs, addDoc, updateDoc, deleteDoc,
-  doc, serverTimestamp, onSnapshot,
+  doc, serverTimestamp, onSnapshot, writeBatch,
 } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useStaffList } from '../../hooks/useStaffList';
@@ -77,10 +77,10 @@ const STATUS_CFG = {
   covered:       { label: 'Covered',   color: 'warning' },
 };
 
-const DEFAULT_TPLS = [
-  { id: '_m', name: 'Morning',   startTime: '08:00', endTime: '14:00' },
-  { id: '_a', name: 'Afternoon', startTime: '14:00', endTime: '20:00' },
-  { id: '_e', name: 'Evening',   startTime: '20:00', endTime: '02:00' },
+const TEMPLATE_SEEDS = [
+  { name: 'Morning',   startTime: '08:00', endTime: '14:00' },
+  { name: 'Afternoon', startTime: '14:00', endTime: '20:00' },
+  { name: 'Evening',   startTime: '20:00', endTime: '02:00' },
 ];
 
 const BLANK_ENTRY = { staffEmail: '', date: '', shiftLabel: '', startTime: '', endTime: '', notes: '', status: 'scheduled' };
@@ -140,7 +140,8 @@ export default function Schedule({ showSnackbar }) {
   const [tab, setTab] = useState(0);
   const [weekStart, setWeekStart] = useState(() => getWeekStart(todayPHT()));
   const [entries, setEntries] = useState([]);
-  const [templates, setTemplates] = useState(DEFAULT_TPLS);
+  const [templates, setTemplates] = useState([]);
+  const tplSeededRef = useRef(false);
   const [loadingEntries, setLoadingEntries] = useState(true);
 
   // Drawers & dialogs
@@ -177,13 +178,25 @@ export default function Schedule({ showSnackbar }) {
     return unsub;
   }, [weekStart, weekEnd]);
 
-  // Subscribe shift templates
+  // Subscribe shift templates — seeds defaults on first run if collection is empty
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'shiftTemplates'), snap => {
+    const unsub = onSnapshot(collection(db, 'shiftTemplates'), async snap => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      // Sort by startTime so Morning → Afternoon → Evening ordering is natural
       list.sort((a, b) => (a.startTime || '').localeCompare(b.startTime || '') || (a.name || '').localeCompare(b.name || ''));
-      setTemplates(list.length ? list : DEFAULT_TPLS);
+
+      if (list.length === 0 && !tplSeededRef.current) {
+        tplSeededRef.current = true;
+        const batch = writeBatch(db);
+        for (const seed of TEMPLATE_SEEDS) {
+          batch.set(doc(collection(db, 'shiftTemplates')), {
+            ...seed, isDefault: true, disabled: false, createdAt: serverTimestamp(),
+          });
+        }
+        await batch.commit().catch(console.error);
+        return;
+      }
+
+      setTemplates(list);
     }, err => { console.error('Templates fetch:', err); });
     return unsub;
   }, []);
@@ -199,6 +212,9 @@ export default function Schedule({ showSnackbar }) {
     }
     return map;
   }, [entries]);
+
+  // Only active (non-disabled) templates for calendar rows and entry form
+  const activeTemplates = useMemo(() => templates.filter(t => !t.disabled), [templates]);
 
   // Absences & covered entries for the current week
   const absenceEntries = useMemo(() =>
@@ -353,10 +369,10 @@ export default function Schedule({ showSnackbar }) {
     setSavingTpl(true);
     try {
       const data = { name: tplForm.name.trim(), startTime: tplForm.startTime, endTime: tplForm.endTime };
-      if (editingTpl && !editingTpl.id.startsWith('_')) {
+      if (editingTpl) {
         await updateDoc(doc(db, 'shiftTemplates', editingTpl.id), data);
       } else {
-        await addDoc(collection(db, 'shiftTemplates'), data);
+        await addDoc(collection(db, 'shiftTemplates'), { ...data, disabled: false });
       }
       setEditingTpl(null); setTplForm(BLANK_TPL);
       showSnackbar?.('Template saved.', 'success');
@@ -364,12 +380,35 @@ export default function Schedule({ showSnackbar }) {
     finally { setSavingTpl(false); }
   };
 
+  const handleToggleTplDisabled = async (tpl) => {
+    const willDisable = !tpl.disabled;
+    if (willDisable && activeTemplates.length <= 1) {
+      showSnackbar?.('At least one template must remain active.', 'warning');
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'shiftTemplates', tpl.id), { disabled: willDisable });
+      showSnackbar?.(willDisable ? `"${tpl.name}" disabled.` : `"${tpl.name}" enabled.`, 'success');
+    } catch { showSnackbar?.('Failed to update template.', 'error'); }
+  };
+
   const handleDeleteTpl = async (tpl) => {
-    if (tpl.id.startsWith('_')) return;
+    if (!tpl.disabled) {
+      showSnackbar?.('Disable the template before deleting it.', 'warning');
+      return;
+    }
+    try {
+      const snap = await getDocs(query(collection(db, 'schedules'), where('shiftLabel', '==', tpl.name)));
+      if (!snap.empty) {
+        showSnackbar?.(`"${tpl.name}" has ${snap.size} schedule entries. It cannot be permanently deleted.`, 'warning');
+        return;
+      }
+    } catch { /* proceed if check fails */ }
+    if (!window.confirm(`Permanently delete "${tpl.name}"?`)) return;
     try {
       await deleteDoc(doc(db, 'shiftTemplates', tpl.id));
       showSnackbar?.('Template deleted.', 'success');
-    } catch { showSnackbar?.('Failed.', 'error'); }
+    } catch { showSnackbar?.('Delete failed.', 'error'); }
   };
 
   const entryActions = {
@@ -454,14 +493,14 @@ export default function Schedule({ showSnackbar }) {
                       <CircularProgress size={24} />
                     </TableCell>
                   </TableRow>
-                ) : templates.length === 0 ? (
+                ) : activeTemplates.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={8} align="center" sx={{ py: 4 }}>
-                      <Typography color="text.secondary">No shift templates. Add templates using the Templates button.</Typography>
+                      <Typography color="text.secondary">No active templates. Enable or add templates using the Templates button.</Typography>
                     </TableCell>
                   </TableRow>
                 ) : (
-                  templates.map(tpl => (
+                  activeTemplates.map(tpl => (
                     <TableRow key={tpl.id} hover>
                       {/* Row label: shift template */}
                       <TableCell sx={{ verticalAlign: 'top', py: 1, bgcolor: 'action.hover' }}>
@@ -639,7 +678,7 @@ export default function Schedule({ showSnackbar }) {
               onChange={e => handleTplSelect(e.target.value)}
               disabled={saving}
             >
-              {templates.map(t => (
+              {activeTemplates.map(t => (
                 <MenuItem key={t.id} value={t.name}>
                   {t.name}{t.startTime ? ` (${t.startTime}–${t.endTime})` : ''}
                 </MenuItem>
@@ -699,27 +738,45 @@ export default function Schedule({ showSnackbar }) {
           {templates.map(tpl => (
             <Box
               key={tpl.id}
-              sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', borderRadius: 1,
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+              sx={{
+                p: 1.5, border: '1px solid', borderColor: 'divider', borderRadius: 1,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                opacity: tpl.disabled ? 0.5 : 1,
+              }}
             >
               <Box>
-                <Typography variant="body2" fontWeight={600}>{tpl.name}</Typography>
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <Typography variant="body2" fontWeight={600}>{tpl.name}</Typography>
+                  {tpl.disabled && <Chip label="Disabled" size="small" sx={{ fontSize: '0.6rem', height: 16 }} />}
+                </Stack>
                 <Typography variant="caption" color="text.secondary">
                   {tpl.startTime && tpl.endTime ? `${tpl.startTime}–${tpl.endTime}` : 'No time set'}
                 </Typography>
               </Box>
-              <Stack direction="row" spacing={0.5}>
+              <Stack direction="row" spacing={0.5} alignItems="center">
+                <Tooltip title={!tpl.disabled && activeTemplates.length <= 1 ? 'Cannot disable last active template' : (tpl.disabled ? 'Enable' : 'Disable')}>
+                  <span>
+                    <Switch
+                      size="small"
+                      checked={!tpl.disabled}
+                      onChange={() => handleToggleTplDisabled(tpl)}
+                      disabled={!tpl.disabled && activeTemplates.length <= 1}
+                    />
+                  </span>
+                </Tooltip>
                 <IconButton size="small" onClick={() => {
                   setEditingTpl(tpl);
                   setTplForm({ name: tpl.name, startTime: tpl.startTime || '', endTime: tpl.endTime || '' });
                 }}>
                   <EditIcon fontSize="small" />
                 </IconButton>
-                {!tpl.id.startsWith('_') && (
-                  <IconButton size="small" color="error" onClick={() => handleDeleteTpl(tpl)}>
-                    <DeleteIcon fontSize="small" />
-                  </IconButton>
-                )}
+                <Tooltip title={tpl.disabled ? 'Delete' : 'Disable before deleting'}>
+                  <span>
+                    <IconButton size="small" color="error" onClick={() => handleDeleteTpl(tpl)} disabled={!tpl.disabled}>
+                      <DeleteIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
               </Stack>
             </Box>
           ))}

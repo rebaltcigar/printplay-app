@@ -61,12 +61,12 @@ service cloud.firestore {
 
       // updates:
       // 1. Admin can update anything.
-      // 2. User can update their own doc (except critical role/payroll).
+      // 2. User can update their own doc (except critical fields — name is admin-only for payroll integrity).
       // 3. Any Staff can update 'isClockedIn' status (for shared terminal).
-      allow update: if isAdmin() || 
+      allow update: if isAdmin() ||
         (
           uid == request.auth.uid &&
-          !request.resource.data.diff(resource.data).changedKeys().hasAny(['role','payroll'])
+          !request.resource.data.diff(resource.data).changedKeys().hasAny(['role','payroll','fullName','name','displayName'])
         ) ||
         (
           isStaff() && 
@@ -77,7 +77,14 @@ service cloud.firestore {
     /* ---------- Payroll Logs (Time Clock) ---------- */
     match /payroll_logs/{logId} {
       allow create, read: if isSignedIn();
-      allow update, delete: if isAdmin(); 
+      // Staff can only write their own clockOut timestamp (clock-in dashboard)
+      allow update: if isAdmin() ||
+        (
+          isStaff() &&
+          resource.data.staffUid == request.auth.uid &&
+          request.resource.data.diff(resource.data).changedKeys().hasOnly(['clockOut'])
+        );
+      allow delete: if isAdmin();
     }
 
     /* ---------- Shifts ---------- */

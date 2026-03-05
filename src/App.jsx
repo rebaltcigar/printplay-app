@@ -1,18 +1,16 @@
 import React, { useEffect, useState } from "react";
 import {
   ThemeProvider,
-  createTheme,
   CssBaseline,
   Box,
-  Typography,
 } from "@mui/material";
 
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
 import Login from "./components/Login.jsx";
 import POS from "./components/POS.jsx";
+import ClockInDashboard from "./components/ClockInDashboard.jsx";
 import AdminDashboard from "./components/AdminDashboard.jsx";
-import LoadingScreen from "./components/common/LoadingScreen";
 import { AnalyticsProvider } from "./contexts/AnalyticsContext";
 
 import { auth, db } from "./firebase";
@@ -38,14 +36,16 @@ import { generateDisplayId } from "./utils/idGenerator";
 import darkTheme from "./theme";
 
 export default function App() {
-  const [isLoading, setIsLoading] = useState(true);
-
   const [currentUser, setCurrentUser] = useState(null);
   const [userRole, setUserRole] = useState(null); // 'staff' | 'superadmin' | null
 
   // Staff-only session/shift info
   const [activeShiftId, setActiveShiftId] = useState(null);
   const [activeShiftPeriod, setActiveShiftPeriod] = useState("");
+
+  // Clock-in mode (non-cashier staff clocked in to an existing shift)
+  const [clockInMode, setClockInMode]   = useState(false);
+  const [clockInLogId, setClockInLogId] = useState(null);
 
   // ------------------ AUTH BOOTSTRAP ------------------
   useEffect(() => {
@@ -57,7 +57,8 @@ export default function App() {
           setUserRole(null);
           setActiveShiftId(null);
           setActiveShiftPeriod("");
-          setIsLoading(false);
+          setClockInMode(false);
+          setClockInLogId(null);
           return;
         }
 
@@ -67,7 +68,6 @@ export default function App() {
         if (!userSnap.exists()) {
           // Unknown user — sign out for safety
           await signOut(auth);
-          setIsLoading(false);
           return;
         }
 
@@ -104,8 +104,6 @@ export default function App() {
         }
       } catch (err) {
         console.warn("Auth bootstrap error:", err);
-      } finally {
-        setIsLoading(false);
       }
     });
 
@@ -126,17 +124,6 @@ export default function App() {
    * Throws on auth failure, suspension, or shift conflict.
    */
   const handleLogin = async (email, password) => {
-    // Check existing shift lock before signing in (public read allowed)
-    const statusRef = doc(db, "app_status", "current_shift");
-    const statusSnap = await getDoc(statusRef);
-    const lock = statusSnap.exists() ? statusSnap.data() : null;
-
-    if (lock?.activeShiftId && lock.staffEmail !== email) {
-      const e = new Error(`A shift is already active by ${lock.staffEmail}.`);
-      e.code = "shift/active-other";
-      throw e;
-    }
-
     // Firebase sign-in
     const cred = await signInWithEmailAndPassword(auth, email, password);
 
@@ -161,7 +148,7 @@ export default function App() {
     const role = userData?.role || null;
     const adminRoles = ["superadmin", "admin", "owner"];
 
-    // ── Admin path ──
+    // ── Admin path — bypasses shift lock entirely ──
     if (adminRoles.includes(role)) {
       setCurrentUser(cred.user);
       setUserRole(role);
@@ -174,6 +161,35 @@ export default function App() {
       const e = new Error("Unrecognized account role. Contact your administrator.");
       e.code = "auth/user-disabled";
       throw e;
+    }
+
+    // Check shift lock only for staff
+    const statusRef = doc(db, "app_status", "current_shift");
+    const statusSnap = await getDoc(statusRef);
+    const lock = statusSnap.exists() ? statusSnap.data() : null;
+
+    if (lock?.activeShiftId && lock.staffEmail !== email) {
+      // Another staff owns this shift — offer clock-in instead of blocking
+      const shiftSnap = await getDoc(doc(db, "shifts", lock.activeShiftId));
+      const shiftPeriod = shiftSnap.exists() ? shiftSnap.data()?.shiftPeriod || "" : "";
+
+      // Try to get the cashier's display name
+      let cashierName = lock.staffEmail;
+      try {
+        const cashierSnap = await getDocs(query(collection(db, "users"), where("email", "==", lock.staffEmail)));
+        if (!cashierSnap.empty) {
+          const d = cashierSnap.docs[0].data();
+          cashierName = d.fullName || d.name || lock.staffEmail;
+        }
+      } catch {}
+
+      return {
+        type: "clockin",
+        cashierName,
+        cashierEmail: lock.staffEmail,
+        activeShiftId: lock.activeShiftId,
+        shiftPeriod,
+      };
     }
 
     // Re-login: same staff has active shift
@@ -268,6 +284,50 @@ export default function App() {
     try { await signOut(auth); } catch {}
   };
 
+  /** Clock in as non-cashier staff to an existing active shift */
+  const handleClockIn = async () => {
+    const user = auth.currentUser;
+    if (!user) throw new Error("Not authenticated.");
+
+    const userSnap = await getDoc(doc(db, "users", user.uid));
+    const userData = userSnap.exists() ? userSnap.data() : {};
+
+    // Fetch the active shift id from the lock
+    const statusSnap = await getDoc(doc(db, "app_status", "current_shift"));
+    const lock = statusSnap.exists() ? statusSnap.data() : null;
+
+    // Write clock-in log
+    const logRef = await addDoc(collection(db, "payroll_logs"), {
+      staffUid:   user.uid,
+      staffEmail: user.email,
+      staffName:  userData.fullName || userData.name || user.email,
+      clockIn:    serverTimestamp(),
+      shiftId:    lock?.activeShiftId || null,
+      type:       "clock_in",
+    });
+
+    setCurrentUser(user);
+    setUserRole("staff");
+    setClockInMode(true);
+    setClockInLogId(logRef.id);
+  };
+
+  /** Clock out — writes clockOut timestamp, signs out */
+  const handleClockOut = async () => {
+    try {
+      if (clockInLogId) {
+        await updateDoc(doc(db, "payroll_logs", clockInLogId), {
+          clockOut: serverTimestamp(),
+        });
+      }
+    } catch (err) {
+      console.warn("Clock-out log update failed:", err);
+    }
+    try { await signOut(auth); } catch {}
+    setClockInMode(false);
+    setClockInLogId(null);
+  };
+
   const handleAdminLogout = async () => {
     try {
       await signOut(auth);
@@ -281,18 +341,6 @@ export default function App() {
 
   // ------------------ RENDER ------------------
 
-  if (isLoading) {
-    return (
-      <ThemeProvider theme={darkTheme}>
-        <CssBaseline />
-        <Box sx={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.default' }}>
-          {/* We can use the existing AdminLoading or just a spinner */}
-          <Typography variant="h6" color="text.secondary">Initializing Application...</Typography>
-        </Box>
-      </ThemeProvider>
-    );
-  }
-
   return (
     <ThemeProvider theme={darkTheme}>
       <CssBaseline />
@@ -300,32 +348,28 @@ export default function App() {
         <Routes>
           {/* Public / Login Route */}
           <Route path="/login" element={
-            !currentUser || (userRole === 'staff' && !activeShiftId) ? (
-              <Box
-                sx={{
-                  minHeight: "100vh",
-                  width: "100%",
-                  display: "flex",
-                  justifyContent: "center",
-                  alignItems: "center",
-                }}
-              >
-                <Login
-                  onLogin={handleLogin}
-                  onStartShift={handleStartShift}
-                  onCancelLogin={handleCancelLogin}
-                />
-              </Box>
+            !currentUser || (userRole === 'staff' && !activeShiftId && !clockInMode) ? (
+              <Login
+                onLogin={handleLogin}
+                onStartShift={handleStartShift}
+                onClockIn={handleClockIn}
+                onCancelLogin={handleCancelLogin}
+              />
             ) : (
-              // If already logged in (and valid state), redirect based on role
               <Navigate to={['superadmin', 'admin', 'owner'].includes(userRole) ? "/admin" : "/pos"} replace />
             )
           } />
 
-          {/* Staff POS Route */}
+          {/* Staff POS / Clock-In Route */}
           <Route path="/pos" element={
             currentUser && userRole === 'staff' ? (
-              activeShiftId ? (
+              clockInMode ? (
+                <ClockInDashboard
+                  user={currentUser}
+                  clockInLogId={clockInLogId}
+                  onClockOut={handleClockOut}
+                />
+              ) : activeShiftId ? (
                 <POS
                   user={currentUser}
                   userRole={userRole}
@@ -333,10 +377,6 @@ export default function App() {
                   shiftPeriod={activeShiftPeriod}
                 />
               ) : (
-                // Staff logged in but no active shift? Should logically be on login screen to start shift
-                // OR we could have a "Shift Start" intermediate page. 
-                // For now, existing logic was: if no active shift, show Login.
-                // So if we are here, and no active shift, we redirect to login to start one.
                 <Navigate to="/login" replace />
               )
             ) : (

@@ -2,29 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.1.30] - 2026-03-05
+## [0.1.31] - 2026-03-05
 
-### Fixes: Login, Firestore Rules, Schedule Layout
+### Staff Scheduling, Multi-Staff Login & Login Redesign
 
-- **Single login form**: Removed admin toggle link entirely. One form, one "SIGN IN" button — role auto-detected after auth (staff → schedule flow, admin/owner → admin dashboard).
-- **Admin role support**: All admin roles (`admin`, `owner`, `superadmin`) can now log in and access the admin dashboard.
-- **Firestore rules**: Added missing rules for `/schedules` (read: signed-in; write: admin + own staff entries) and `/shiftTemplates` (read: signed-in; write: admin only). Added `/{path=**}/paystubs/{stubId}` collectionGroup rule so staff can read their own paystubs via the POS sidebar.
-- **Schedule calendar orientation**: Calendar rows are now **shift templates** (Morning, Afternoon, Evening, etc.) and cells show **staff name chips**. Clicking `+` in a cell pre-fills both the shift template and date in the add drawer.
-- **Absences & Coverage tab**: New second tab in the Schedule module lists all absent/covered entries for the current week with quick Assign Coverage and Delete actions. Week navigation applies to both tabs.
+#### Added
+- **Staff Scheduling**: New Schedule tab in the admin panel. Week-view calendar with shift templates as rows and staff chips per cell. Add, edit, mark absent, assign coverage, copy last week.
+- **Shift Templates**: Manage templates (name, start/end time) in Settings → Shift Templates. Disable/enable instead of hard delete. Cannot disable last active template. Seeds Morning / Afternoon / Evening defaults on first load.
+- **Multi-staff clock-in**: A second staff member can log in while a cashier's shift is active. Shown a "Clock In" confirmation, then routed to a minimal dashboard (My Schedule, My Paystubs, Clock Out). No POS access. Clock-in time logged to `payroll_logs`.
+- **Coverage flow**: Admin can mark staff absent and assign a covering staff member. Status tracks `absent` → `covered` with `coveredByEmail/Name`.
+- **Copy Last Week**: One-click schedule copy to current week (status reset to `scheduled`).
+- **Login page redesign**: Full-screen dark layout with animated grid lines, rising particle canvas, and glassmorphism card. Logo and store name displayed at top of card. Four-phase flow: credentials → shift confirm / fallback / clock-in.
+- **Loading screen shimmer**: Message text in the universal `LoadingScreen` now uses an animated shimmer effect.
 
-## [0.1.29] - 2026-03-05
+#### Changed
+- **Admin login bypass**: Admin / owner accounts are no longer blocked by the shift lock — they always go straight to the admin dashboard.
+- **Staff profile display-only**: Name and role fields in My Account are read-only; changes must go through an administrator.
+- **Login loads immediately**: App no longer shows an "Initializing…" screen before rendering the login page.
 
-### Staff Scheduling + Unified Login
+#### Fixed
+- **Paystubs blank on staff's POS**: Corrected Firestore index from composite to single-field `fieldOverrides` for the `paystubs` collectionGroup query on `staffEmail`.
 
-- **Admin Schedule tab**: New "Schedule" tab in the admin sidebar with week-view calendar (Mon–Sun columns, staff rows) and list-view toggle. Entries show shift label, time, and status chip. Click the `+` per cell to add, click a chip to edit/mark absent/assign coverage/delete.
-- **Shift templates**: Manage reusable shift templates (name, start, end time) via the "Templates" drawer. Default Morning/Afternoon/Evening templates auto-load when no Firestore templates exist.
-- **Copy Last Week**: One-click button copies all previous week's schedule entries to the current week (status reset to `scheduled`).
-- **Coverage flow**: Mark Absent turns status to `absent`; Assign Coverage picks a covering staff member and updates status to `covered` + records `coveredByEmail/Name`.
-- **Firestore model**: New `/schedules` collection and `/shiftTemplates` collection per FEATURE_PLAN.md spec.
-- **Unified Login — Phase 1**: Single email/password form (no shift selector). "Sign In" authenticates and queries today's schedule. "Login as Admin" small link at bottom replaces the corner shield icon.
-- **Unified Login — Phase 2 (schedule found)**: Shows the scheduled/coverage shift info card with "START SHIFT" confirmation. Status auto-set to `in-progress` and shift doc linked to schedule entry.
-- **Unified Login — Phase 2 (fallback)**: No schedule found → shows shift period selector + optional notes field → starts unlinked shift.
-- **Re-login**: Same staff with active shift → "Continue" button restores session without creating a new shift.
+#### Firestore
+- New collections: `/schedules`, `/shiftTemplates`
+- New rules: `schedules`, `shiftTemplates`, `payroll_logs` (staff may update their own `clockOut`)
+- Updated indexes: `paystubs` single-field collectionGroup index on `staffEmail`
 
 ## [0.1.28] - 2026-03-05
 
