@@ -34,8 +34,10 @@ import {
 import { generateDisplayId } from "./utils/idGenerator";
 
 import darkTheme from "./theme";
+import LoadingScreen from "./components/common/LoadingScreen";
 
 export default function App() {
+  const [authReady, setAuthReady] = useState(false); // true once first onAuthStateChanged fires
   const [currentUser, setCurrentUser] = useState(null);
   const [userRole, setUserRole] = useState(null); // 'staff' | 'superadmin' | null
 
@@ -104,6 +106,8 @@ export default function App() {
         }
       } catch (err) {
         console.warn("Auth bootstrap error:", err);
+      } finally {
+        setAuthReady(true);
       }
     });
 
@@ -340,6 +344,22 @@ export default function App() {
   };
 
   // ------------------ RENDER ------------------
+
+  // Block rendering routes until Firebase auth state is known.
+  // On /login → blank black screen (no flash, no loader).
+  // On any other path (already-logged-in page refresh) → show loader.
+  if (!authReady) {
+    const isLoginPage = window.location.pathname === '/login' || window.location.pathname === '/';
+    return (
+      <ThemeProvider theme={darkTheme}>
+        <CssBaseline />
+        {isLoginPage
+          ? <Box sx={{ height: '100vh', bgcolor: 'background.default' }} />
+          : <Box sx={{ height: '100vh' }}><LoadingScreen message="Initializing..." /></Box>
+        }
+      </ThemeProvider>
+    );
+  }
 
   return (
     <ThemeProvider theme={darkTheme}>
