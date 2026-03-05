@@ -13,6 +13,19 @@
 
 ---
 
+## [0.2.0] — 2026-03-06
+
+### Added
+
+- **Catalog variant system** — Services can now be marked as "Has Variants" in the Service Catalog. A variant parent is not sold directly; cashiers click it at the POS to open a sub-selection picker. Variant children are assigned a Variant Group (section header in the picker) and an optional short POS Label for tile display.
+- **Price Type field** — Each catalog item now has a Price Type: Fixed (price pre-fills at POS) or Variable (cashier enters the price). Variable items optionally carry a Pricing Note shown as a hint (e.g., "₱5–₱20 depending on content").
+- **POS Icon field** — Top-level catalog items can be assigned a POS icon from a preset list. Resolved to a tile icon in the POS grid (v0.2.1).
+- **Variants badge in Service Catalog table** — Parent items with `hasVariants` show a child-count chip next to their name. Variant children show their Variant Group label inline.
+- **`posItems` and `variantMap` from `usePOSServices`** — New hook outputs for the upcoming POS tile grid. `posItems` is all top-level, active, non-expense items; `variantMap` maps each parent ID to its sorted variant children. Existing `serviceList` and `expenseTypes` outputs are unchanged.
+- **`variantChildren` from `useServiceList`** — All non-expense child services, available for admin dropdowns and reporting.
+
+---
+
 ## [0.1.32] — 2026-03-05
 
 ### Fixed

@@ -9,6 +9,7 @@
 //   parentServices      - Parent service objects with id/serviceName/price (ShiftDetailView.jsx)
 //   parentServiceNames  - [string] parent names + "New Debt"/"Paid Debt" (Transactions.jsx edit dialog)
 //   expenseServiceNames - [string] expense sub-service names (ShiftDetailView, Transactions)
+//   variantChildren     - All items with a parentServiceId (non-expense). Used by admin dropdowns.
 //   loading             - true until first snapshot arrives
 
 import { useEffect, useMemo, useState } from 'react';
@@ -58,5 +59,15 @@ export function useServiceList() {
             .filter(Boolean);
     }, [allServices]);
 
-    return { allServices, serviceMeta, parentServices, parentServiceNames, expenseServiceNames, loading };
+    // v0.2.0: all non-expense variant children (have a parentServiceId)
+    const variantChildren = useMemo(() => {
+        const expensesParent = allServices.find(s => s.serviceName === 'Expenses');
+        const expenseParentId = expensesParent?.id ?? null;
+        return allServices.filter(s =>
+            s.parentServiceId &&
+            s.parentServiceId !== expenseParentId
+        );
+    }, [allServices]);
+
+    return { allServices, serviceMeta, parentServices, parentServiceNames, expenseServiceNames, variantChildren, loading };
 }

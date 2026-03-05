@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import {
-  Box, Button, Card, CardContent, Checkbox, Dialog, DialogActions, DialogContent,
+  Box, Button, Card, CardContent, Checkbox, Chip, Dialog, DialogActions, DialogContent,
   DialogTitle, FormControl, FormControlLabel, IconButton, InputLabel, MenuItem,
   Select, Stack, Table, TableBody, TableCell, TableContainer, TableHead,
-  TableRow, TextField, Typography
+  TableRow, TextField, Tooltip, Typography
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -15,6 +15,25 @@ import CategoryIcon from '@mui/icons-material/Category';
 import StoreIcon from '@mui/icons-material/Store';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
+import AccountTreeIcon from '@mui/icons-material/AccountTree';
+
+// Preset POS icon options — admin picks from this list; the POS tile grid resolves
+// the key to an actual MUI icon in v0.2.1.
+const POS_ICON_OPTIONS = [
+  { value: '', label: 'None' },
+  { value: 'print', label: 'Print' },
+  { value: 'photo', label: 'Photo' },
+  { value: 'monitor', label: 'Monitor / PC' },
+  { value: 'copy', label: 'Photocopy' },
+  { value: 'scissors', label: 'Laminate / Cut' },
+  { value: 'scan', label: 'Scan' },
+  { value: 'design', label: 'Design' },
+  { value: 'food', label: 'Food' },
+  { value: 'tech', label: 'Tech / Electronics' },
+  { value: 'bag', label: 'Merchandise' },
+  { value: 'box', label: 'Package / Bundle' },
+  { value: 'other', label: 'Other' },
+];
 import {
   collection, addDoc, updateDoc, deleteDoc, doc, query, where, onSnapshot, writeBatch
 } from 'firebase/firestore';
@@ -41,7 +60,14 @@ export default function ServiceCatalog({ showSnackbar }) {
     costPrice: '',
     trackStock: false,
     stockCount: 0,
-    lowStockThreshold: 5
+    lowStockThreshold: 5,
+    // v0.2.0 variant fields
+    hasVariants: false,
+    variantGroup: '',
+    posLabel: '',
+    posIcon: '',
+    priceType: 'fixed',
+    pricingNote: '',
   });
 
   const [editOrderMode, setEditOrderMode] = useState(false);
@@ -135,7 +161,8 @@ export default function ServiceCatalog({ showSnackbar }) {
     setForm({
       serviceName: '', price: '', active: true,
       category: 'Sale', parentServiceId: null, adminOnly: false,
-      type: 'service', costPrice: '', trackStock: false, stockCount: 0, lowStockThreshold: 5
+      type: 'service', costPrice: '', trackStock: false, stockCount: 0, lowStockThreshold: 5,
+      hasVariants: false, variantGroup: '', posLabel: '', posIcon: '', priceType: 'fixed', pricingNote: '',
     });
     setOpen(true);
   };
@@ -154,6 +181,13 @@ export default function ServiceCatalog({ showSnackbar }) {
       trackStock: Boolean(item.trackStock),
       stockCount: item.stockCount || 0,
       lowStockThreshold: item.lowStockThreshold || 5,
+      // v0.2.0 variant fields
+      hasVariants: Boolean(item.hasVariants),
+      variantGroup: item.variantGroup || '',
+      posLabel: item.posLabel || '',
+      posIcon: item.posIcon || '',
+      priceType: item.priceType || (item.price > 0 ? 'fixed' : 'variable'),
+      pricingNote: item.pricingNote || '',
     });
     setOpen(true);
   };
@@ -173,19 +207,27 @@ export default function ServiceCatalog({ showSnackbar }) {
   const onChange = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
 
   const save = async () => {
+    const isVariantParent = Boolean(form.hasVariants) && !form.parentServiceId;
     const payload = {
       serviceName: String(form.serviceName).trim(),
-      price: Number(form.price || 0),
+      // Variant parents have no direct price — set to 0
+      price: isVariantParent ? 0 : Number(form.price || 0),
       active: Boolean(form.active),
       category: 'Sale',
       parentServiceId: form.parentServiceId || null,
       adminOnly: Boolean(form.adminOnly),
-      // Fields
       type: form.type,
       costPrice: Number(form.costPrice || 0),
       trackStock: Boolean(form.trackStock),
       stockCount: Number(form.stockCount || 0),
       lowStockThreshold: Number(form.lowStockThreshold || 0),
+      // v0.2.0 variant fields
+      hasVariants: isVariantParent,
+      variantGroup: form.variantGroup?.trim() || '',
+      posLabel: form.posLabel?.trim() || '',
+      posIcon: form.posIcon || '',
+      priceType: form.priceType || 'fixed',
+      pricingNote: form.pricingNote?.trim() || '',
     };
     if (!payload.serviceName) {
       showSnackbar?.('Item name is required.', 'error');
@@ -333,7 +375,6 @@ export default function ServiceCatalog({ showSnackbar }) {
                     <TableCell>Name</TableCell>
                     <TableCell sx={{ width: '12%' }}>Type</TableCell>
                     <TableCell sx={{ width: '12%' }}>Price</TableCell>
-                    {/* Cost/Stock is arguably less important here if we use Inventory Tab, but good for quick view */}
                     <TableCell sx={{ width: '10%' }}>Stock</TableCell>
                     <TableCell align="center" sx={{ width: '8%' }}>Active</TableCell>
                     <TableCell align="center" sx={{ width: '12%' }}>{editOrderMode ? 'Sort' : 'Actions'}</TableCell>
@@ -353,7 +394,31 @@ export default function ServiceCatalog({ showSnackbar }) {
                               hover
                             >
                               {editOrderMode && <TableCell><ReorderIcon sx={{ cursor: 'grab', opacity: 0.5 }} /></TableCell>}
-                              <TableCell sx={{ pl: item.parentServiceId ? 4 : 2, fontWeight: item.parentServiceId ? 400 : 600 }}>{item.serviceName}</TableCell>
+                              <TableCell sx={{ pl: item.parentServiceId ? 4 : 2, fontWeight: item.parentServiceId ? 400 : 600 }}>
+                                <Box display="flex" alignItems="center" gap={1}>
+                                  {item.serviceName}
+                                  {item.hasVariants && (
+                                    <Tooltip title={`${itemMap.get(item.id) ? (sortedAndGroupedItems.filter(i => i.parentServiceId === item.id).length) : 0} variant(s)`}>
+                                      <Chip
+                                        size="small"
+                                        icon={<AccountTreeIcon sx={{ fontSize: '0.75rem !important' }} />}
+                                        label={sortedAndGroupedItems.filter(i => i.parentServiceId === item.id).length}
+                                        sx={{ height: 18, fontSize: '0.7rem', '& .MuiChip-label': { px: 0.75 } }}
+                                        variant="outlined"
+                                        color="primary"
+                                      />
+                                    </Tooltip>
+                                  )}
+                                  {item.variantGroup && (
+                                    <Chip
+                                      size="small"
+                                      label={item.variantGroup}
+                                      sx={{ height: 18, fontSize: '0.7rem', '& .MuiChip-label': { px: 0.75 }, opacity: 0.7 }}
+                                      variant="outlined"
+                                    />
+                                  )}
+                                </Box>
+                              </TableCell>
                               <TableCell>
                                 <span style={{
                                   textTransform: 'uppercase', fontSize: '0.75rem',
@@ -364,7 +429,14 @@ export default function ServiceCatalog({ showSnackbar }) {
                                   {item.type || 'service'}
                                 </span>
                               </TableCell>
-                              <TableCell>{item.price > 0 ? Number(item.price).toFixed(2) : '—'}</TableCell>
+                              <TableCell>
+                                {item.hasVariants
+                                  ? <span style={{ opacity: 0.4, fontSize: '0.75rem' }}>varies</span>
+                                  : item.priceType === 'variable' || (!item.priceType && item.price === 0)
+                                    ? <span style={{ opacity: 0.6, fontSize: '0.75rem' }}>variable</span>
+                                    : item.price > 0 ? Number(item.price).toFixed(2) : '—'
+                                }
+                              </TableCell>
                               <TableCell>
                                 {item.trackStock ? (
                                   <span style={{ color: item.stockCount <= (item.lowStockThreshold || 0) ? 'red' : 'inherit', fontWeight: 'bold' }}>
@@ -409,6 +481,8 @@ export default function ServiceCatalog({ showSnackbar }) {
         }
       >
         <Stack spacing={3}>
+
+          {/* Parent assignment */}
           <FormControl fullWidth>
             <InputLabel>Parent Item (For grouping)</InputLabel>
             <Select value={form.parentServiceId || ''} label="Parent Item (For grouping)" onChange={handleParentChange}>
@@ -419,6 +493,7 @@ export default function ServiceCatalog({ showSnackbar }) {
             </Select>
           </FormControl>
 
+          {/* Name */}
           <TextField
             label="Item Name"
             value={form.serviceName}
@@ -427,22 +502,111 @@ export default function ServiceCatalog({ showSnackbar }) {
             autoFocus
           />
 
-          <TextField
-            label="Price (Retail)"
-            type="number"
-            fullWidth
-            value={form.price}
-            onChange={(e) => onChange('price', e.target.value)}
-          />
+          {/* Has Variants toggle — only for top-level items */}
+          {!form.parentServiceId && (
+            <Box sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 1, border: '1px solid', borderColor: form.hasVariants ? 'primary.main' : 'divider' }}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={Boolean(form.hasVariants)}
+                    onChange={(e) => onChange('hasVariants', e.target.checked)}
+                  />
+                }
+                label={
+                  <Box>
+                    <Typography variant="body2" fontWeight="bold">Has Variants</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      This item is a container — customers pick a variant (e.g., B&W, Color, Size).
+                      It is not sold directly. Add child items under this parent.
+                    </Typography>
+                  </Box>
+                }
+              />
+            </Box>
+          )}
 
+          {/* Price — hidden for variant parents */}
+          {!form.hasVariants && (
+            <>
+              <Stack direction="row" spacing={2}>
+                <FormControl fullWidth>
+                  <InputLabel>Price Type</InputLabel>
+                  <Select value={form.priceType || 'fixed'} label="Price Type" onChange={(e) => onChange('priceType', e.target.value)}>
+                    <MenuItem value="fixed">Fixed — pre-fills at POS</MenuItem>
+                    <MenuItem value="variable">Variable — cashier enters price</MenuItem>
+                  </Select>
+                </FormControl>
+                {form.priceType !== 'variable' && (
+                  <TextField
+                    label="Price"
+                    type="number"
+                    fullWidth
+                    value={form.price}
+                    onChange={(e) => onChange('price', e.target.value)}
+                  />
+                )}
+              </Stack>
+              {form.priceType === 'variable' && (
+                <TextField
+                  label="Pricing Note (shown to cashier)"
+                  fullWidth
+                  placeholder="e.g., ₱5–₱20 depending on content"
+                  value={form.pricingNote}
+                  onChange={(e) => onChange('pricingNote', e.target.value)}
+                />
+              )}
+            </>
+          )}
+
+          {/* Variant child fields — only shown when this item has a parent */}
+          {form.parentServiceId && (
+            <Box sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+              <Typography variant="subtitle2" gutterBottom sx={{ mb: 1.5 }}>VARIANT SETTINGS</Typography>
+              <Stack spacing={2}>
+                <TextField
+                  label="Variant Group"
+                  fullWidth
+                  size="small"
+                  placeholder="e.g., B&W, Color, Text Only, Size"
+                  helperText="Section header inside the variant picker at POS"
+                  value={form.variantGroup}
+                  onChange={(e) => onChange('variantGroup', e.target.value)}
+                />
+                <TextField
+                  label="POS Label (Short Name)"
+                  fullWidth
+                  size="small"
+                  placeholder="e.g., B&W Short, Color A4, ID/Wallet"
+                  helperText="Short tile label shown inside the picker. Falls back to item name."
+                  value={form.posLabel}
+                  onChange={(e) => onChange('posLabel', e.target.value)}
+                />
+              </Stack>
+            </Box>
+          )}
+
+          {/* Type */}
           <FormControl fullWidth>
             <InputLabel>Type</InputLabel>
             <Select value={form.type} label="Type" onChange={(e) => onChange('type', e.target.value)}>
-              <MenuItem value="service">Service (Labor/Time)</MenuItem>
+              <MenuItem value="service">Service (Labor / Time)</MenuItem>
               <MenuItem value="retail">Retail (Physical Good)</MenuItem>
             </Select>
           </FormControl>
 
+          {/* POS Icon — for top-level items */}
+          {!form.parentServiceId && (
+            <FormControl fullWidth>
+              <InputLabel>POS Icon</InputLabel>
+              <Select value={form.posIcon || ''} label="POS Icon" onChange={(e) => onChange('posIcon', e.target.value)}>
+                {POS_ICON_OPTIONS.map(opt => (
+                  <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
+
+          {/* Retail inventory settings */}
           {form.type === 'retail' && (
             <Box sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
               <Typography variant="subtitle2" gutterBottom>INVENTORY SETTINGS</Typography>
@@ -450,7 +614,6 @@ export default function ServiceCatalog({ showSnackbar }) {
                 control={<Checkbox checked={form.trackStock} onChange={(e) => onChange('trackStock', e.target.checked)} />}
                 label="Track Stock Levels"
               />
-
               {form.trackStock && (
                 <Stack direction="row" spacing={2} sx={{ mt: 2 }}>
                   <TextField
@@ -474,6 +637,7 @@ export default function ServiceCatalog({ showSnackbar }) {
             </Box>
           )}
 
+          {/* Visibility */}
           <Stack direction="row" spacing={2}>
             <FormControlLabel
               control={<Checkbox checked={form.active} onChange={(e) => onChange('active', e.target.checked)} />}
