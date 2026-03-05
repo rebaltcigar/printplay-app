@@ -1,10 +1,10 @@
 // src/components/admin/Schedule.jsx
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  Box, Typography, Button, Stack, Chip, IconButton,
+  Box, Typography, Button, Stack, Chip, IconButton, Tabs, Tab,
   Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
   TextField, MenuItem, Select, FormControl, InputLabel,
-  Tooltip, ToggleButtonGroup, ToggleButton, Divider,
+  Tooltip, Divider,
   Dialog, DialogTitle, DialogContent, DialogActions,
   Card, CircularProgress, Alert,
 } from '@mui/material';
@@ -22,16 +22,16 @@ import AddIcon from '@mui/icons-material/Add';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import TodayIcon from '@mui/icons-material/Today';
-import CalendarViewWeekIcon from '@mui/icons-material/CalendarViewWeek';
-import ViewListIcon from '@mui/icons-material/ViewList';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import PersonOffIcon from '@mui/icons-material/PersonOff';
 import PeopleIcon from '@mui/icons-material/People';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import TuneIcon from '@mui/icons-material/Tune';
+import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 
-// ---------- Date helpers (all work in local wall-clock time, dates stored as YYYY-MM-DD) ----------
+// ---------- Date helpers ----------
 function todayPHT() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
 }
@@ -70,11 +70,11 @@ function fmtRange(s, e) {
 
 // ---------- Constants ----------
 const STATUS_CFG = {
-  scheduled:    { label: 'Scheduled', color: 'primary' },
+  scheduled:     { label: 'Scheduled', color: 'primary' },
   'in-progress': { label: 'On Shift',  color: 'success' },
-  completed:    { label: 'Done',       color: 'default' },
-  absent:       { label: 'Absent',     color: 'error' },
-  covered:      { label: 'Covered',    color: 'warning' },
+  completed:     { label: 'Done',      color: 'default' },
+  absent:        { label: 'Absent',    color: 'error' },
+  covered:       { label: 'Covered',   color: 'warning' },
 };
 
 const DEFAULT_TPLS = [
@@ -86,60 +86,47 @@ const DEFAULT_TPLS = [
 const BLANK_ENTRY = { staffEmail: '', date: '', shiftLabel: '', startTime: '', endTime: '', notes: '', status: 'scheduled' };
 const BLANK_TPL   = { name: '', startTime: '', endTime: '' };
 
-// ---------- Entry chip (calendar cell) ----------
-function EntryChip({ entry, onEdit, onDelete, onAbsent, onCoverage }) {
+// ---------- Staff chip (calendar cell — shows staff name, shift is the row label) ----------
+function StaffChip({ entry, onEdit, onDelete, onAbsent, onCoverage }) {
   const cfg = STATUS_CFG[entry.status] || STATUS_CFG.scheduled;
   return (
     <Box
       sx={{
-        mb: 0.5, p: '4px 6px', borderRadius: 1, bgcolor: 'action.hover',
+        mb: 0.5, p: '4px 6px', borderRadius: 1,
+        bgcolor: entry.status === 'absent' ? 'rgba(211,47,47,.08)'
+               : entry.status === 'covered' ? 'rgba(237,108,2,.08)'
+               : 'action.hover',
         '&:hover .ea': { display: 'flex' }, position: 'relative',
       }}
     >
       <Stack direction="row" alignItems="flex-start" justifyContent="space-between" spacing={0.5}>
         <Box sx={{ minWidth: 0, flex: 1 }}>
           <Typography variant="caption" fontWeight={600} display="block" noWrap lineHeight={1.3}>
-            {entry.shiftLabel}
+            {entry.staffName || entry.staffEmail}
           </Typography>
-          {entry.startTime && (
-            <Typography variant="caption" color="text.secondary" display="block" lineHeight={1.2}>
-              {entry.startTime}–{entry.endTime}
+          {entry.coveredByName && (
+            <Typography variant="caption" color="warning.main" display="block" noWrap lineHeight={1.2}>
+              ↳ {entry.coveredByName}
             </Typography>
           )}
         </Box>
-        <Chip label={cfg.label} color={cfg.color} size="small" sx={{ fontSize: '0.6rem', height: 16, mt: 0.25 }} />
+        <Chip label={cfg.label} color={cfg.color} size="small" sx={{ fontSize: '0.58rem', height: 15, mt: 0.25, flexShrink: 0 }} />
       </Stack>
 
-      {/* Hover action row */}
+      {/* Hover actions */}
       <Stack
         className="ea" direction="row" spacing={0}
-        sx={{ display: 'none', position: 'absolute', bottom: 1, right: 1 }}
+        sx={{ display: 'none', position: 'absolute', top: 1, right: 1, bgcolor: 'background.paper', borderRadius: 1 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <Tooltip title="Edit">
-          <IconButton size="small" onClick={() => onEdit(entry)}>
-            <EditIcon sx={{ fontSize: 11 }} />
-          </IconButton>
-        </Tooltip>
+        <Tooltip title="Edit"><IconButton size="small" onClick={() => onEdit(entry)}><EditIcon sx={{ fontSize: 11 }} /></IconButton></Tooltip>
         {entry.status === 'scheduled' && (
-          <Tooltip title="Mark Absent">
-            <IconButton size="small" onClick={() => onAbsent(entry)}>
-              <PersonOffIcon sx={{ fontSize: 11 }} />
-            </IconButton>
-          </Tooltip>
+          <Tooltip title="Mark Absent"><IconButton size="small" onClick={() => onAbsent(entry)}><PersonOffIcon sx={{ fontSize: 11 }} /></IconButton></Tooltip>
         )}
         {entry.status === 'absent' && (
-          <Tooltip title="Assign Coverage">
-            <IconButton size="small" onClick={() => onCoverage(entry)}>
-              <PeopleIcon sx={{ fontSize: 11 }} />
-            </IconButton>
-          </Tooltip>
+          <Tooltip title="Assign Coverage"><IconButton size="small" onClick={() => onCoverage(entry)}><PeopleIcon sx={{ fontSize: 11 }} /></IconButton></Tooltip>
         )}
-        <Tooltip title="Delete">
-          <IconButton size="small" color="error" onClick={() => onDelete(entry)}>
-            <DeleteIcon sx={{ fontSize: 11 }} />
-          </IconButton>
-        </Tooltip>
+        <Tooltip title="Delete"><IconButton size="small" color="error" onClick={() => onDelete(entry)}><DeleteIcon sx={{ fontSize: 11 }} /></IconButton></Tooltip>
       </Stack>
     </Box>
   );
@@ -150,11 +137,11 @@ export default function Schedule({ showSnackbar }) {
   const { staffOptions, loading: staffLoading } = useStaffList();
   const staffOnly = useMemo(() => staffOptions.filter(s => s.role === 'staff'), [staffOptions]);
 
+  const [tab, setTab] = useState(0);
   const [weekStart, setWeekStart] = useState(() => getWeekStart(todayPHT()));
   const [entries, setEntries] = useState([]);
   const [templates, setTemplates] = useState(DEFAULT_TPLS);
   const [loadingEntries, setLoadingEntries] = useState(true);
-  const [viewMode, setViewMode] = useState('week');
 
   // Drawers & dialogs
   const [entryDrawer, setEntryDrawer]     = useState({ open: false, mode: 'create', entry: null });
@@ -194,22 +181,32 @@ export default function Schedule({ showSnackbar }) {
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'shiftTemplates'), snap => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      // Sort by startTime so Morning → Afternoon → Evening ordering is natural
+      list.sort((a, b) => (a.startTime || '').localeCompare(b.startTime || '') || (a.name || '').localeCompare(b.name || ''));
       setTemplates(list.length ? list : DEFAULT_TPLS);
-    });
+    }, err => { console.error('Templates fetch:', err); });
     return unsub;
   }, []);
 
-  // Derived maps
-  const byDateByStaff = useMemo(() => {
+  // Derived: entries keyed by shiftLabel → date → [entries]
+  const byShiftByDate = useMemo(() => {
     const map = {};
     for (const e of entries) {
-      if (!map[e.date]) map[e.date] = {};
-      if (!map[e.date][e.staffEmail]) map[e.date][e.staffEmail] = [];
-      map[e.date][e.staffEmail].push(e);
+      const key = e.shiftLabel;
+      if (!map[key]) map[key] = {};
+      if (!map[key][e.date]) map[key][e.date] = [];
+      map[key][e.date].push(e);
     }
     return map;
   }, [entries]);
+
+  // Absences & covered entries for the current week
+  const absenceEntries = useMemo(() =>
+    [...entries]
+      .filter(e => e.status === 'absent' || e.status === 'covered')
+      .sort((a, b) => a.date.localeCompare(b.date) || (a.staffName || '').localeCompare(b.staffName || '')),
+    [entries]
+  );
 
   const summaryCards = useMemo(() => ([
     { label: 'Scheduled',  value: String(entries.filter(e => e.status === 'scheduled').length),    color: 'primary.main' },
@@ -223,12 +220,20 @@ export default function Schedule({ showSnackbar }) {
   const nextWeek = () => setWeekStart(ws => addDays(ws, 7));
   const goToday  = () => setWeekStart(getWeekStart(todayPHT()));
 
-  // --- Open drawers ---
-  const openCreate = useCallback((staffEmail = '', date = '') => {
+  // --- Open entry drawer ---
+  const openCreate = useCallback((staffEmail = '', date = '', shiftLabel = '') => {
     setFormErr('');
-    setEntryForm({ ...BLANK_ENTRY, staffEmail, date: date || todayPHT() });
+    const tpl = shiftLabel ? templates.find(t => t.name === shiftLabel) : null;
+    setEntryForm({
+      ...BLANK_ENTRY,
+      staffEmail,
+      date: date || todayPHT(),
+      shiftLabel: shiftLabel || '',
+      startTime: tpl?.startTime || '',
+      endTime:   tpl?.endTime   || '',
+    });
     setEntryDrawer({ open: true, mode: 'create', entry: null });
-  }, []);
+  }, [templates]);
 
   const openEdit = useCallback((entry) => {
     setFormErr('');
@@ -367,16 +372,15 @@ export default function Schedule({ showSnackbar }) {
     } catch { showSnackbar?.('Failed.', 'error'); }
   };
 
-  // ---------- Render ----------
-  const entryActions = (entry) => ({
+  const entryActions = {
     onEdit: openEdit,
     onDelete: handleDelete,
     onAbsent: handleMarkAbsent,
     onCoverage: (e) => { setCoverStaff(''); setCoverDlg({ open: true, entry: e }); },
-  });
+  };
 
   return (
-    <Box sx={{ p: 2, height: '100%', overflow: 'auto' }}>
+    <Box sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <PageHeader
         title="Schedule"
         subtitle="Staff shift scheduling"
@@ -395,133 +399,139 @@ export default function Schedule({ showSnackbar }) {
         }
       />
 
-      <SummaryCards cards={summaryCards} loading={loadingEntries} sx={{ mb: 2 }} />
+      <SummaryCards cards={summaryCards} loading={loadingEntries} sx={{ mb: 2, flexShrink: 0 }} />
 
-      {/* Week nav + view toggle */}
-      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
+      {/* Week nav */}
+      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1.5, flexShrink: 0 }}>
         <Stack direction="row" alignItems="center" spacing={1}>
           <IconButton size="small" onClick={prevWeek}><ChevronLeftIcon /></IconButton>
           <Button size="small" variant="outlined" startIcon={<TodayIcon />} onClick={goToday}>Today</Button>
           <IconButton size="small" onClick={nextWeek}><ChevronRightIcon /></IconButton>
           <Typography variant="subtitle2" fontWeight={600}>{fmtRange(weekStart, weekEnd)}</Typography>
         </Stack>
-        <ToggleButtonGroup value={viewMode} exclusive onChange={(_, v) => v && setViewMode(v)} size="small">
-          <ToggleButton value="week"><CalendarViewWeekIcon fontSize="small" /></ToggleButton>
-          <ToggleButton value="list"><ViewListIcon fontSize="small" /></ToggleButton>
-        </ToggleButtonGroup>
       </Stack>
 
-      {/* ── CALENDAR VIEW ── */}
-      {viewMode === 'week' && (
-        <TableContainer component={Card} sx={{ overflowX: 'auto' }}>
-          <Table sx={{ tableLayout: 'fixed', minWidth: 800 }}>
-            <TableHead>
-              <TableRow>
-                <TableCell sx={{ width: 140, fontWeight: 600 }}>Staff</TableCell>
-                {weekDates.map(date => (
-                  <TableCell
-                    key={date}
-                    align="center"
-                    sx={{
-                      fontWeight: 600,
-                      bgcolor: date === today ? 'action.selected' : 'inherit',
-                      width: `calc((100% - 140px) / 7)`,
-                    }}
-                  >
-                    <Typography variant="caption" fontWeight={600} display="block">{fmtDay(date)}</Typography>
-                    <Typography variant="caption" color={date === today ? 'primary.main' : 'text.secondary'}>
-                      {fmtShort(date)}
-                    </Typography>
-                  </TableCell>
-                ))}
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {staffLoading ? (
+      {/* Tabs */}
+      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 1.5, flexShrink: 0, borderBottom: 1, borderColor: 'divider' }}>
+        <Tab icon={<CalendarMonthIcon />} iconPosition="start" label="Calendar" />
+        <Tab
+          icon={<WarningAmberIcon />} iconPosition="start" label="Absences & Coverage"
+          sx={{ '& .MuiBadge-badge': {} }}
+        />
+      </Tabs>
+
+      {/* ── TAB 0: CALENDAR ── */}
+      {tab === 0 && (
+        <Box sx={{ flex: 1, overflow: 'auto' }}>
+          <TableContainer component={Card} sx={{ overflowX: 'auto' }}>
+            <Table sx={{ tableLayout: 'fixed', minWidth: 760 }}>
+              <TableHead>
                 <TableRow>
-                  <TableCell colSpan={8} align="center" sx={{ py: 4 }}>
-                    <CircularProgress size={24} />
-                  </TableCell>
-                </TableRow>
-              ) : staffOnly.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={8} align="center" sx={{ py: 4 }}>
-                    <Typography color="text.secondary">No staff found. Add staff in Users.</Typography>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                staffOnly.map(staff => (
-                  <TableRow key={staff.email} hover>
-                    <TableCell sx={{ verticalAlign: 'top', py: 1 }}>
-                      <Typography variant="body2" fontWeight={500} noWrap>
-                        {staff.fullName || staff.email}
+                  {/* Shift column header */}
+                  <TableCell sx={{ width: 120, fontWeight: 600 }}>Shift</TableCell>
+                  {weekDates.map(date => (
+                    <TableCell
+                      key={date}
+                      align="center"
+                      sx={{
+                        fontWeight: 600,
+                        bgcolor: date === today ? 'action.selected' : 'inherit',
+                        width: `calc((100% - 120px) / 7)`,
+                      }}
+                    >
+                      <Typography variant="caption" fontWeight={600} display="block">{fmtDay(date)}</Typography>
+                      <Typography variant="caption" color={date === today ? 'primary.main' : 'text.secondary'}>
+                        {fmtShort(date)}
                       </Typography>
                     </TableCell>
-                    {weekDates.map(date => {
-                      const cellEntries = byDateByStaff[date]?.[staff.email] || [];
-                      return (
-                        <TableCell
-                          key={date}
-                          sx={{
-                            verticalAlign: 'top', p: 0.5,
-                            bgcolor: date === today ? 'action.focus' : 'inherit',
-                          }}
-                        >
-                          {cellEntries.map(entry => (
-                            <EntryChip key={entry.id} entry={entry} {...entryActions(entry)} />
-                          ))}
-                          <Tooltip title="Add shift">
-                            <IconButton
-                              size="small"
-                              sx={{ opacity: 0.25, '&:hover': { opacity: 1 } }}
-                              onClick={() => openCreate(staff.email, date)}
-                            >
-                              <AddIcon sx={{ fontSize: 14 }} />
-                            </IconButton>
-                          </Tooltip>
-                        </TableCell>
-                      );
-                    })}
+                  ))}
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {loadingEntries || staffLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={8} align="center" sx={{ py: 4 }}>
+                      <CircularProgress size={24} />
+                    </TableCell>
                   </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
+                ) : templates.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} align="center" sx={{ py: 4 }}>
+                      <Typography color="text.secondary">No shift templates. Add templates using the Templates button.</Typography>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  templates.map(tpl => (
+                    <TableRow key={tpl.id} hover>
+                      {/* Row label: shift template */}
+                      <TableCell sx={{ verticalAlign: 'top', py: 1, bgcolor: 'action.hover' }}>
+                        <Typography variant="body2" fontWeight={700} noWrap>{tpl.name}</Typography>
+                        {tpl.startTime && (
+                          <Typography variant="caption" color="text.secondary" noWrap display="block">
+                            {tpl.startTime}–{tpl.endTime}
+                          </Typography>
+                        )}
+                      </TableCell>
+
+                      {/* Day cells: staff chips */}
+                      {weekDates.map(date => {
+                        const cellEntries = byShiftByDate[tpl.name]?.[date] || [];
+                        return (
+                          <TableCell
+                            key={date}
+                            sx={{
+                              verticalAlign: 'top', p: 0.5,
+                              bgcolor: date === today ? 'action.focus' : 'inherit',
+                              minWidth: 80,
+                            }}
+                          >
+                            {cellEntries.map(entry => (
+                              <StaffChip key={entry.id} entry={entry} {...entryActions} />
+                            ))}
+                            <Tooltip title={`Add ${tpl.name} shift on ${fmtShort(date)}`}>
+                              <IconButton
+                                size="small"
+                                sx={{ opacity: 0.2, '&:hover': { opacity: 1 } }}
+                                onClick={() => openCreate('', date, tpl.name)}
+                              >
+                                <AddIcon sx={{ fontSize: 14 }} />
+                              </IconButton>
+                            </Tooltip>
+                          </TableCell>
+                        );
+                      })}
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Box>
       )}
 
-      {/* ── LIST VIEW ── */}
-      {viewMode === 'list' && (
-        <TableContainer component={Card}>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell sx={{ fontWeight: 600 }}>Date</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Staff</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Shift</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Time</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Notes</TableCell>
-                <TableCell sx={{ fontWeight: 600, width: 120 }}>Actions</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {loadingEntries ? (
-                <TableRow>
-                  <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
-                    <CircularProgress size={24} />
-                  </TableCell>
-                </TableRow>
-              ) : entries.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
-                    <Typography color="text.secondary">No schedule entries for this week.</Typography>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                [...entries]
-                  .sort((a, b) => a.date.localeCompare(b.date) || (a.staffName || '').localeCompare(b.staffName || ''))
-                  .map(entry => {
+      {/* ── TAB 1: ABSENCES & COVERAGE ── */}
+      {tab === 1 && (
+        <Box sx={{ flex: 1, overflow: 'auto' }}>
+          {absenceEntries.length === 0 ? (
+            <Box sx={{ py: 8, textAlign: 'center' }}>
+              <WarningAmberIcon sx={{ fontSize: 48, opacity: 0.2, mb: 1 }} />
+              <Typography color="text.secondary">No absences or coverage this week.</Typography>
+            </Box>
+          ) : (
+            <TableContainer component={Card}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={{ fontWeight: 600 }}>Date</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>Staff</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>Shift</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>Covered By</TableCell>
+                    <TableCell sx={{ fontWeight: 600, width: 130 }}>Actions</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {absenceEntries.map(entry => {
                     const cfg = STATUS_CFG[entry.status] || STATUS_CFG.scheduled;
                     return (
                       <TableRow key={entry.id} hover>
@@ -532,20 +542,23 @@ export default function Schedule({ showSnackbar }) {
                         <TableCell>
                           <Typography variant="body2">{entry.staffName || entry.staffEmail}</Typography>
                         </TableCell>
-                        <TableCell>{entry.shiftLabel}</TableCell>
                         <TableCell>
-                          {entry.startTime && entry.endTime ? `${entry.startTime}–${entry.endTime}` : '—'}
-                        </TableCell>
-                        <TableCell>
-                          <Chip label={cfg.label} color={cfg.color} size="small" />
-                          {entry.coveredByName && (
-                            <Typography variant="caption" display="block" color="text.secondary">
-                              by {entry.coveredByName}
+                          <Typography variant="body2">{entry.shiftLabel}</Typography>
+                          {entry.startTime && (
+                            <Typography variant="caption" color="text.secondary">
+                              {entry.startTime}–{entry.endTime}
                             </Typography>
                           )}
                         </TableCell>
                         <TableCell>
-                          <Typography variant="caption" color="text.secondary">{entry.notes || '—'}</Typography>
+                          <Chip label={cfg.label} color={cfg.color} size="small" />
+                        </TableCell>
+                        <TableCell>
+                          {entry.coveredByName ? (
+                            <Typography variant="body2">{entry.coveredByName}</Typography>
+                          ) : (
+                            <Typography variant="caption" color="text.secondary">—</Typography>
+                          )}
                         </TableCell>
                         <TableCell>
                           <Stack direction="row" spacing={0.5}>
@@ -554,13 +567,6 @@ export default function Schedule({ showSnackbar }) {
                                 <EditIcon fontSize="small" />
                               </IconButton>
                             </Tooltip>
-                            {entry.status === 'scheduled' && (
-                              <Tooltip title="Mark Absent">
-                                <IconButton size="small" onClick={() => handleMarkAbsent(entry)}>
-                                  <PersonOffIcon fontSize="small" />
-                                </IconButton>
-                              </Tooltip>
-                            )}
                             {entry.status === 'absent' && (
                               <Tooltip title="Assign Coverage">
                                 <IconButton size="small" onClick={() => { setCoverStaff(''); setCoverDlg({ open: true, entry }); }}>
@@ -577,11 +583,12 @@ export default function Schedule({ showSnackbar }) {
                         </TableCell>
                       </TableRow>
                     );
-                  })
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
+                  })}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+        </Box>
       )}
 
       {/* ── ENTRY DRAWER (Create / Edit) ── */}
@@ -697,12 +704,14 @@ export default function Schedule({ showSnackbar }) {
             >
               <Box>
                 <Typography variant="body2" fontWeight={600}>{tpl.name}</Typography>
-                <Typography variant="caption" color="text.secondary">{tpl.startTime}–{tpl.endTime}</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {tpl.startTime && tpl.endTime ? `${tpl.startTime}–${tpl.endTime}` : 'No time set'}
+                </Typography>
               </Box>
               <Stack direction="row" spacing={0.5}>
                 <IconButton size="small" onClick={() => {
                   setEditingTpl(tpl);
-                  setTplForm({ name: tpl.name, startTime: tpl.startTime, endTime: tpl.endTime });
+                  setTplForm({ name: tpl.name, startTime: tpl.startTime || '', endTime: tpl.endTime || '' });
                 }}>
                   <EditIcon fontSize="small" />
                 </IconButton>

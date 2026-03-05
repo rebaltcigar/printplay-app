@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.30] - 2026-03-05
+
+### Fixes: Login, Firestore Rules, Schedule Layout
+
+- **Single login form**: Removed admin toggle link entirely. One form, one "SIGN IN" button — role auto-detected after auth (staff → schedule flow, admin/owner → admin dashboard).
+- **Admin role support**: All admin roles (`admin`, `owner`, `superadmin`) can now log in and access the admin dashboard.
+- **Firestore rules**: Added missing rules for `/schedules` (read: signed-in; write: admin + own staff entries) and `/shiftTemplates` (read: signed-in; write: admin only). Added `/{path=**}/paystubs/{stubId}` collectionGroup rule so staff can read their own paystubs via the POS sidebar.
+- **Schedule calendar orientation**: Calendar rows are now **shift templates** (Morning, Afternoon, Evening, etc.) and cells show **staff name chips**. Clicking `+` in a cell pre-fills both the shift template and date in the add drawer.
+- **Absences & Coverage tab**: New second tab in the Schedule module lists all absent/covered entries for the current week with quick Assign Coverage and Delete actions. Week navigation applies to both tabs.
+
 ## [0.1.29] - 2026-03-05
 
 ### Staff Scheduling + Unified Login

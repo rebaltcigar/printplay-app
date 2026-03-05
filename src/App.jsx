@@ -120,12 +120,13 @@ export default function App() {
   }
 
   /**
-   * Phase 1 — Authenticate + look up today's schedule.
-   * Returns { type: 'scheduled'|'covered'|'relogin'|'fallback', scheduleEntry?, shiftPeriod? }
-   * Throws on auth failure, role mismatch, suspended, or shift conflict.
+   * Phase 1 — Authenticate and auto-detect role.
+   * - Admin roles  → sets App state directly, returns { type: 'admin' }
+   * - Staff role   → checks schedule, returns { type: 'scheduled'|'covered'|'relogin'|'fallback', ... }
+   * Throws on auth failure, suspension, or shift conflict.
    */
-  const handleLookupSchedule = async (email, password) => {
-    // Check existing shift lock
+  const handleLogin = async (email, password) => {
+    // Check existing shift lock before signing in (public read allowed)
     const statusRef = doc(db, "app_status", "current_shift");
     const statusSnap = await getDoc(statusRef);
     const lock = statusSnap.exists() ? statusSnap.data() : null;
@@ -139,29 +140,50 @@ export default function App() {
     // Firebase sign-in
     const cred = await signInWithEmailAndPassword(auth, email, password);
 
-    // Role check
+    // Fetch user doc for role
     const userSnap = await getDoc(doc(db, "users", cred.user.uid));
-    if (!userSnap.exists() || userSnap.data()?.role !== "staff") {
+    if (!userSnap.exists()) {
       await signOut(auth).catch(() => {});
-      const e = new Error("Admin used for staff");
-      e.code = "role/invalid-staff";
+      const e = new Error("No account record found. Contact your administrator.");
+      e.code = "auth/user-not-found";
       throw e;
     }
-    if (userSnap.data()?.suspended === true) {
+
+    const userData = userSnap.data();
+
+    if (userData?.suspended === true) {
       await signOut(auth).catch(() => {});
       const e = new Error("This account has been suspended. Please contact your administrator.");
       e.code = "auth/account-suspended";
       throw e;
     }
 
-    // Re-login: same staff has active shift — auth bootstrap will restore state
+    const role = userData?.role || null;
+    const adminRoles = ["superadmin", "admin", "owner"];
+
+    // ── Admin path ──
+    if (adminRoles.includes(role)) {
+      setCurrentUser(cred.user);
+      setUserRole(role);
+      return { type: "admin" };
+    }
+
+    // ── Staff path ──
+    if (role !== "staff") {
+      await signOut(auth).catch(() => {});
+      const e = new Error("Unrecognized account role. Contact your administrator.");
+      e.code = "auth/user-disabled";
+      throw e;
+    }
+
+    // Re-login: same staff has active shift
     if (lock?.activeShiftId && lock.staffEmail === email) {
       const shiftSnap = await getDoc(doc(db, "shifts", lock.activeShiftId));
       const shiftPeriod = shiftSnap.exists() ? shiftSnap.data()?.shiftPeriod || "" : "";
       return { type: "relogin", shiftPeriod };
     }
 
-    // Query today's own scheduled entry (single-field query, filter date in JS)
+    // Query today's own scheduled entry
     const today = todayPHT();
     const ownSnap = await getDocs(query(
       collection(db, "schedules"),
@@ -246,25 +268,6 @@ export default function App() {
     try { await signOut(auth); } catch {}
   };
 
-  // Super admin login (no shift)
-  const handleAdminLogin = async (email, password) => {
-    // Throw errors; Login.jsx will humanize and render them.
-    const cred = await signInWithEmailAndPassword(auth, email, password);
-
-    const userRef = doc(db, "users", cred.user.uid);
-    const userSnap = await getDoc(userRef);
-
-    if (!userSnap.exists() || userSnap.data()?.role !== "superadmin") {
-      await signOut(auth).catch(() => { });
-      const e = new Error("Staff used for admin");
-      e.code = "role/invalid-admin";
-      throw e;
-    }
-
-    setCurrentUser(cred.user);
-    setUserRole("superadmin");
-  };
-
   const handleAdminLogout = async () => {
     try {
       await signOut(auth);
@@ -308,15 +311,14 @@ export default function App() {
                 }}
               >
                 <Login
-                  onLookupSchedule={handleLookupSchedule}
+                  onLogin={handleLogin}
                   onStartShift={handleStartShift}
                   onCancelLogin={handleCancelLogin}
-                  onAdminLogin={handleAdminLogin}
                 />
               </Box>
             ) : (
               // If already logged in (and valid state), redirect based on role
-              <Navigate to={userRole === 'superadmin' ? "/admin" : "/pos"} replace />
+              <Navigate to={['superadmin', 'admin', 'owner'].includes(userRole) ? "/admin" : "/pos"} replace />
             )
           } />
 
@@ -344,7 +346,7 @@ export default function App() {
 
           {/* Admin Routes */}
           <Route path="/admin/*" element={
-            currentUser && userRole === 'superadmin' ? (
+            currentUser && ['superadmin', 'admin', 'owner'].includes(userRole) ? (
               <Box sx={{ width: "100%", height: "100%", display: "flex" }}>
                 <AnalyticsProvider>
                   <AdminDashboard user={currentUser} onLogout={handleAdminLogout} />
@@ -358,7 +360,7 @@ export default function App() {
           {/* Root Redirect */}
           <Route path="/" element={
             currentUser ? (
-              <Navigate to={userRole === 'superadmin' ? "/admin" : "/pos"} replace />
+              <Navigate to={['superadmin', 'admin', 'owner'].includes(userRole) ? "/admin" : "/pos"} replace />
             ) : (
               <Navigate to="/login" replace />
             )

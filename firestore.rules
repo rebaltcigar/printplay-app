@@ -144,6 +144,20 @@ service cloud.firestore {
       allow read, write: if isSignedIn();
     }
 
+    /* ---------- Schedules ---------- */
+    match /schedules/{id} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() || isStaff();
+      allow update: if isAdmin() || (isStaff() && resource.data.staffEmail == request.auth.token.email);
+      allow delete: if isAdmin();
+    }
+
+    /* ---------- Shift Templates ---------- */
+    match /shiftTemplates/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
     /* ---------- Payroll & Scheduling ---------- */
     match /payPeriods/{id} {
       allow read, write: if isAdmin();
@@ -158,6 +172,11 @@ service cloud.firestore {
         match /shifts/{sid} { allow read, write: if isAdmin(); }
       }
       match /paystubs/{stubId} { allow read, write: if isAdmin(); }
+    }
+
+    /* ---------- Paystubs (collectionGroup — staff self-service) ---------- */
+    match /{path=**}/paystubs/{stubId} {
+      allow read: if isAdmin() || (isStaff() && resource.data.staffEmail == request.auth.token.email);
     }
 
     /* ---------- Expenses (Legacy) ---------- */

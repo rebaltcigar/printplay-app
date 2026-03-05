@@ -13,8 +13,6 @@ import {
   Button,
   CircularProgress,
   Alert,
-  Divider,
-  Chip,
   Stack,
 } from "@mui/material";
 import { db } from "../firebase";
@@ -55,17 +53,12 @@ function formatTime(timeStr) {
   return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${ampm}`;
 }
 
-function humanizeAuthError(err, { adminMode }) {
+function humanizeAuthError(err) {
   const code = (err?.code || "").toLowerCase();
   const msg  = (err?.message || "").toLowerCase();
 
   if (code === "shift/active-other" || msg.includes("shift is already active"))
     return err?.message || "A shift is already active. Please wait until it ends.";
-
-  if (code === "role/invalid-staff" || msg.includes("admin used for staff"))
-    return 'This is an admin account. Use "Login as Admin" instead.';
-  if (code === "role/invalid-admin" || msg.includes("staff used for admin"))
-    return "You don't have admin access. Use the regular sign-in.";
 
   if (code === "auth/account-suspended" || msg.includes("suspended"))
     return "This account has been suspended. Please contact your administrator.";
@@ -85,24 +78,25 @@ function humanizeAuthError(err, { adminMode }) {
   if (msg.includes("wrong-password") || msg.includes("password")) return "Email or password is incorrect.";
   if (msg.includes("network")) return "Network error. Check your connection.";
 
-  return adminMode
-    ? "Admin login failed. Check your email and password."
-    : "Sign-in failed. Check your email and password.";
+  return "Sign-in failed. Check your email and password.";
 }
 
 // ── Login component ──────────────────────────────────────────────────────────
-export default function Login({ onLookupSchedule, onStartShift, onCancelLogin, onAdminLogin }) {
+// Props:
+//   onLogin(email, password) → Promise<{ type: 'admin'|'scheduled'|'covered'|'relogin'|'fallback', scheduleEntry?, shiftPeriod? }>
+//   onStartShift(type, scheduleEntry, fallbackPeriod, fallbackNote) → Promise<void>
+//   onCancelLogin() → Promise<void>
+export default function Login({ onLogin, onStartShift, onCancelLogin }) {
   // Phase machine: 'credentials' | 'confirm' | 'fallback'
   const [phase, setPhase] = useState("credentials");
-  const [adminMode, setAdminMode] = useState(false);
 
   // Phase 1 fields
   const [email,        setEmail]       = useState("");
   const [password,     setPassword]    = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
-  // Phase 2 — result from lookup
-  const [scheduleResult, setScheduleResult] = useState(null);
+  // Phase 2 — result from login
+  const [loginResult, setLoginResult] = useState(null);
 
   // Phase 2 — fallback fields
   const [fallbackPeriod, setFallbackPeriod] = useState(guessShiftPHT);
@@ -129,16 +123,14 @@ export default function Login({ onLookupSchedule, onStartShift, onCancelLogin, o
     e.preventDefault();
     setErr(""); setLoading(true);
     try {
-      if (adminMode) {
-        await onAdminLogin(email, password);
-        // parent routes to /admin
-      } else {
-        const result = await onLookupSchedule(email, password);
-        setScheduleResult(result);
+      const result = await onLogin(email, password);
+      // If admin, parent handles routing — this component may unmount
+      if (result?.type !== "admin") {
+        setLoginResult(result);
         setPhase(result.type === "fallback" ? "fallback" : "confirm");
       }
     } catch (error) {
-      setErr(humanizeAuthError(error, { adminMode }));
+      setErr(humanizeAuthError(error));
     } finally {
       setLoading(false);
     }
@@ -149,14 +141,14 @@ export default function Login({ onLookupSchedule, onStartShift, onCancelLogin, o
     setErr(""); setLoading(true);
     try {
       await onStartShift(
-        scheduleResult.type,
-        scheduleResult.scheduleEntry || null,
+        loginResult.type,
+        loginResult.scheduleEntry || null,
         fallbackPeriod,
         fallbackNote,
       );
       // parent sets activeShiftId → route changes → this unmounts
     } catch (error) {
-      setErr(humanizeAuthError(error, { adminMode: false }));
+      setErr(humanizeAuthError(error));
       setLoading(false);
     }
   };
@@ -166,7 +158,7 @@ export default function Login({ onLookupSchedule, onStartShift, onCancelLogin, o
     setLoading(true);
     try { await onCancelLogin?.(); } catch {}
     setPhase("credentials");
-    setScheduleResult(null);
+    setLoginResult(null);
     setErr("");
     setFallbackNote("");
     setLoading(false);
@@ -210,9 +202,7 @@ export default function Login({ onLookupSchedule, onStartShift, onCancelLogin, o
       >
         <CircularProgress size={36} />
         <Typography variant="caption">
-          {phase === "credentials"
-            ? adminMode ? "Validating admin…" : "Checking schedule…"
-            : "Starting shift…"}
+          {phase === "credentials" ? "Signing in…" : "Starting shift…"}
         </Typography>
       </Box>
     ) : null;
@@ -264,22 +254,7 @@ export default function Login({ onLookupSchedule, onStartShift, onCancelLogin, o
               type="submit" variant="contained" fullWidth
               disabled={credDisabled} sx={{ mt: 0.5 }}
             >
-              {loading
-                ? adminMode ? "Signing in as Admin…" : "Checking…"
-                : adminMode ? "LOGIN AS ADMIN" : "SIGN IN"}
-            </Button>
-          </Box>
-
-          <Divider sx={{ my: 2 }} />
-
-          <Box sx={{ textAlign: "center" }}>
-            <Button
-              size="small" color="inherit"
-              sx={{ opacity: 0.45, fontSize: "0.75rem", textTransform: "none" }}
-              onClick={() => { setAdminMode(v => !v); setErr(""); }}
-              disabled={loading}
-            >
-              {adminMode ? "← Back to staff sign-in" : "Login as Admin"}
+              {loading ? "Signing in…" : "SIGN IN"}
             </Button>
           </Box>
         </Card>
@@ -290,12 +265,12 @@ export default function Login({ onLookupSchedule, onStartShift, onCancelLogin, o
 
   // ══ PHASE: confirm (scheduled / covered / relogin) ══════════════════════════
   if (phase === "confirm") {
-    const entry = scheduleResult?.scheduleEntry;
-    const type  = scheduleResult?.type;
+    const entry = loginResult?.scheduleEntry;
+    const type  = loginResult?.type;
 
     const isRelogin  = type === "relogin";
     const isCovered  = type === "covered";
-    const shiftLabel = entry?.shiftLabel || scheduleResult?.shiftPeriod || "";
+    const shiftLabel = entry?.shiftLabel || loginResult?.shiftPeriod || "";
     const timeRange  = entry?.startTime
       ? `${formatTime(entry.startTime)} – ${formatTime(entry.endTime)}`
       : "";
