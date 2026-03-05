@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.32] - 2026-03-05
+
+### Fixed
+- **Login flash on refresh**: App now waits for Firebase auth state to resolve before rendering routes. Pages like `/pos` and `/admin` show an "Initializing..." loader on refresh; the login page shows a plain black screen — no flash of the wrong page.
+
 ## [0.1.31] - 2026-03-05
 
 ### Staff Scheduling, Multi-Staff Login & Login Redesign
