@@ -52,7 +52,7 @@ const formatTimeRange = (start, end) => {
 };
 
 // ---------- Single Paystub ----------
-function Paystub({ stub }) {
+export function Paystub({ stub }) {
   const paystubRef = useRef(null);
 
   if (!stub) {

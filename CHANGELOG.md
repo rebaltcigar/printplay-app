@@ -1,7 +1,21 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
- 
+
+## [0.1.29] - 2026-03-05
+
+### Staff Scheduling + Unified Login
+
+- **Admin Schedule tab**: New "Schedule" tab in the admin sidebar with week-view calendar (Mon–Sun columns, staff rows) and list-view toggle. Entries show shift label, time, and status chip. Click the `+` per cell to add, click a chip to edit/mark absent/assign coverage/delete.
+- **Shift templates**: Manage reusable shift templates (name, start, end time) via the "Templates" drawer. Default Morning/Afternoon/Evening templates auto-load when no Firestore templates exist.
+- **Copy Last Week**: One-click button copies all previous week's schedule entries to the current week (status reset to `scheduled`).
+- **Coverage flow**: Mark Absent turns status to `absent`; Assign Coverage picks a covering staff member and updates status to `covered` + records `coveredByEmail/Name`.
+- **Firestore model**: New `/schedules` collection and `/shiftTemplates` collection per FEATURE_PLAN.md spec.
+- **Unified Login — Phase 1**: Single email/password form (no shift selector). "Sign In" authenticates and queries today's schedule. "Login as Admin" small link at bottom replaces the corner shield icon.
+- **Unified Login — Phase 2 (schedule found)**: Shows the scheduled/coverage shift info card with "START SHIFT" confirmation. Status auto-set to `in-progress` and shift doc linked to schedule entry.
+- **Unified Login — Phase 2 (fallback)**: No schedule found → shows shift period selector + optional notes field → starts unlinked shift.
+- **Re-login**: Same staff with active shift → "Continue" button restores session without creating a new shift.
+
 ## [0.1.28] - 2026-03-05
 
 ### Payroll — Expanded Row & Paystub Fixes

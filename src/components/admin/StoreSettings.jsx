@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
     TextField, Box, Typography, Switch, FormControlLabel,
-    InputAdornment, Stack, Paper, Alert, Button, CircularProgress, LinearProgress
+    InputAdornment, Stack, Paper, Alert, Button, CircularProgress, LinearProgress, MenuItem
 } from '@mui/material';
 import FingerprintIcon from '@mui/icons-material/Fingerprint';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
@@ -37,7 +37,10 @@ export default function StoreSettings({ section, showSnackbar, user }) {
             expenses: 'EXP',
             transactions: 'TX',
             payroll: 'PAY'
-        }
+        },
+        shiftDurationHours: 12,
+        shiftAlertMinutes: 30,
+        schedulePostingFrequency: 'weekly',
     });
 
     const [capturingHotkey, setCapturingHotkey] = useState(false);
@@ -401,6 +404,42 @@ export default function StoreSettings({ section, showSnackbar, user }) {
                             endAdornment: <InputAdornment position="end">%</InputAdornment>,
                         }}
                     />
+                    <Typography variant="subtitle2" sx={{ pt: 1 }}>Shift Duration</Typography>
+                    <Stack direction="row" spacing={2}>
+                        <TextField
+                            label="Shift Duration"
+                            type="number"
+                            fullWidth
+                            value={settings.shiftDurationHours ?? 12}
+                            onChange={e => setSettings({ ...settings, shiftDurationHours: Math.max(1, parseInt(e.target.value) || 12) })}
+                            helperText="Max hours per shift before warning turns red."
+                            InputProps={{ endAdornment: <InputAdornment position="end">hrs</InputAdornment> }}
+                            inputProps={{ min: 1, max: 24 }}
+                        />
+                        <TextField
+                            label="Alert Before End"
+                            type="number"
+                            fullWidth
+                            value={settings.shiftAlertMinutes ?? 30}
+                            onChange={e => setSettings({ ...settings, shiftAlertMinutes: Math.max(1, parseInt(e.target.value) || 30) })}
+                            helperText="Yellow warning shown this many minutes before shift limit."
+                            InputProps={{ endAdornment: <InputAdornment position="end">min</InputAdornment> }}
+                            inputProps={{ min: 1, max: 120 }}
+                        />
+                    </Stack>
+                    <Typography variant="subtitle2" sx={{ pt: 1 }}>Schedule Posting</Typography>
+                    <TextField
+                        select
+                        label="Schedule Posting Frequency"
+                        fullWidth
+                        value={settings.schedulePostingFrequency || 'weekly'}
+                        onChange={e => setSettings({ ...settings, schedulePostingFrequency: e.target.value })}
+                        helperText="Minimum frequency for posting staff schedules."
+                    >
+                        <MenuItem value="weekly">Weekly</MenuItem>
+                        <MenuItem value="biweekly">Bi-weekly</MenuItem>
+                        <MenuItem value="monthly">Monthly</MenuItem>
+                    </TextField>
                     {renderSaveButton()}
                 </Stack>
             )}

@@ -24,9 +24,13 @@ import {
 import {
   doc,
   getDoc,
+  getDocs,
   setDoc,
   addDoc,
+  updateDoc,
   collection,
+  query,
+  where,
   serverTimestamp,
 } from "firebase/firestore";
 import { generateDisplayId } from "./utils/idGenerator";
@@ -110,80 +114,136 @@ export default function App() {
 
   // ------------------ HANDLERS ------------------
 
-  // Staff login + shift start
-  const handleStaffLogin = async (email, password, shiftPeriod) => {
-    // We throw errors; Login.jsx will catch and render them.
-    // DO NOT alert inside this function.
-    // 1) Check for an existing active shift lock first
+  /** Get today's date string "YYYY-MM-DD" in Philippine Time. */
+  function todayPHT() {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila" }).format(new Date());
+  }
+
+  /**
+   * Phase 1 — Authenticate + look up today's schedule.
+   * Returns { type: 'scheduled'|'covered'|'relogin'|'fallback', scheduleEntry?, shiftPeriod? }
+   * Throws on auth failure, role mismatch, suspended, or shift conflict.
+   */
+  const handleLookupSchedule = async (email, password) => {
+    // Check existing shift lock
     const statusRef = doc(db, "app_status", "current_shift");
     const statusSnap = await getDoc(statusRef);
     const lock = statusSnap.exists() ? statusSnap.data() : null;
 
-    if (lock?.activeShiftId) {
-      // Another staff owns the active shift
-      if (lock.staffEmail !== email) {
-        const e = new Error(
-          `A shift is already active by ${lock.staffEmail}.`
-        );
-        e.code = "shift/active-other";
-        throw e;
-      }
-
-      // Same staff re-logging in to the same active shift
-      const cred = await signInWithEmailAndPassword(auth, email, password);
-      setCurrentUser(cred.user);
-      setUserRole("staff");
-      setActiveShiftId(lock.activeShiftId);
-
-      const shiftRef = doc(db, "shifts", lock.activeShiftId);
-      const shiftSnap = await getDoc(shiftRef);
-      setActiveShiftPeriod(shiftSnap.exists() ? shiftSnap.data()?.shiftPeriod : "");
-      return;
+    if (lock?.activeShiftId && lock.staffEmail !== email) {
+      const e = new Error(`A shift is already active by ${lock.staffEmail}.`);
+      e.code = "shift/active-other";
+      throw e;
     }
 
-    // 2) No active lock — start a new shift
+    // Firebase sign-in
     const cred = await signInWithEmailAndPassword(auth, email, password);
 
-    // Validate role
-    const userRef = doc(db, "users", cred.user.uid);
-    const userSnap = await getDoc(userRef);
+    // Role check
+    const userSnap = await getDoc(doc(db, "users", cred.user.uid));
     if (!userSnap.exists() || userSnap.data()?.role !== "staff") {
-      // Not a staff account => sign out and throw role error
-      await signOut(auth).catch(() => { });
+      await signOut(auth).catch(() => {});
       const e = new Error("Admin used for staff");
       e.code = "role/invalid-staff";
       throw e;
     }
     if (userSnap.data()?.suspended === true) {
-      await signOut(auth).catch(() => { });
+      await signOut(auth).catch(() => {});
       const e = new Error("This account has been suspended. Please contact your administrator.");
       e.code = "auth/account-suspended";
       throw e;
     }
 
-    // Create shift
-    // Create shift
+    // Re-login: same staff has active shift — auth bootstrap will restore state
+    if (lock?.activeShiftId && lock.staffEmail === email) {
+      const shiftSnap = await getDoc(doc(db, "shifts", lock.activeShiftId));
+      const shiftPeriod = shiftSnap.exists() ? shiftSnap.data()?.shiftPeriod || "" : "";
+      return { type: "relogin", shiftPeriod };
+    }
+
+    // Query today's own scheduled entry (single-field query, filter date in JS)
+    const today = todayPHT();
+    const ownSnap = await getDocs(query(
+      collection(db, "schedules"),
+      where("staffEmail", "==", email),
+    ));
+    const ownEntry = ownSnap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .find(e => e.date === today && (e.status === "scheduled" || e.status === "in-progress"));
+    if (ownEntry) return { type: "scheduled", scheduleEntry: ownEntry };
+
+    // Query coverage entries (where this staff is covering someone)
+    const coverSnap = await getDocs(query(
+      collection(db, "schedules"),
+      where("coveredByEmail", "==", email),
+    ));
+    const coverEntry = coverSnap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .find(e => e.date === today && e.status === "covered");
+    if (coverEntry) return { type: "covered", scheduleEntry: coverEntry };
+
+    return { type: "fallback" };
+  };
+
+  /**
+   * Phase 2 — Create shift doc, update schedule entry, set App state.
+   * type: 'scheduled' | 'covered' | 'relogin' | 'fallback'
+   */
+  const handleStartShift = async (type, scheduleEntry, shiftPeriod, notes) => {
+    const user = auth.currentUser;
+    if (!user) throw new Error("Not authenticated.");
+
+    // Re-login: restore state from existing lock
+    if (type === "relogin") {
+      const statusSnap = await getDoc(doc(db, "app_status", "current_shift"));
+      const lock = statusSnap.data();
+      const shiftSnap = await getDoc(doc(db, "shifts", lock.activeShiftId));
+      setCurrentUser(user);
+      setUserRole("staff");
+      setActiveShiftId(lock.activeShiftId);
+      setActiveShiftPeriod(shiftSnap.exists() ? shiftSnap.data()?.shiftPeriod || "" : "");
+      return;
+    }
+
+    const shiftLabel = scheduleEntry?.shiftLabel || shiftPeriod;
+
+    // Create shift doc
     const displayId = await generateDisplayId("shifts", "SHIFT");
-    const shiftData = {
+    const shiftDocRef = await addDoc(collection(db, "shifts"), {
       displayId,
-      staffEmail: cred.user.email,
-      shiftPeriod,
+      staffEmail: user.email,
+      shiftPeriod: shiftLabel,
+      scheduleId: scheduleEntry?.id || null,
+      notes: notes || "",
       startTime: serverTimestamp(),
       endTime: null,
-    };
-    const shiftDocRef = await addDoc(collection(db, "shifts"), shiftData);
-
-    // Write lock
-    await setDoc(statusRef, {
-      activeShiftId: shiftDocRef.id,
-      staffEmail: cred.user.email,
     });
 
-    // Update local state
-    setCurrentUser(cred.user);
+    // Link schedule entry → in-progress
+    if (scheduleEntry?.id) {
+      await updateDoc(doc(db, "schedules", scheduleEntry.id), {
+        status: "in-progress",
+        shiftId: shiftDocRef.id,
+        updatedAt: serverTimestamp(),
+      });
+    }
+
+    // Write shift lock
+    await setDoc(doc(db, "app_status", "current_shift"), {
+      activeShiftId: shiftDocRef.id,
+      staffEmail: user.email,
+    });
+
+    // Update App state → triggers route to /pos
+    setCurrentUser(user);
     setUserRole("staff");
     setActiveShiftId(shiftDocRef.id);
-    setActiveShiftPeriod(shiftPeriod);
+    setActiveShiftPeriod(shiftLabel);
+  };
+
+  /** Cancel pending login (sign out, Login.jsx resets phase) */
+  const handleCancelLogin = async () => {
+    try { await signOut(auth); } catch {}
   };
 
   // Super admin login (no shift)
@@ -247,7 +307,12 @@ export default function App() {
                   alignItems: "center",
                 }}
               >
-                <Login onLogin={handleStaffLogin} onAdminLogin={handleAdminLogin} />
+                <Login
+                  onLookupSchedule={handleLookupSchedule}
+                  onStartShift={handleStartShift}
+                  onCancelLogin={handleCancelLogin}
+                  onAdminLogin={handleAdminLogin}
+                />
               </Box>
             ) : (
               // If already logged in (and valid state), redirect based on role
