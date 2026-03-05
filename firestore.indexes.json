@@ -1,5 +1,14 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "collectionGroup": "paystubs",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "staffEmail", "order": "ASCENDING" },
+        { "fieldPath": "payDate",    "order": "DESCENDING" }
+      ]
+    }
+  ],
   "fieldOverrides": [
     {
       "collectionGroup": "paystubs",
