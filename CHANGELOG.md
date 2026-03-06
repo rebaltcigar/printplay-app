@@ -40,6 +40,21 @@
 
 ---
 
+## [0.2.5] — 2026-03-06
+
+### Fixed
+
+- **Dashboard transaction log** — Soft-deleted transactions were staying visible in "Active shift's transactions" panel. The `onSnapshot` listener now filters out `isDeleted: true` entries so deleted items disappear immediately.
+- **POS Order History** — New orders were not appearing after deletion fix introduced a Firestore `isDeleted == false` filter. Switched to client-side filter (`isDeleted !== true`) which correctly handles both new orders (no `isDeleted` field) and existing historical data.
+- **POS History Drawer** — Uncontrolled/controlled Switch warning on Checkbox toggles when entering selection mode. Placeholder disabled Checkboxes now have `checked={false}`.
+- **Order deletion cascade** — Deleting an order from POS history now also soft-deletes all linked transactions (matched by `orderNumber + shiftId`), so they are excluded from shift totals, consolidation dialog, and all admin views. `isDeleted: false` also now set on new order documents for consistency.
+
+### Infrastructure
+
+- **Firestore index** — Reverted unnecessary `orders` composite index (client-side filtering used instead).
+
+---
+
 ## [0.2.2] — 2026-03-06
 
 ### Changed

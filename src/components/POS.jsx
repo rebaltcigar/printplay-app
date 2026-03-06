@@ -299,7 +299,9 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
       orderBy('orderNumber', 'desc')
     );
     const unsub = onSnapshot(q, (snap) => {
-      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const docs = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(d => d.isDeleted !== true);
       setShiftOrders(docs);
     });
     return () => unsub();
@@ -601,7 +603,8 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
       const fullOrder = {
         orderNumber: orderNum,
         shiftId: activeShiftId,
-        invoiceStatus: isUnpaid ? 'UNPAID' : 'PAID', // ADD STATUS
+        invoiceStatus: isUnpaid ? 'UNPAID' : 'PAID',
+        isDeleted: false,
         ...createOrderObject(
           currentOrder.items,
           currentTotal,
@@ -738,7 +741,14 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
 
   const handleConfirmDeleteOrders = async (reason) => {
     try {
+      // Collect orderNumbers for the selected orders
+      const deletedOrderNums = selectedOrders
+        .map(id => shiftOrders.find(o => o.id === id)?.orderNumber)
+        .filter(Boolean);
+
       const batch = writeBatch(db);
+
+      // Mark orders as deleted
       selectedOrders.forEach(id => {
         batch.update(doc(db, 'orders', id), {
           isDeleted: true,
@@ -747,9 +757,27 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
           deletedAt: serverTimestamp()
         });
       });
+
+      // Cascade: soft-delete all linked transactions
+      await Promise.all(deletedOrderNums.map(async (orderNum) => {
+        const txSnap = await getDocs(query(
+          collection(db, 'transactions'),
+          where('orderNumber', '==', orderNum),
+          where('shiftId', '==', activeShiftId)
+        ));
+        txSnap.forEach(d => {
+          batch.update(d.ref, {
+            isDeleted: true,
+            deletedBy: user.email,
+            deleteReason: reason,
+            deletedAt: serverTimestamp()
+          });
+        });
+      }));
+
       await batch.commit();
       setSelectedOrders([]);
-      showSnackbar("Order(s) successfully deleted.");
+      showSnackbar("Order(s) and linked transactions successfully deleted.");
     } catch (e) {
       console.error("Error deleting orders:", e);
       showSnackbar("Failed to delete orders", 'error');

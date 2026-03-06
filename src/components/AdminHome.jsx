@@ -116,7 +116,10 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
     );
     const unsubTx = onSnapshot(qTx, (snap) => {
       const list = [];
-      snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+      snap.forEach((d) => {
+        const data = d.data();
+        if (!data.isDeleted) list.push({ id: d.id, ...data });
+      });
       setActiveShiftTx(list);
     });
     return () => {
