@@ -45,9 +45,8 @@ import MeetingRoomIcon from '@mui/icons-material/MeetingRoom';
 import DrawerDialog from "./DrawerDialog";
 import { openDrawer } from "../utils/drawerService";
 
-import { auth, db } from "../firebase";
+import { auth } from "../firebase";
 import { signOut } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
 
 import Shifts from "./Shifts";
 import ExpenseManagement from "./ExpenseManagement";
@@ -62,7 +61,7 @@ import Reports from "./Reports";
 import OrderManagement from "./OrderManagement";
 import Schedule from "./admin/Schedule";
 
-export default function AdminDashboard({ user, onLogout }) {
+export default function AdminDashboard({ user, onLogout, appSettings }) {
   // Router hooks
   const navigate = useNavigate();
   const location = useLocation();
@@ -72,26 +71,10 @@ export default function AdminDashboard({ user, onLogout }) {
   const [cashDrawerOpen, setCashDrawerOpen] = useState(false);
 
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
-  const [storeSettings, setStoreSettings] = useState({ storeName: 'PrintPlay', logoUrl: '/icon.ico' });
-
-  useEffect(() => {
-    const fetchBranding = async () => {
-      try {
-        const docRef = doc(db, 'settings', 'config');
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          setStoreSettings({
-            storeName: data.storeName || 'PrintPlay',
-            logoUrl: data.logoUrl || '/icon.ico'
-          });
-        }
-      } catch (e) {
-        console.error("Error fetching branding:", e);
-      }
-    };
-    fetchBranding();
-  }, []);
+  const storeSettings = {
+    storeName: appSettings?.storeName || 'Kunek',
+    logoUrl: appSettings?.logoUrl || '/icon.ico',
+  };
 
   const [confirmDialog, setConfirmDialog] = useState({
     open: false,
@@ -354,7 +337,8 @@ export default function AdminDashboard({ user, onLogout }) {
         </AppBar>
 
         {/* --- MAIN CONTENT AREA WITH ROUTING --- */}
-        <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
           <Routes>
             <Route index element={<AdminHome user={user} showSnackbar={showSnackbar} />} />
             <Route path="reports/*" element={
@@ -420,6 +404,14 @@ export default function AdminDashboard({ user, onLogout }) {
             {/* Fallback */}
             <Route path="*" element={<Navigate to="/admin" replace />} />
           </Routes>
+          </Box>
+
+          {/* Powered by footer */}
+          <Box sx={{ textAlign: 'center', py: 0.5, borderTop: 1, borderColor: 'divider', flexShrink: 0 }}>
+            <Typography variant="caption" sx={{ opacity: 0.25, fontSize: '0.6rem', letterSpacing: '0.08em' }}>
+              Powered by Kunek
+            </Typography>
+          </Box>
         </Box>
       </Box>
 

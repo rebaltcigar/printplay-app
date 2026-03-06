@@ -1,5 +1,5 @@
 // src/utils/formatters.js
-// Shared formatting helpers used across the PrintPlay app.
+// Shared formatting helpers used across the Kunek platform.
 // Import from here rather than defining local copies in each component.
 
 // ---------------------------------------------------------------------------

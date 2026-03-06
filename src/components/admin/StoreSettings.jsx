@@ -20,7 +20,7 @@ export default function StoreSettings({ section, showSnackbar, user }) {
     const [tempLogoUrl, setTempLogoUrl] = useState("");
     const [previewError, setPreviewError] = useState(false);
     const [settings, setSettings] = useState({
-        storeName: 'PrintPlay',
+        storeName: 'Kunek',
         logoUrl: '',
         address: '',
         phone: '',

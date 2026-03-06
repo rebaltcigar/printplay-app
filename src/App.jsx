@@ -44,10 +44,34 @@ export default function App() {
   // Staff-only session/shift info
   const [activeShiftId, setActiveShiftId] = useState(null);
   const [activeShiftPeriod, setActiveShiftPeriod] = useState("");
+  const [shiftStartTime, setShiftStartTime] = useState(null);
 
   // Clock-in mode (non-cashier staff clocked in to an existing shift)
   const [clockInMode, setClockInMode]   = useState(false);
   const [clockInLogId, setClockInLogId] = useState(null);
+
+  // Staff display name (extracted from user doc during auth bootstrap — no extra fetch in POS)
+  const [staffDisplayName, setStaffDisplayName] = useState('');
+
+  // App-wide settings (fetched once, passed to all pages — avoids per-component flash)
+  const [appSettings, setAppSettings] = useState(null);
+
+  useEffect(() => {
+    getDoc(doc(db, 'settings', 'config'))
+      .then(async snap => {
+        const data = snap.exists() ? snap.data() : {};
+        // Preload logo so it's in cache before the gate opens — prevents image flash
+        if (data.logoUrl) {
+          await new Promise(resolve => {
+            const img = new Image();
+            img.onload = img.onerror = resolve;
+            img.src = data.logoUrl;
+          });
+        }
+        setAppSettings(data);
+      })
+      .catch(() => setAppSettings({}));
+  }, []);
 
   // ------------------ AUTH BOOTSTRAP ------------------
   useEffect(() => {
@@ -59,8 +83,10 @@ export default function App() {
           setUserRole(null);
           setActiveShiftId(null);
           setActiveShiftPeriod("");
+          setShiftStartTime(null);
           setClockInMode(false);
           setClockInLogId(null);
+          setStaffDisplayName('');
           return;
         }
 
@@ -73,9 +99,11 @@ export default function App() {
           return;
         }
 
-        const role = userSnap.data()?.role || null;
+        const userData = userSnap.data();
+        const role = userData?.role || null;
         setCurrentUser(user);
         setUserRole(role);
+        setStaffDisplayName(userData?.fullName || userData?.name || userData?.displayName || user.displayName || user.email || '');
 
         if (role === "staff") {
           // If staff, fetch current active shift if any
@@ -89,11 +117,15 @@ export default function App() {
             const shiftId = statusSnap.data().activeShiftId;
             setActiveShiftId(shiftId);
 
-            // Fetch period to display
+            // Fetch period and start time to display
             const shiftRef = doc(db, "shifts", shiftId);
             const shiftSnap = await getDoc(shiftRef);
             if (shiftSnap.exists()) {
-              setActiveShiftPeriod(shiftSnap.data()?.shiftPeriod || "");
+              const shiftData = shiftSnap.data();
+              setActiveShiftPeriod(shiftData?.shiftPeriod || "");
+              const st = shiftData?.startTime;
+              if (st?.seconds) setShiftStartTime(new Date(st.seconds * 1000));
+              else if (st instanceof Date) setShiftStartTime(st);
             }
           } else {
             setActiveShiftId(null);
@@ -348,7 +380,7 @@ export default function App() {
   // Block rendering routes until Firebase auth state is known.
   // On /login → blank black screen (no flash, no loader).
   // On any other path (already-logged-in page refresh) → show loader.
-  if (!authReady) {
+  if (!authReady || !appSettings) {
     const isLoginPage = window.location.pathname === '/login' || window.location.pathname === '/';
     return (
       <ThemeProvider theme={darkTheme}>
@@ -395,6 +427,9 @@ export default function App() {
                   userRole={userRole}
                   activeShiftId={activeShiftId}
                   shiftPeriod={activeShiftPeriod}
+                  shiftStartTime={shiftStartTime}
+                  appSettings={appSettings}
+                  staffDisplayName={staffDisplayName}
                 />
               ) : (
                 <Navigate to="/login" replace />
@@ -409,7 +444,7 @@ export default function App() {
             currentUser && ['superadmin', 'admin', 'owner'].includes(userRole) ? (
               <Box sx={{ width: "100%", height: "100%", display: "flex" }}>
                 <AnalyticsProvider>
-                  <AdminDashboard user={currentUser} onLogout={handleAdminLogout} />
+                  <AdminDashboard user={currentUser} onLogout={handleAdminLogout} appSettings={appSettings} />
                 </AnalyticsProvider>
               </Box>
             ) : (

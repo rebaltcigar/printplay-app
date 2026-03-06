@@ -10,7 +10,20 @@
       "Bash(cmd /c \"cd /d c:\\\\printplay-app\\\\printplay-app && node_modules\\\\.bin\\\\vite build\")",
       "Bash(powershell -Command \"Set-Location ''c:\\\\printplay-app\\\\printplay-app''; node_modules\\\\.bin\\\\vite build 2>&1\")",
       "Bash(powershell -Command \"Set-Location ''c:\\\\printplay-app\\\\printplay-app''; & ''.\\\\node_modules\\\\.bin\\\\vite.cmd'' build 2>&1\")",
-      "Bash(powershell -Command \"Get-ChildItem ''c:\\\\printplay-app\\\\printplay-app\\\\node_modules\\\\.bin'' -Filter ''vite*'' 2>&1 | Select-Object -First 5\")"
+      "Bash(powershell -Command \"Get-ChildItem ''c:\\\\printplay-app\\\\printplay-app\\\\node_modules\\\\.bin'' -Filter ''vite*'' 2>&1 | Select-Object -First 5\")",
+      "Bash(where firebase)",
+      "Bash(npx firebase --version)",
+      "Bash(npx firebase deploy --only firestore:rules --project dev)",
+      "Bash(npx firebase deploy --only firestore:indexes --project dev)",
+      "Bash(npx firebase use prod)",
+      "Bash(npx firebase deploy --only firestore:rules,firestore:indexes)",
+      "Bash(npx firebase firestore:indexes)",
+      "Bash(npx firebase firestore:indexes --project printplay-prod-23f4e)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(''fieldOverrides:'', fo\\) for fo in d.get\\(''fieldOverrides'',[]\\)]\")",
+      "Bash(npx firebase use dev)",
+      "Bash(npx firebase deploy --only firestore:indexes)",
+      "WebSearch",
+      "Bash(git checkout -b feature/catalog-foundation)"
     ]
   }
 }

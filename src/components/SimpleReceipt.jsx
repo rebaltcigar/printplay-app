@@ -12,10 +12,10 @@ export const SimpleReceipt = ({ order, shiftData, staffName, settings }) => {
   if (!order && !shiftData) return null;
 
   // Default values if settings not loaded/provided
-  const storeName = settings?.storeName || 'PrintPlay';
-  const address = settings?.address || '6 Abra St. Bago Bantay, Quezon City';
-  const phone = settings?.phone || '(02) 8651 2462';
-  const email = settings?.email || 'printplay.net | printplay.ph@gmail.com';
+  const storeName = settings?.storeName || 'Kunek';
+  const address = settings?.address || '';
+  const phone = settings?.phone || '';
+  const email = settings?.email || '';
   const footerMsg = settings?.receiptFooter || 'Salamat, Idol!';
   const logoUrl = settings?.logoUrl || null;
 

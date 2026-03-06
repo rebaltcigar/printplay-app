@@ -175,7 +175,7 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
 
   const [loading, setLoading] = useState(false);
   const [err,     setErr]     = useState("");
-  const [branding, setBranding] = useState({ storeName: "Print+Play", logoUrl: "/logo.png" });
+  const [branding, setBranding] = useState({ storeName: "Kunek", logoUrl: "/logo.png" });
 
   useEffect(() => {
     (async () => {
@@ -183,7 +183,7 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
         const snap = await getDoc(doc(db, "settings", "config"));
         if (snap.exists()) {
           const d = snap.data();
-          setBranding({ storeName: d.storeName || "Print+Play", logoUrl: d.logoUrl || "/logo.png" });
+          setBranding({ storeName: d.storeName || "Kunek", logoUrl: d.logoUrl || "/logo.png" });
         }
       } catch {}
     })();
@@ -332,13 +332,13 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
             Sign In
           </Button>
 
-          {/* Version number — below the sign in button */}
+          {/* Powered by Kunek — below the sign in button */}
           <Typography
             variant="caption"
             align="center"
             sx={{ color: "#3a3a3a", fontFamily: "monospace", mt: -0.5 }}
           >
-            v{__APP_VERSION__}
+            Powered by Kunek &nbsp;·&nbsp; v{__APP_VERSION__}
           </Typography>
         </Box>
       </>
