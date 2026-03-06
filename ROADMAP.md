@@ -94,7 +94,41 @@ Full test plan: `memory/pos-test-plan.md`. Covers item grid, tile clicks, varian
 
 ---
 
-## v0.7 — PC Timer Module
+## v0.7 — Bundle/Package Services
+**Goal**: Support fixed-price service bundles where the system knows the contents — enabling proper inventory deduction and clear cashier UX.
+
+- New `bundle` concept in the service catalog: a parent item with a fixed total price and a defined list of included services/items
+- Example: Rush ID Package ₱40 = 1 ID print + lamination + 1 piece bond paper
+- POS: selecting a bundle adds all included items to the cart as a single grouped line
+- Admin: bundle builder in Service Catalog — define included items and quantities
+- Inventory: bundle checkout decrements stock for each included retail/consumable item
+- Reporting: bundles tracked as their own line in shift reports; contents visible on receipt
+
+---
+
+## v0.8 — Biometric Staff Auth
+**Goal**: Physical fingerprint reader identifies which staff member is present — enabling fast staff switching, sensitive action approval, and clock-in/out without shared Windows Hello.
+
+**Approach — custom Windows companion app:**
+- Dedicated USB fingerprint reader at the counter
+- Lightweight Windows tray app listens for scans and maps each fingerprint to a specific named staff profile (enrolled in the companion app — not Windows Hello)
+- On match: sends the identified `staffEmail` to the Kunek web app via a local WebSocket or HTTP endpoint (`localhost:PORT`)
+- Kunek web app receives the identity and acts on it accordingly
+- No dependency on Windows Hello — each fingerprint is explicitly enrolled and named per staff member
+
+**Use cases:**
+- Clock-in / clock-out without typing credentials
+- Approve sensitive POS actions (void transaction, apply discount, open drawer) — cashier scans instead of entering a PIN
+- Fast cashier handover — scan to switch the active staff on a shared terminal
+- Admin: enroll / revoke fingerprints per staff member
+
+**Infrastructure:**
+- Companion app: scope TBD (Electron, .NET tray app, or lightweight Python service)
+- Kunek side: WebSocket listener in the web app, action dispatcher based on received `staffEmail`
+
+---
+
+## v0.9 — PC Timer Module
 **Goal**: Dedicated PC session management integrated into POS as a new tab. Replaces the current "PC Rental as a manual line item" workaround.
 
 **New collections:**
@@ -115,7 +149,7 @@ Full test plan: `memory/pos-test-plan.md`. Covers item grid, tile clicks, varian
 
 ---
 
-## v0.8 — Payment Methods & POS Polish
+## v0.10 — Payment Methods & POS Polish
 **Goal**: Make payment methods fully configurable. Clean up POS power features.
 
 **Payment method configuration:**
@@ -153,15 +187,13 @@ Full test plan: `memory/pos-test-plan.md`. Covers item grid, tile clicks, varian
 
 | Feature | Notes |
 |---------|-------|
-| Bundle/Package services | Fixed-price bundles (e.g., Rush ID Package ₱40). System needs to know bundle contents for inventory deduction. |
 | Barcode scanner for retail | Scan to add retail item to cart. |
 | Customer loyalty tracking | Repeat customer tagging, frequency tracking. |
 | Job queue (Canva / Graphic Design) | Job-order services needing a queue/ticket system, not just a cart item. |
 | Service-level sales targets | Per-service goals per shift or per day. |
-| Biometric staff auth (mobile) | Staff approves sensitive actions via WebAuthn/Passkeys on their phone. |
 | Sync strategy refinements | Remove console-spamming retries, manual sync controls, better offline UI. |
-| Game Launcher | Integrated game launcher for internet cafe PCs. Ties into PC Timer (v0.7). Admin-managed game library, per-game session tracking. |
-| Firestore offline persistence | `enableIndexedDbPersistence` — full offline support + instant cache on reload. Revisit when offline mode becomes a requirement (v0.4+). |
+| Game Launcher | Integrated game launcher for internet cafe PCs. Ties into PC Timer (v0.9). Admin-managed game library, per-game session tracking. |
+| Firestore offline persistence | `enableIndexedDbPersistence` — full offline support + instant cache on reload. Revisit when offline mode becomes a requirement. |
 
 ---
 
