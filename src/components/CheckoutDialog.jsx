@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     Dialog, DialogTitle, DialogContent, DialogActions,
     Button, TextField, Box, Typography, ToggleButtonGroup,
@@ -13,6 +13,7 @@ export default function CheckoutDialog({ open, onClose, total, onConfirm, custom
     const [tendered, setTendered] = useState('');
     const [gcashRef, setGcashRef] = useState('');
     const [gcashPhone, setGcashPhone] = useState('');
+    const tenderedRef = useRef(null);
 
     useEffect(() => {
         if (open) {
@@ -20,6 +21,7 @@ export default function CheckoutDialog({ open, onClose, total, onConfirm, custom
             setTendered('');
             setGcashRef('');
             setGcashPhone('');
+            setTimeout(() => tenderedRef.current?.focus(), 150);
         }
     }, [open]);
 
@@ -106,7 +108,7 @@ export default function CheckoutDialog({ open, onClose, total, onConfirm, custom
                     {method === 'Cash' && (
                         <Box>
                             <TextField
-                                autoFocus
+                                inputRef={tenderedRef}
                                 label="Amount Tendered"
                                 type="number"
                                 value={tendered}
@@ -127,7 +129,7 @@ export default function CheckoutDialog({ open, onClose, total, onConfirm, custom
                             </Stack>
                             <Box sx={{ bgcolor: 'rgba(255, 255, 255, 0.05)', p: 1.5, borderRadius: 2, textAlign: 'center', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
                                 <Typography variant="body2" sx={{ opacity: 0.7 }}>Expected Change</Typography>
-                                <Typography variant="h5" color="secondary.main" fontWeight="bold">₱{change.toFixed(2)}</Typography>
+                                <Typography variant="h5" sx={{ color: '#ef5350', fontWeight: 'bold' }}>₱{change.toFixed(2)}</Typography>
                             </Box>
                         </Box>
                     )}

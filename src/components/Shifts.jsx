@@ -97,6 +97,23 @@ const thisMonthDefaults = () => {
   return { startStr, endStr };
 };
 
+// Converts Firestore Timestamp / seconds-object / Date → "YYYY-MM-DDTHH:MM" for datetime-local inputs
+const toLocalInput = (ts) => {
+  if (!ts) return '';
+  const d = ts?.toDate ? ts.toDate()
+    : ts?.seconds ? new Date(ts.seconds * 1000)
+    : ts instanceof Date ? ts : null;
+  if (!d || isNaN(d)) return '';
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+// Converts "YYYY-MM-DDTHH:MM" datetime-local string → Firestore Timestamp; null for empty
+const toTimestamp = (str) => {
+  if (!str) return null;
+  return Timestamp.fromDate(new Date(str));
+};
+
 /* -------------------- component -------------------- */
 const Shifts = ({ showSnackbar }) => {
   const theme = useTheme();

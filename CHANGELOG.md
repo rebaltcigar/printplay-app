@@ -13,6 +13,63 @@
 
 ---
 
+## [0.2.1] — 2026-03-06
+
+### Added
+
+- **POS Classic / Grid view toggle** — Chip button in the POS header switches between Classic (form-based) and Grid (tile-based) views. Preference persisted to `localStorage`. Defaults to Classic.
+- **Classic POS view** — Full-width single-column layout: Add to Order form pinned above the cart. No split panel. Contextual fields (expense type, debt customer) appear inline when needed.
+- **POS tile grid (Grid view)** — Service tiles with category filter chips (All / Services / Retail), variant drilldown, and Shift+click quantity dialog. Tile accent colors use catalog icon colors.
+- **Variant drilldown** — Clicking a parent tile opens variant tiles grouped by Variant Group. Back button returns to main grid. Drilldown header shows parent name and variant count.
+- **Shift+click quantity dialog** — Shift+click a leaf tile to set quantity before adding to cart. Shift+click on a variant parent opens the drilldown instead.
+- **Tab transition loader** — 280ms `CircularProgress` shown when switching Sale ↔ PC Rental tabs in grid view, preventing flicker.
+- **Checkout hotkey** — F10 by default; opens checkout dialog when cart is non-empty on the Sale tab. Configurable in Admin → Settings → Hardware. Displayed as a small hint on the Checkout button.
+- **PC Rental settings** — Admin → Settings → POS: toggle PC rental on/off, select external timer vs built-in mode, and optionally link a catalog service for future integration. EndShiftDialog adapts to these settings.
+- **"Logs" button** — History button renamed to Logs in the POS header and mobile menu.
+
+### Changed
+
+- **Order total above cart** — Prominent `h4` total shown above the cart items table, always visible.
+- **Checkout auto-focus** — Amount Tendered field auto-focuses when the checkout dialog opens.
+- **Expected Change color** — Changed from accent purple to red (`#ef5350`).
+- **PC Rental computation de-hardcoded** — `isPcRentalTx()` in `shiftFinancials.js` uses OR logic: matches by `serviceId` (when configured in settings) or item name string fallback for all legacy data. No migration needed.
+- **`computeShiftFinancials` / `aggregateShiftTransactions`** — Both now accept optional `pcRentalServiceId` parameter, forwarded from settings. Null triggers string-match fallback.
+
+### Fixed
+
+- **Edit Shift ReferenceError** — `toLocalInput` and `toTimestamp` helpers were called in `Shifts.jsx` but never defined, crashing the edit shift dialog. Added as module-level helpers.
+- **Undefined `customerDialogMode`** — Stale reference removed from Manual Entry form in POS.
+
+---
+
+## [0.2.0] — 2026-03-06
+
+### Added
+
+- **Catalog variant system** — Services can now be marked as "Has Variants" in the Service Catalog. A variant parent is not sold directly; cashiers click it at the POS to open a sub-selection picker. Variant children are assigned a Variant Group (section header in the picker) and an optional short POS Label for tile display.
+- **Price Type field** — Each catalog item now has a Price Type: Fixed (price pre-fills at POS) or Variable (cashier enters the price). Variable items optionally carry a Pricing Note shown as a hint (e.g., "₱5–₱20 depending on content").
+- **POS Icon field** — Top-level catalog items can be assigned a POS icon from a visual picker grid. Icon key is stored in Firestore and resolved to an MUI icon component via `src/utils/posIcons.jsx` (shared with the upcoming POS tile grid in v0.2.1).
+- **Variants badge in Service Catalog table** — Parent items with `hasVariants` show a child-count chip next to their name. Variant children show their Variant Group label inline.
+- **`posItems` and `variantMap` from `usePOSServices`** — New hook outputs for the upcoming POS tile grid. `posItems` is all top-level, active, non-expense items; `variantMap` maps each parent ID to its sorted variant children. Existing `serviceList` and `expenseTypes` outputs are unchanged.
+- **`variantChildren` from `useServiceList`** — All non-expense child services, available for admin dropdowns and reporting.
+
+### Changed
+
+- **Catalog editor is now a full-screen dialog** — replaced the side drawer. Simple items use a compact single-column dialog; variant parents open a wide two-pane dialog with item settings on the left and group/variant management on the right.
+- **Inline variant management** — variants are created and edited directly inside the parent item's dialog, not as separate top-level form entries. "Add Item" always creates a top-level item.
+- **Variant groups are a managed list** — groups are stored as a canonical ordered array (`variantGroups`) on the parent document. The Group field on variants is a dropdown from that list, preventing typo-caused duplicates. Groups can be added and deleted (with a guard if variants are still assigned).
+- **POS icon picker is now visual** — replaced the text dropdown with a row of icon buttons showing the actual MUI icons. Selecting an icon highlights it; a tooltip shows the label.
+
+### Fixed
+
+- **Fixed-price items cannot be saved with price 0** — saving a Fixed price item with a price of 0 or blank is now blocked with a validation error.
+
+### Infrastructure
+
+- `variantGroups: string[]` added to `services` documents on variant parent items — stores the canonical ordered list of group names.
+
+---
+
 ## [0.1.32] — 2026-03-05
 
 ### Fixed
