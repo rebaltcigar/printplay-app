@@ -36,6 +36,8 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy'; // ADDED for Phot
 import PhotoCameraIcon from '@mui/icons-material/PhotoCamera'; // ADDED for Photo
 import LayersIcon from '@mui/icons-material/Layers'; // ADDED for Laminate
 import DownloadIcon from '@mui/icons-material/Download'; // ADDED
+import ViewListIcon from '@mui/icons-material/ViewList';
+import AppsIcon from '@mui/icons-material/Apps';
 
 // Components
 import OrderCustomerDialog from './OrderCustomerDialog';
@@ -191,6 +193,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
   // --- UI STATE ---
   const [manualEntryOpen, setManualEntryOpen] = useState(false);
   const [gridTab, setGridTab] = useState(0); // 0=Sale, 1=PC Rental
+  const [posView, setPosView] = useState(() => localStorage.getItem('kunek_posView') || 'new');
   const [menuAnchor, setMenuAnchor] = useState(null);
   const [selectedTransactions, setSelectedTransactions] = useState([]);
   const [shiftOrders, setShiftOrders] = useState([]);
@@ -208,6 +211,13 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   const handleCloseSnackbar = () => setSnackbar(prev => ({ ...prev, open: false }));
   const showSnackbar = (msg, sev = 'success') => setSnackbar({ open: true, message: msg, severity: sev });
+
+  const togglePosView = () => {
+    const next = posView === 'new' ? 'legacy' : 'new';
+    setPosView(next);
+    setGridTab(0); // always reset so cart is visible
+    localStorage.setItem('kunek_posView', next);
+  };
 
   // --- SETTINGS STATE ---
   const [systemSettings, setSystemSettings] = useState({
@@ -1098,7 +1108,17 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
           )}
 
           {/* Action Buttons */}
-          <Box sx={{ display: { xs: 'none', sm: 'flex' }, gap: 1 }}>
+          <Box sx={{ display: { xs: 'none', sm: 'flex' }, gap: 1, alignItems: 'center' }}>
+            <Tooltip title={posView === 'new' ? 'Switch to Classic POS' : 'Switch to New POS (Grid)'}>
+              <Chip
+                size="small"
+                icon={posView === 'new' ? <ViewListIcon sx={{ fontSize: '1rem !important' }} /> : <AppsIcon sx={{ fontSize: '1rem !important' }} />}
+                label={posView === 'new' ? 'Classic' : 'Grid'}
+                onClick={togglePosView}
+                variant="outlined"
+                sx={{ cursor: 'pointer', fontSize: '0.7rem' }}
+              />
+            </Tooltip>
             <Button size="small" variant="outlined" color="primary" onClick={() => setOpenHistoryDrawer(true)} startIcon={<HistoryIcon />}>History</Button>
             <Button size="small" variant="outlined" color="error" onClick={() => setOpenDrawerDialog(true)}>Drawer</Button>
             <Button size="small" variant="outlined" color="error" onClick={() => setOpenExpense(true)}>+ Expense</Button>
@@ -1141,35 +1161,150 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
       <Box sx={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', alignItems: 'center', bgcolor: '#0e0e0e' }}>
         <Grid container sx={{ flex: 1, overflow: 'hidden', maxWidth: '1400px', width: '100%', bgcolor: 'background.default', borderLeft: 1, borderRight: 1, borderColor: 'divider' }}>
 
-          {/* LEFT COLUMN: expands to full width on PC Rental tab */}
+          {/* LEFT COLUMN: tile grid (new) or classic form (legacy) */}
           <Box sx={{
-            width: gridTab === 1 ? '100%' : { xs: '100%', md: '65%', lg: '70%' },
-            flexBasis: gridTab === 1 ? '100%' : { md: '65%', lg: '70%' },
+            width: posView === 'new'
+              ? (gridTab === 1 ? '100%' : { xs: '100%', md: '65%', lg: '70%' })
+              : { xs: '100%', md: '38%', lg: '35%' },
+            flexBasis: posView === 'new'
+              ? (gridTab === 1 ? '100%' : { md: '65%', lg: '70%' })
+              : { md: '38%', lg: '35%' },
             display: 'flex',
             flexDirection: 'column',
-            borderRight: gridTab === 1 ? 0 : 1,
+            borderRight: (posView === 'new' && gridTab === 1) ? 0 : 1,
             borderColor: 'divider',
             bgcolor: 'background.paper',
             height: '100%',
             overflow: 'hidden',
             transition: 'width 0.2s, flex-basis 0.2s',
           }}>
-            <POSItemGrid posItems={posItems} variantMap={variantMap} onItemClick={handleGridItemClick} onPCSession={handlePCSession} onTabChange={setGridTab} pcRentalEnabled={systemSettings.pcRentalEnabled !== false} />
+            {posView === 'new' ? (
+              <POSItemGrid posItems={posItems} variantMap={variantMap} onItemClick={handleGridItemClick} onPCSession={handlePCSession} onTabChange={setGridTab} pcRentalEnabled={systemSettings.pcRentalEnabled !== false} />
+            ) : (
+              /* ── CLASSIC / LEGACY INPUT PANEL ── */
+              <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2, height: '100%', overflowY: 'auto' }}>
+                <Typography variant="overline" color="text.secondary" sx={{ letterSpacing: 1.5, lineHeight: 1, mb: 0.5 }}>
+                  Add to Order
+                </Typography>
+
+                {/* Contextual: Expense type + staff */}
+                {item === 'Expenses' && (
+                  <Stack direction="row" spacing={1}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel>Type</InputLabel>
+                      <Select value={expenseType} label="Type" onChange={e => setExpenseType(e.target.value)}>
+                        {expenseServiceItems.map(e => <MenuItem key={e.id} value={e.serviceName}>{e.serviceName}</MenuItem>)}
+                      </Select>
+                    </FormControl>
+                    {(expenseType === 'Salary' || expenseType === 'Salary Advance') && (
+                      <FormControl fullWidth size="small">
+                        <InputLabel>Staff</InputLabel>
+                        <Select value={expenseStaffEmail} label="Staff" onChange={e => {
+                          const s = staffOptions.find(o => o.email === e.target.value);
+                          if (s) { setExpenseStaffEmail(s.email); setExpenseStaffId(s.id); setExpenseStaffName(s.fullName); }
+                        }}>
+                          {staffOptions.map(s => <MenuItem key={s.id} value={s.email}>{s.fullName}</MenuItem>)}
+                        </Select>
+                      </FormControl>
+                    )}
+                  </Stack>
+                )}
+
+                {/* Contextual: Debt customer */}
+                {(item === 'New Debt' || item === 'Paid Debt') && (
+                  <Box sx={{ border: '1px dashed', borderColor: 'divider', p: 1, borderRadius: 1 }}>
+                    {selectedCustomer ? (
+                      <Box display="flex" justifyContent="space-between" alignItems="center">
+                        <Typography variant="body2" fontWeight="bold">{selectedCustomer.fullName}</Typography>
+                        <IconButton size="small" onClick={() => setSelectedCustomer(null)}><ClearIcon fontSize="small" /></IconButton>
+                      </Box>
+                    ) : (
+                      <Button fullWidth size="small" variant="outlined" onClick={() => setOpenCustomerDialog(true)}>Select Customer</Button>
+                    )}
+                  </Box>
+                )}
+
+                {/* Item selector */}
+                <Autocomplete
+                  fullWidth
+                  size="small"
+                  freeSolo
+                  options={[...new Set([...services.map(s => s.serviceName), "Expenses", "New Debt", "Paid Debt"])]}
+                  value={item}
+                  onChange={(e, newVal) => handleItemChange({ target: { value: newVal || '' } })}
+                  renderInput={(params) => <TextField {...params} label="Item / Service" placeholder="Search or type..." />}
+                />
+
+                {/* Qty + Price */}
+                <Stack direction="row" spacing={1}>
+                  <TextField
+                    label="Qty"
+                    type="number"
+                    size="small"
+                    fullWidth
+                    inputRef={quantityInputRef}
+                    value={quantity}
+                    onChange={e => setQuantity(e.target.value)}
+                    disabled={!item}
+                    onKeyDown={e => e.key === 'Enter' && handleAddEntry()}
+                  />
+                  <TextField
+                    label="Price"
+                    type="number"
+                    size="small"
+                    fullWidth
+                    inputRef={priceInputRef}
+                    value={price}
+                    onChange={e => setPrice(e.target.value)}
+                    disabled={!item}
+                    onKeyDown={e => e.key === 'Enter' && handleAddEntry()}
+                  />
+                </Stack>
+
+                {/* Notes (required for some expense types) */}
+                <TextField
+                  label="Notes"
+                  size="small"
+                  fullWidth
+                  multiline
+                  rows={2}
+                  value={notes}
+                  onChange={e => setNotes(e.target.value)}
+                  disabled={!item}
+                />
+
+                <Button
+                  variant="contained"
+                  size="large"
+                  fullWidth
+                  onClick={handleAddEntry}
+                  disabled={!item || !quantity || !price}
+                >
+                  {item === 'Expenses' || item === 'New Debt' || item === 'Paid Debt' ? 'Log' : 'Add to Cart'}
+                </Button>
+              </Box>
+            )}
           </Box>
 
-          {/* RIGHT COLUMN (~35%): MAIN CART PANEL — hidden on PC Rental tab */}
-          {gridTab !== 1 && <Box sx={{
-            width: { xs: '100%', md: '35%', lg: '30%' },
-            maxWidth: { md: '35%', lg: '30%' },
-            flexBasis: { md: '35%', lg: '30%' },
+          {/* RIGHT COLUMN: MAIN CART PANEL — hidden only in new view on PC Rental tab */}
+          {(posView === 'legacy' || gridTab !== 1) && <Box sx={{
+            width: posView === 'legacy'
+              ? { xs: '100%', md: '62%', lg: '65%' }
+              : { xs: '100%', md: '35%', lg: '30%' },
+            maxWidth: posView === 'legacy'
+              ? { md: '62%', lg: '65%' }
+              : { md: '35%', lg: '30%' },
+            flexBasis: posView === 'legacy'
+              ? { md: '62%', lg: '65%' }
+              : { md: '35%', lg: '30%' },
             display: 'flex',
             flexDirection: 'column',
             bgcolor: 'background.paper',
             height: '100%',
             overflow: 'hidden',
           }}>
-            {/* TOP: COLLAPSIBLE MANUAL ENTRY (power users / expenses / debt) */}
-            <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+            {/* TOP: COLLAPSIBLE MANUAL ENTRY — only in new grid view */}
+            {posView === 'new' && <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
               <Box
                 p={1}
                 bgcolor="background.default"
@@ -1217,7 +1352,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
                         <IconButton size="small" onClick={() => setSelectedCustomer(null)}><ClearIcon fontSize="small" /></IconButton>
                       </Box>
                     ) : (
-                      <Button fullWidth size="small" variant="outlined" onClick={() => { setCustomerDialogMode('debt'); setOpenCustomerDialog(true); }}>Select Customer</Button>
+                      <Button fullWidth size="small" variant="outlined" onClick={() => setOpenCustomerDialog(true)}>Select Customer</Button>
                     )}
                   </Box>
                 )}
@@ -1272,7 +1407,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
                 </Stack>
               </Box>
               </Collapse>
-            </Box>
+            </Box>}
 
             {/* CART (Flex Grow) */}
             <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
