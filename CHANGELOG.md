@@ -13,13 +13,14 @@
 
 ---
 
-## [0.2.3] — 2026-03-06
+## [0.2.4] — 2026-03-06
 
 ### Fixed
 
 - **Dashboard transaction log** — Soft-deleted transactions were staying visible in "Active shift's transactions" panel. The `onSnapshot` listener now filters out `isDeleted: true` entries so deleted items disappear immediately.
 - **POS Order History** — Deleted orders were still appearing in the Order History tab after deletion. Added `isDeleted == false` filter to the orders `onSnapshot` query.
 - **POS History Drawer** — Uncontrolled/controlled Switch warning on Checkbox toggles when entering selection mode. Placeholder disabled Checkboxes now have `checked={false}`.
+- **Order deletion cascade** — Deleting an order from POS history now also soft-deletes all linked transactions (matched by `orderNumber + shiftId`), so they are excluded from totals everywhere.
 
 ### Infrastructure
 

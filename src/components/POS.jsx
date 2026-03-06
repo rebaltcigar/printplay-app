@@ -787,7 +787,14 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
 
   const handleConfirmDeleteOrders = async (reason) => {
     try {
+      // Collect orderNumbers for the selected orders
+      const deletedOrderNums = selectedOrders
+        .map(id => shiftOrders.find(o => o.id === id)?.orderNumber)
+        .filter(Boolean);
+
       const batch = writeBatch(db);
+
+      // Mark orders as deleted
       selectedOrders.forEach(id => {
         batch.update(doc(db, 'orders', id), {
           isDeleted: true,
@@ -796,9 +803,27 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
           deletedAt: serverTimestamp()
         });
       });
+
+      // Cascade: soft-delete all linked transactions
+      await Promise.all(deletedOrderNums.map(async (orderNum) => {
+        const txSnap = await getDocs(query(
+          collection(db, 'transactions'),
+          where('orderNumber', '==', orderNum),
+          where('shiftId', '==', activeShiftId)
+        ));
+        txSnap.forEach(d => {
+          batch.update(d.ref, {
+            isDeleted: true,
+            deletedBy: user.email,
+            deleteReason: reason,
+            deletedAt: serverTimestamp()
+          });
+        });
+      }));
+
       await batch.commit();
       setSelectedOrders([]);
-      showSnackbar("Order(s) successfully deleted.");
+      showSnackbar("Order(s) and linked transactions successfully deleted.");
     } catch (e) {
       console.error("Error deleting orders:", e);
       showSnackbar("Failed to delete orders", 'error');
