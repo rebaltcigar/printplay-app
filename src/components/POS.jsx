@@ -224,7 +224,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
     drawerHotkey: { altKey: true, code: 'Backquote' }, // Fallback default
     checkoutHotkey: { code: 'F10', key: 'F10', display: 'F10' }, // Fallback default
     logoUrl: null, // Fallback
-    storeName: 'Kunek', // Fallback
+    storeName: null, // Fallback — null prevents flash before settings load
   });
 
   // Load Settings on Mount
@@ -1089,9 +1089,11 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
               <img src={logo} alt="logo" width={24} height={24} />
             )}
             <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-              <Typography variant="subtitle2" sx={{ fontWeight: 'bold', lineHeight: 1.2, color: 'text.primary', letterSpacing: '0.02em' }}>
-                {systemSettings.storeName}
-              </Typography>
+              {systemSettings.storeName && (
+                <Typography variant="subtitle2" sx={{ fontWeight: 'bold', lineHeight: 1.2, color: 'text.primary', letterSpacing: '0.02em' }}>
+                  {systemSettings.storeName}
+                </Typography>
+              )}
               <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1, fontSize: '0.7rem', opacity: 0.8 }}>
                 {staffDisplayName} • {shiftPeriod}
               </Typography>

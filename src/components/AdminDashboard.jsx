@@ -72,7 +72,7 @@ export default function AdminDashboard({ user, onLogout }) {
   const [cashDrawerOpen, setCashDrawerOpen] = useState(false);
 
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
-  const [storeSettings, setStoreSettings] = useState({ storeName: 'Kunek', logoUrl: '/icon.ico' });
+  const [storeSettings, setStoreSettings] = useState({ storeName: null, logoUrl: '/icon.ico' });
 
   useEffect(() => {
     const fetchBranding = async () => {
@@ -318,9 +318,11 @@ export default function AdminDashboard({ user, onLogout }) {
                 alt="logo"
                 sx={{ width: 32, height: 32, borderRadius: "6px" }}
               />
-              <Typography variant="h6" sx={{ fontWeight: 600, color: '#fff' }}>
-                {storeSettings.storeName}
-              </Typography>
+              {storeSettings.storeName && (
+                <Typography variant="h6" sx={{ fontWeight: 600, color: '#fff' }}>
+                  {storeSettings.storeName}
+                </Typography>
+              )}
             </Box>
 
             {devMode && (
