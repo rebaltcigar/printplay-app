@@ -13,6 +13,14 @@
 
 ---
 
+## [0.2.2] — 2026-03-06
+
+### Fixed
+
+- **Dashboard transaction log** — Soft-deleted transactions were staying visible in "Active shift's transactions" panel. The `onSnapshot` listener now filters out `isDeleted: true` entries so deleted items disappear immediately.
+
+---
+
 ## [0.2.1] — 2026-03-06
 
 ### Added
