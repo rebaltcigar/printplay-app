@@ -305,11 +305,12 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
     const q = query(
       collection(db, 'orders'),
       where('shiftId', '==', activeShiftId),
-      where('isDeleted', '==', false),
       orderBy('orderNumber', 'desc')
     );
     const unsub = onSnapshot(q, (snap) => {
-      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const docs = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(d => d.isDeleted !== true);
       setShiftOrders(docs);
     });
     return () => unsub();
@@ -658,7 +659,8 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
       const fullOrder = {
         orderNumber: orderNum,
         shiftId: activeShiftId,
-        invoiceStatus: isUnpaid ? 'UNPAID' : 'PAID', // ADD STATUS
+        invoiceStatus: isUnpaid ? 'UNPAID' : 'PAID',
+        isDeleted: false,
         ...createOrderObject(
           currentOrder.items,
           currentTotal,

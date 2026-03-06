@@ -1,15 +1,6 @@
 {
   "indexes": [
     {
-      "collectionGroup": "orders",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "shiftId",     "order": "ASCENDING" },
-        { "fieldPath": "isDeleted",   "order": "ASCENDING" },
-        { "fieldPath": "orderNumber", "order": "DESCENDING" }
-      ]
-    },
-    {
       "collectionGroup": "paystubs",
       "queryScope": "COLLECTION_GROUP",
       "fields": [
