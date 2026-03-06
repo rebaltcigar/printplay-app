@@ -87,7 +87,7 @@ export default function POSHistoryDrawer({
                                                     <Checkbox size="small" checked={selectedTransactions.includes(tx.id)} onChange={() => setSelectedTransactions(p => p.includes(tx.id) ? p.filter(x => x !== tx.id) : [...p, tx.id])} />
                                                 </TableCell>
                                             ) : (
-                                                <TableCell sx={{ opacity: 0.3 }}><Checkbox size="small" disabled /></TableCell>
+                                                <TableCell sx={{ opacity: 0.3 }}><Checkbox size="small" disabled checked={false} /></TableCell>
                                             )}
                                             <TableCell>{tx.timestamp?.seconds ? new Date(tx.timestamp.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</TableCell>
                                             <TableCell>
@@ -162,7 +162,7 @@ export default function POSHistoryDrawer({
                                                 </TableCell>
                                             ) : (
                                                 <TableCell sx={{ opacity: 0.3 }}>
-                                                    <Checkbox size="small" disabled />
+                                                    <Checkbox size="small" disabled checked={false} />
                                                 </TableCell>
                                             )}
                                             <TableCell>{o.timestamp?.seconds ? new Date(o.timestamp.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</TableCell>

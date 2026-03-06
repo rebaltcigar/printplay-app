@@ -305,6 +305,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
     const q = query(
       collection(db, 'orders'),
       where('shiftId', '==', activeShiftId),
+      where('isDeleted', '==', false),
       orderBy('orderNumber', 'desc')
     );
     const unsub = onSnapshot(q, (snap) => {
