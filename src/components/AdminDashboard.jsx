@@ -354,7 +354,8 @@ export default function AdminDashboard({ user, onLogout }) {
         </AppBar>
 
         {/* --- MAIN CONTENT AREA WITH ROUTING --- */}
-        <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
           <Routes>
             <Route index element={<AdminHome user={user} showSnackbar={showSnackbar} />} />
             <Route path="reports/*" element={
@@ -420,6 +421,7 @@ export default function AdminDashboard({ user, onLogout }) {
             {/* Fallback */}
             <Route path="*" element={<Navigate to="/admin" replace />} />
           </Routes>
+          </Box>
 
           {/* Powered by footer */}
           <Box sx={{ textAlign: 'center', py: 0.5, borderTop: 1, borderColor: 'divider', flexShrink: 0 }}>

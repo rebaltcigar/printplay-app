@@ -332,13 +332,13 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
             Sign In
           </Button>
 
-          {/* Version number — below the sign in button */}
+          {/* Powered by Kunek — below the sign in button */}
           <Typography
             variant="caption"
             align="center"
             sx={{ color: "#3a3a3a", fontFamily: "monospace", mt: -0.5 }}
           >
-            v{__APP_VERSION__}
+            Powered by Kunek &nbsp;·&nbsp; v{__APP_VERSION__}
           </Typography>
         </Box>
       </>
@@ -577,13 +577,6 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
             {cardContent}
           </Card>
         </Box>
-      </Box>
-
-      {/* Powered by + version */}
-      <Box sx={{ position: 'absolute', bottom: 16, left: 0, right: 0, textAlign: 'center', zIndex: 10 }}>
-        <Typography variant="caption" sx={{ opacity: 0.35, fontSize: '0.65rem', letterSpacing: '0.08em', color: 'text.secondary' }}>
-          Powered by Kunek &nbsp;·&nbsp; v{__APP_VERSION__}
-        </Typography>
       </Box>
 
       {/* Loading overlay */}
