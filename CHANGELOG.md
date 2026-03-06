@@ -13,6 +13,35 @@
 
 ---
 
+## [0.2.1] — 2026-03-06
+
+### Added
+
+- **POS Classic / Grid view toggle** — Chip button in the POS header switches between Classic (form-based) and Grid (tile-based) views. Preference persisted to `localStorage`. Defaults to Classic.
+- **Classic POS view** — Full-width single-column layout: Add to Order form pinned above the cart. No split panel. Contextual fields (expense type, debt customer) appear inline when needed.
+- **POS tile grid (Grid view)** — Service tiles with category filter chips (All / Services / Retail), variant drilldown, and Shift+click quantity dialog. Tile accent colors use catalog icon colors.
+- **Variant drilldown** — Clicking a parent tile opens variant tiles grouped by Variant Group. Back button returns to main grid. Drilldown header shows parent name and variant count.
+- **Shift+click quantity dialog** — Shift+click a leaf tile to set quantity before adding to cart. Shift+click on a variant parent opens the drilldown instead.
+- **Tab transition loader** — 280ms `CircularProgress` shown when switching Sale ↔ PC Rental tabs in grid view, preventing flicker.
+- **Checkout hotkey** — F10 by default; opens checkout dialog when cart is non-empty on the Sale tab. Configurable in Admin → Settings → Hardware. Displayed as a small hint on the Checkout button.
+- **PC Rental settings** — Admin → Settings → POS: toggle PC rental on/off, select external timer vs built-in mode, and optionally link a catalog service for future integration. EndShiftDialog adapts to these settings.
+- **"Logs" button** — History button renamed to Logs in the POS header and mobile menu.
+
+### Changed
+
+- **Order total above cart** — Prominent `h4` total shown above the cart items table, always visible.
+- **Checkout auto-focus** — Amount Tendered field auto-focuses when the checkout dialog opens.
+- **Expected Change color** — Changed from accent purple to red (`#ef5350`).
+- **PC Rental computation de-hardcoded** — `isPcRentalTx()` in `shiftFinancials.js` uses OR logic: matches by `serviceId` (when configured in settings) or item name string fallback for all legacy data. No migration needed.
+- **`computeShiftFinancials` / `aggregateShiftTransactions`** — Both now accept optional `pcRentalServiceId` parameter, forwarded from settings. Null triggers string-match fallback.
+
+### Fixed
+
+- **Edit Shift ReferenceError** — `toLocalInput` and `toTimestamp` helpers were called in `Shifts.jsx` but never defined, crashing the edit shift dialog. Added as module-level helpers.
+- **Undefined `customerDialogMode`** — Stale reference removed from Manual Entry form in POS.
+
+---
+
 ## [0.2.0] — 2026-03-06
 
 ### Added

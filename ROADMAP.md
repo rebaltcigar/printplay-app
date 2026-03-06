@@ -5,7 +5,15 @@
 
 ---
 
-## Currently On (Branch: feature/next-dev-2)
+## Merge History
+
+| Version | Branch | Status |
+|---------|--------|--------|
+| v0.2.1 | `feature/catalog-foundation` | Merging → `main` |
+| v0.2.0 | `feature/catalog-foundation` | Merged |
+| v0.1.32 | `feature/next-dev-2` | Merged |
+
+## Up Next — `feature/rebrand`
 
 ---
 
@@ -46,14 +54,7 @@
   *(forward-only — old transactions unaffected)*
 - Begin breaking `POS.jsx` (~1700 lines) into focused sub-components
 
-### v0.2.2 — POS Automated Tests
-**Goal**: Regression safety net for the POS. Must pass before every deploy touching POS code.
-
-Full test plan: `memory/pos-test-plan.md`. Covers item grid, tile clicks, variants, qty dialog, manual entry, cart CRUD, checkout (Cash/GCash/Charge), hotkeys, PC Rental tab, tab switching, and end-shift PC rental modes.
-
-**Tooling:** Vitest + React Testing Library (UI/hooks) · Playwright (E2E + Firestore writes)
-
-### v0.2.3 — Kunek Rebranding
+### v0.2.2 — Kunek Rebranding ← **NEXT**
 **Goal**: Platform shell says "Kunek". Business branding is 100% dynamic from tenant settings. Zero hardcoded brand strings in code.
 
 - Rename `package.json`, `index.html` title, window/tab title to "Kunek"
@@ -63,9 +64,19 @@ Full test plan: `memory/pos-test-plan.md`. Covers item grid, tile clicks, varian
 - `storeName`, `logoUrl` fallback to "Kunek" defaults (not "PrintPlay")
 - This sets the stage for multi-tenancy — all branding is already data-driven
 
+### v0.2.3 — Invoice & Charge Management
+**Goal**: Replace the crude `New Debt` / `Paid Debt` system with proper receivables — invoices, charge accounts, payment tracking.
+
+### v0.2.4 — POS Automated Tests
+**Goal**: Regression safety net for the POS. Must pass before every deploy touching POS code.
+
+Full test plan: `memory/pos-test-plan.md`. Covers item grid, tile clicks, variants, qty dialog, manual entry, cart CRUD, checkout (Cash/GCash/Charge), hotkeys, PC Rental tab, tab switching, and end-shift PC rental modes.
+
+**Tooling:** Vitest + React Testing Library (UI/hooks) · Playwright (E2E + Firestore writes)
+
 ---
 
-## v0.3 — Invoice & Charge Management
+## v0.3 — Invoice & Charge Management (detail)
 **Goal**: Replace the crude `New Debt` / `Paid Debt` system with proper receivables — invoices, charge accounts, payment tracking.
 
 **Why urgent**: The current debt system loses detail, has no status tracking, and doesn't support partial payments or invoice documents.
