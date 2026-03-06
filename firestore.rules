@@ -148,7 +148,10 @@ service cloud.firestore {
 
     /* ---------- Customers ---------- */
     match /customers/{id} {
-      allow read, write: if isSignedIn();
+      allow get, list: if isSignedIn(); 
+      allow create: if isSignedIn(); // Cashiers auto-create missing customers on checkout
+      allow update: if isSignedIn(); // Cashiers might auto-update a customer's total spent on checkout
+      allow delete: if isAdmin();    // Only admins can delete customers
     }
 
     /* ---------- Schedules ---------- */

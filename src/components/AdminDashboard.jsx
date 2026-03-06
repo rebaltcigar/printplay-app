@@ -62,6 +62,7 @@ import OrderManagement from "./OrderManagement";
 import Schedule from "./admin/Schedule";
 import ReceivablesReport from "./admin/ReceivablesReport";
 import InvoiceManagement from "./admin/InvoiceManagement";
+import CustomerManagement from "./admin/CustomerManagement";
 
 export default function AdminDashboard({ user, onLogout, appSettings }) {
   // Router hooks
@@ -116,7 +117,8 @@ export default function AdminDashboard({ user, onLogout, appSettings }) {
     { label: "Receivables", path: "receivables", icon: <MoneyOffIcon /> },
     { label: "Catalog", path: "catalog", icon: <CategoryIcon /> },
     { label: "Inventory", path: "inventory", icon: <InventoryIcon /> },
-    { label: "Users", path: "users", icon: <PeopleIcon /> },
+    { label: "Customers", path: "customers", icon: <PeopleIcon /> },
+    { label: "Users", path: "users", icon: <BadgeIcon /> },
     { label: "Schedule", path: "schedule", icon: <EventNoteIcon /> },
     { label: "Payroll", path: "payroll", icon: <BadgeIcon /> },
     { label: "Settings", path: "settings", icon: <SettingsIcon /> },
@@ -387,6 +389,11 @@ export default function AdminDashboard({ user, onLogout, appSettings }) {
               <Route path="inventory" element={
                 <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
                   <InventoryManagement showSnackbar={showSnackbar} />
+                </Box>
+              } />
+              <Route path="customers" element={
+                <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
+                  <CustomerManagement showSnackbar={showSnackbar} />
                 </Box>
               } />
               <Route path="users" element={

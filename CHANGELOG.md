@@ -12,6 +12,30 @@
 - No roadmap content — belongs in ROADMAP.md.
 
 ---
+ 
+## [0.4.0] — 2026-03-07
+ 
+### Added
+ 
+- **Basic CRM Foundation** — Introduced a foundational Customer Relationship Management system with a normalized `customers` collection as a single source of truth for all profiles.
+- **Admin Customer Hub** — Launched the `/admin/customers` module featuring KPI `SummaryCards` and a dense `DataGrid` for managing profiles, viewing lifetime value, and tracking outstanding balances.
+- **Unified CRM Smart Form** — Merged customer search and registration into a single, seamless 'Smart Form' within the POS drawer, enabling 'Register on the fly' without context switching.
+- **Centralized Customer Service** — Established `src/services/customerService.js` to strictly govern all Firestore operations (create, update, delete) and ensure consistent timestamping and metadata across modules.
+- **Standardized Form UI** — Created `src/components/common/CustomerForm.jsx`, a reusable UI component that synchronizes field layouts (Name, Phone, Email, TIN, Address) between Admin and POS.
+ 
+### Changed
+ 
+- **Minimalist POS CRM UX** — Replaced cluttered inline autocomplete and toggles with a focused 'Drawer-First' approach. POS now defaults to 'Walk-in' with a simple 'Edit' icon to open the selection drawer.
+- **Admin Table Interaction** — Refined the management table to disable individual cell selection in favor of solid row clicks, providing a more cohesive 'click-to-open-drawer' experience.
+- **Modernized Migration UI** — Replaced legacy browser `window.confirm` prompts in the Customer Migration Tool with theme-aware Material-UI Dialog components.
+ 
+### Fixed
+ 
+- **POS Performance Cleanup** — Performed a surgical refactor of `POS.jsx`, removing over 100 lines of orphaned state (`openCustomerQuickAdd`) and dead component imports.
+- **UI & Layout Stability** — Resolved a React `container` attribute warning and restored critical MUI imports (`Tooltip`, `Grid`, `Divider`) that were accidentally stripped during refactoring.
+ 
+---
+
 
 ## [0.3.0] — 2026-03-07
 

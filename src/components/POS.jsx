@@ -6,7 +6,7 @@ import {
   Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
   Menu as MuiMenu, useMediaQuery, Chip, Tabs, Tab, List, ListItem,
   Grid, Checkbox, Avatar, CssBaseline, Tooltip, Divider, ListItemButton, Switch,
-  Autocomplete, Snackbar, Alert, Backdrop, CircularProgress, Collapse // ADDED
+  Autocomplete, Snackbar, Alert, Backdrop, CircularProgress, Collapse
 } from '@mui/material';
 import html2canvas from 'html2canvas';
 import { useTheme } from '@mui/material/styles';
@@ -55,7 +55,8 @@ import { SimpleReceipt } from './SimpleReceipt';
 import POSHistoryDrawer from './pos/POSHistoryDrawer';
 import POSItemGrid from './pos/POSItemGrid';
 import { VariablePriceDialog } from './pos/POSHelperDialogs';
-// removed duplicate ServiceInvoice import if any, handled above
+import CustomerSelectionDrawer from './pos/CustomerSelectionDrawer';
+
 
 // Firebase
 import { auth, db } from '../firebase';
@@ -129,7 +130,9 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
   // --- DIALOGS ---
   const [openDrawerDialog, setOpenDrawerDialog] = useState(false);
   const [openEndShiftDialog, setOpenEndShiftDialog] = useState(false);
-  const [openCustomerDialog, setOpenCustomerDialog] = useState(false);
+  const [openCustomerDialog, setOpenCustomerDialog] = useState(false); // For Debt Log
+  // --- CUSTOMERS ---
+  const [openCustomerSelection, setOpenCustomerSelection] = useState(false);
   const [openOrderCustomerDialog, setOpenOrderCustomerDialog] = useState(false);
   const [openInvoiceLookup, setOpenInvoiceLookup] = useState(false);
   const [openCheckout, setOpenCheckout] = useState(false);
@@ -598,6 +601,19 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
   const handleCheckout = async (paymentData, shouldPrint = false) => {
     setIsLoading(true); // START LOADING
     try {
+      let finalCustomer = currentOrder.customer;
+      if (finalCustomer && finalCustomer.isNew) {
+        const custRef = await addDoc(collection(db, 'customers'), {
+          fullName: finalCustomer.fullName,
+          createdAt: serverTimestamp(),
+          createdBy: user?.email || 'system_checkout',
+          lifetimeValue: 0,
+          outstandingBalance: 0,
+          totalOrders: 0
+        });
+        finalCustomer = { id: custRef.id, fullName: finalCustomer.fullName };
+      }
+
       const isUnpaid = paymentData.paymentMethod === 'Charge' || paymentData.paymentMethod === 'Pay Later'; // Detect Debt
       const orderNum = await generateOrderNumber();
       const fullOrder = {
@@ -612,7 +628,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
           paymentData.paymentDetails,
           paymentData.amountTendered,
           paymentData.change,
-          currentOrder.customer,
+          finalCustomer,
           user
         )
       };
@@ -646,8 +662,8 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
           total: Number(item.price) * Number(item.quantity),
           timestamp: serverTimestamp(),
           staffEmail: user.email,
-          customerName: currentOrder.customer?.fullName || 'Walk-in',
-          customerId: currentOrder.customer?.id || null,
+          customerName: finalCustomer?.fullName || 'Walk-in',
+          customerId: finalCustomer?.id || null,
           shiftId: activeShiftId,
           orderNumber: orderNum,
           category: 'Revenue',
@@ -876,6 +892,19 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
     if (!order.isExisting) return;
     setIsLoading(true); // START LOADING
     try {
+      let finalCustomer = order.customer;
+      if (finalCustomer && finalCustomer.isNew) {
+        const custRef = await addDoc(collection(db, 'customers'), {
+          fullName: finalCustomer.fullName,
+          createdAt: serverTimestamp(),
+          createdBy: user?.email || 'system_checkout',
+          lifetimeValue: 0,
+          outstandingBalance: 0,
+          totalOrders: 0
+        });
+        finalCustomer = { id: custRef.id, fullName: finalCustomer.fullName };
+      }
+
       const batch = writeBatch(db);
       const finalItems = [];
 
@@ -915,8 +944,8 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
             displayId, // Assigned here
             timestamp: serverTimestamp(),
             staffEmail: user.email,
-            customerName: order.customer?.fullName || 'Walk-in',
-            customerId: order.customer?.id || null,
+            customerName: finalCustomer?.fullName || 'Walk-in',
+            customerId: finalCustomer?.id || null,
             shiftId: activeShiftId,
             orderNumber: order.orderNumber,
             category: 'Revenue',
@@ -955,6 +984,11 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
         paymentDetails: paymentData.paymentDetails || {},
         amountTendered: Number(paymentData.amountTendered),
         change: Number(paymentData.change),
+        customerId: finalCustomer?.id || 'walk-in',
+        customerName: finalCustomer?.fullName || 'Walk-in Customer',
+        customerPhone: finalCustomer?.phone || '',
+        customerAddress: finalCustomer?.address || '',
+        customerTin: finalCustomer?.tin || '',
         updatedAt: serverTimestamp()
       };
 
@@ -1413,18 +1447,30 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
                 <IconButton onClick={addOrderTab} size="small" sx={{ mx: 1 }}><AddIcon fontSize="small" /></IconButton>
               </Box>
 
-              {/* Customer */}
-              <Box
-                sx={{
-                  p: 1, borderBottom: 1, borderColor: 'divider', display: 'flex', alignItems: 'center', cursor: 'pointer',
-                  bgcolor: currentOrder?.customer ? 'rgba(209, 0, 0, 0.15)' : 'background.paper'
-                }}
-                onClick={() => setOpenOrderCustomerDialog(true)}
-              >
-                <PersonAddIcon sx={{ mr: 1, color: 'primary.main' }} />
-                <Typography variant="body2" fontWeight="bold" sx={{ flexGrow: 1 }}>
-                  {currentOrder?.customer ? currentOrder.customer.fullName : "Customer: Walk-in"}
-                </Typography>
+              {/* Customer Selection (Minimalist Drawer-First) */}
+              <Box sx={{ p: 1, borderBottom: 1, borderColor: 'divider', bgcolor: 'background.paper', display: 'flex', gap: 1, alignItems: 'center' }}>
+                <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Customer:
+                  </Typography>
+                  <Typography variant="body2" fontWeight="bold">
+                    {currentOrder?.customer ? currentOrder.customer.fullName : 'Walk-in'}
+                  </Typography>
+                </Box>
+
+                <Tooltip title="Assign Customer">
+                  <IconButton size="small" onClick={() => setOpenCustomerSelection(true)}>
+                    <EditIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+
+                {currentOrder?.customer && (
+                  <Tooltip title="Remove Customer">
+                    <IconButton size="small" color="error" onClick={() => updateCurrentOrder({ customer: null })}>
+                      <CloseIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                )}
               </Box>
 
               {/* Order Total — prominent, above cart items */}
@@ -1564,6 +1610,13 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
         activeShiftId={activeShiftId}
       />
 
+      <CustomerSelectionDrawer
+        open={openCustomerSelection}
+        onClose={() => setOpenCustomerSelection(false)}
+        currentCustomer={currentOrder?.customer}
+        onSelectCustomer={(cust) => updateCurrentOrder({ customer: cust })}
+      />
+
       {/* Customer Dialog (For Debt Log) */}
       <CustomerDialog
         open={openCustomerDialog}
@@ -1602,14 +1655,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
         }}
       />
 
-      {/* NEW: Order Customer Dialog (For POS) */}
-      <OrderCustomerDialog
-        open={openOrderCustomerDialog}
-        onClose={() => setOpenOrderCustomerDialog(false)}
-        currentCustomer={currentOrder?.customer}
-        onSetCustomer={(c) => updateCurrentOrder({ customer: c })}
-        showSnackbar={showSnackbar}
-      />
+      {/* Order Customer Dialog Replaced by inline Autocomplete -> removed OrderCustomerDialog entirely */}
 
       {/* Edit Line Item */}
       <Dialog open={editItemDialog} onClose={() => setEditItemDialog(false)} maxWidth="xs" fullWidth>

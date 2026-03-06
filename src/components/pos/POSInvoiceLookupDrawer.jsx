@@ -10,6 +10,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import { useInvoices } from '../../hooks/useInvoices';
 import { fmtCurrency } from '../../utils/formatters';
 import InvoiceDetailDrawer from '../admin/InvoiceDetailDrawer';
+import CustomerSearchAutocomplete from './CustomerSearchAutocomplete';
 
 /**
  * A sidebar drawer for POS cashiers to search for customers and view their unpaid invoices.
@@ -75,18 +76,14 @@ export default function POSInvoiceLookupDrawer({ open, onClose, user, showSnackb
 
                 {/* Search Bar */}
                 <Box sx={{ p: 2 }}>
-                    <TextField
-                        fullWidth
-                        size="small"
-                        placeholder="Search customer, invoice #, TIN..."
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        InputProps={{
-                            startAdornment: (
-                                <InputAdornment position="start">
-                                    <SearchIcon fontSize="small" />
-                                </InputAdornment>
-                            ),
+                    <CustomerSearchAutocomplete
+                        label="Search customer, invoice #, TIN..."
+                        inputValue={search}
+                        onInputChange={(e, val) => setSearch(val || '')}
+                        onChange={(newVal) => {
+                            if (typeof newVal === 'string') setSearch(newVal);
+                            else if (newVal?.fullName) setSearch(newVal.fullName);
+                            else setSearch('');
                         }}
                     />
                 </Box>

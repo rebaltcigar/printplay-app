@@ -1,7 +1,7 @@
 # Kunek — Product Roadmap
 
 > Living document. "Kunek" is the platform. "PrintPlay" is the first business (tenant) running on it.
-> Updated: 2026-03-06 (v0.2.2)
+> Updated: 2026-03-07 (v0.4.0)
 >
 > Completed version details archived in `memory/release-history.md`.
 
@@ -11,27 +11,18 @@
 
 | Version | Branch | Status |
 |---------|--------|--------|
+| v0.4.0 | `feature/basic-crm` | Merged |
 | v0.3.0 | `feature/invoice-management` | Merged |
 | v0.2.2 | `feature/rebrand` | Merged |
 | v0.2.1 | `feature/catalog-foundation` | Merged |
 | v0.2.0 | `feature/catalog-foundation` | Merged |
 | v0.1.32 | `feature/next-dev-2` | Merged |
 
-## Up Next — `feature/basic-crm`
+## Up Next — `feature/retail-inventory`
 
 ---
-
-## v0.4 — Basic CRM Foundation ← **NEXT**
-**Goal**: Unified customer profiles to speed up checkout and prepare for PC rentals.
-
-- Normalized `customers` collection (`id`, `fullName`, `email`, `phone`, `tin`, `lifetimeValue`, `outstandingBalance`).
-- **Admin**: New `/admin/customers` module for viewing and editing profiles.
-- **POS**: Replace raw text fields with `CustomerSearchAutocomplete` in Checkout and AR Payment drawers.
-- Auto-calculate outstanding balances and link new orders/invoices to profiles.
-
----
-
-## v0.5 — Retail & Inventory
+ 
+## v0.5 — Retail & Inventory ← **NEXT**
 **Goal**: Proper retail item management with stock tracking.
 
 - Retail tab in POS fully operational

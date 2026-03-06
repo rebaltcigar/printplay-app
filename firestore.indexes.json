@@ -1,43 +1,87 @@
 {
   "indexes": [
     {
-      "collectionGroup": "invoices",
+      "collectionGroup": "customers",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "customerId", "order": "ASCENDING" },
-        { "fieldPath": "createdAt",  "order": "DESCENDING" }
+        {
+          "fieldPath": "fullName",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "invoices",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "status",    "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "customerId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "invoices",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "staffEmail", "order": "ASCENDING" },
-        { "fieldPath": "createdAt",  "order": "DESCENDING" }
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "invoices",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "shiftId",   "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "staffEmail",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "invoices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "shiftId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "paystubs",
       "queryScope": "COLLECTION_GROUP",
       "fields": [
-        { "fieldPath": "staffEmail", "order": "ASCENDING" },
-        { "fieldPath": "payDate",    "order": "DESCENDING" }
+        {
+          "fieldPath": "staffEmail",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "payDate",
+          "order": "DESCENDING"
+        }
       ]
     }
   ],
@@ -46,9 +90,18 @@
       "collectionGroup": "paystubs",
       "fieldPath": "staffEmail",
       "indexes": [
-        { "order": "ASCENDING",  "queryScope": "COLLECTION" },
-        { "order": "DESCENDING", "queryScope": "COLLECTION" },
-        { "order": "ASCENDING",  "queryScope": "COLLECTION_GROUP" }
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION"
+        },
+        {
+          "order": "DESCENDING",
+          "queryScope": "COLLECTION"
+        },
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        }
       ]
     }
   ]

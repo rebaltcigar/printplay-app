@@ -68,13 +68,18 @@ The POS needs to efficiently query this new database without slowing down the ca
 - **`orderService.js`**: Update `createOrder` to accept a `customerId` and increment the customer's `lifetimeValue` and `totalOrders`.
 - **`invoiceService.js`**: Update `createInvoice` and `recordPayment` to update the customer's `outstandingBalance`.
 
-## 5. Migration Strategy (Optional but Recommended)
-For existing orders and invoices that have string-based customer names but no IDs, we will need a one-time utility script to:
-1. Extract all unique customer names/TINs from existing `orders` and `invoices`.
-2. Generate `customer` documents for them.
-3. Back-link the generated `customerId` to the historical records. 
+## 5. Data Migration Strategy
+To ensure historical data is preserved and tied into the new CRM, we will execute a bulk data migration.
 
-*(If this is too complex for the basic version, we can simply start fresh for new orders while keeping historical text data intact).*
+**Migration Logic:**
+1. **Fetch Legacy Data**: Query all `orders` and `invoices` where `customerId` is null or missing.
+2. **Normalize Names**: Extract the `customerName` from these documents, lowercase it, and trim whitespace to group identically named customers together to minimize duplication.
+3. **Batch Customer Creation**: For each unique, normalized name:
+   - Create a new `customer` document.
+   - Aggregate metrics: sum `totalOrders` and `lifetimeValue` from Paid orders, and sum `outstandingBalance` from unpaid/partial invoices.
+   - Extract the latest `phone`, `address`, and `tin` fields across all of their historical documents.
+4. **Batch Document Updating**: Update every linked historical order and invoice document to store the newly generated `customerId`.
+5. **Execution UI**: This script will be housed within an Admin-only UI component (`CustomerMigrationTool.jsx`), chunking Firestore writes into batches of 500 to stay within operational limits, and displaying a progress bar until completion.
 
 ## Next Steps
-This plan lays the groundwork for the Basic CRM. Before beginning execution on the *next* version, we will need to confirm if historical data migration is required or if we are starting with a clean slate for the customer database.
+This plan lays the absolute groundwork for the Basic CRM (v0.4). With the data migration strategy finalized natively into the roadmap, we are ready to proceed to **Phase 1: Database Setup & Security** and **Phase 2: Admin Dashboard & Data Migration Script**.

@@ -3,6 +3,38 @@
 Completed versions archived from ROADMAP.md. CHANGELOG.md has the authoritative diff-level record; this file preserves design decisions, schema changes, and rationale.
 
 ---
+ 
+## v0.4.0 — Basic CRM Foundation (2026-03-07)
+Branch: `feature/basic-crm`
+ 
+**Goal**: Unified customer profiles to speed up checkout and prepare for PC rentals.
+ 
+**Why**: Existing orders had only text names, leading to data fragmentation. We needed a single source of truth for customer identities, balances, and spend history.
+ 
+**New `customers` collection:**
+```javascript
+customers/{id}
+  fullName: string
+  email: string
+  phone: string
+  tin: string
+  address: string
+  lifetimeValue: number
+  outstandingBalance: number
+  createdAt: timestamp
+  updatedAt: timestamp
+```
+ 
+**Features:**
+- **Unified Smart Form**: POS drawer handles both search and registration in one fluid UI.
+- **Centralized Service**: All Firestore interactions moved to `customerService.js`.
+- **Admin Hub**: New `/admin/customers` module for CRM lifecycle management.
+- **Shared UI**: `CustomerForm.jsx` ensures consistency between Admin and POS.
+- **POS Modernization**: Minimalist 'Walk-in' display with dedicated selection drawer.
+- **Cleanup**: Stripped dead code from `POS.jsx` (~100 lines removed).
+ 
+---
+
 
 ## v0.3.0 — Invoice & Charge Management (2026-03-07)
 Branch: `feature/invoice-management`
