@@ -13,6 +13,14 @@
 
 ---
  
+## [0.4.1] — 2026-03-07
+ 
+### Fixed
+- **POS Build Error** — Resolved a `Vite` failure by removing a legacy import of `OrderCustomerDialog` in `POS.jsx`.
+
+### Removed
+- **Workspace Cleanup** — Deleted redundant planning files, deprecated components, and project-root error logs to prepare for v0.5.
+
 ## [0.4.0] — 2026-03-07
  
 ### Added

@@ -40,7 +40,7 @@ import ViewListIcon from '@mui/icons-material/ViewList';
 import AppsIcon from '@mui/icons-material/Apps';
 
 // Components
-import OrderCustomerDialog from './OrderCustomerDialog';
+
 import CustomerDialog from './CustomerDialog';
 import CheckoutDialog from './CheckoutDialog';
 import ExpenseDialog from './ExpenseDialog';
@@ -133,8 +133,8 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
   const [openCustomerDialog, setOpenCustomerDialog] = useState(false); // For Debt Log
   // --- CUSTOMERS ---
   const [openCustomerSelection, setOpenCustomerSelection] = useState(false);
-  const [openOrderCustomerDialog, setOpenOrderCustomerDialog] = useState(false);
   const [openInvoiceLookup, setOpenInvoiceLookup] = useState(false);
+
   const [openCheckout, setOpenCheckout] = useState(false);
   const [openExpense, setOpenExpense] = useState(false); // For header button
 
