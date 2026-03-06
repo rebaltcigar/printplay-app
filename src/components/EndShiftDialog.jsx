@@ -19,16 +19,24 @@ export default function EndShiftDialog({
     user,
     transactions = [],
     onShiftEnded,
-    showSnackbar
+    showSnackbar,
+    settings = {},
 }) {
+    const pcRentalEnabled = settings.pcRentalEnabled !== false; // default true for back-compat
+    const pcRentalMode = settings.pcRentalMode || 'external';
+    const needsManualInput = pcRentalEnabled && pcRentalMode === 'external';
+
     const [pcRental, setPcRental] = useState('');
 
-    const pcRentalNum = Number(pcRental || 0);
+    // When PC rental is off or builtin, total is always 0 (builtin: future v0.6 will fetch from sessions)
+    const pcRentalNum = needsManualInput ? Number(pcRental || 0) : 0;
+
+    const pcRentalServiceId = settings.pcRentalServiceId || null;
 
     // --- ALL FINANCIAL CALCULATIONS from shared utility ---
     const financials = useMemo(
-        () => computeShiftFinancials(transactions, pcRentalNum),
-        [transactions, pcRentalNum]
+        () => computeShiftFinancials(transactions, pcRentalNum, pcRentalServiceId),
+        [transactions, pcRentalNum, pcRentalServiceId]
     );
 
     const {
@@ -47,7 +55,7 @@ export default function EndShiftDialog({
 
     // --- ACTION ---
     const handleConfirm = async () => {
-        if (pcRental === '') {
+        if (needsManualInput && pcRental === '') {
             showSnackbar?.('Enter PC Rental total.', 'error');
             return;
         }
@@ -96,28 +104,45 @@ export default function EndShiftDialog({
         <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
             <DialogTitle>End of Shift</DialogTitle>
             <DialogContent sx={{ display: 'flex', flexDirection: 'column', p: 0, height: '60vh' }}>
-                {/* 1. TOP FIXED: INPUT */}
-                <Box sx={{ p: 2, pb: 1, borderBottom: '1px solid', borderColor: 'divider' }}>
-                    <TextField
-                        autoFocus
-                        label="PC Rental Total (From Timer System)"
-                        type="number"
-                        fullWidth
-                        value={pcRental}
-                        onChange={e => setPcRental(e.target.value)}
-                        required
-                        helperText={loggedPcNonCash > 0 ? `Includes ₱${loggedPcNonCash} logged as Non-Cash (GCash/Charge)` : "Enter the Grand Total from your timer"}
-                    />
-                </Box>
+                {/* 1. TOP FIXED: PC RENTAL INPUT (external timer mode only) */}
+                {pcRentalEnabled && (
+                    <Box sx={{ p: 2, pb: 1, borderBottom: '1px solid', borderColor: 'divider' }}>
+                        {needsManualInput ? (
+                            <TextField
+                                autoFocus
+                                label="PC Rental Total (From External Timer)"
+                                type="number"
+                                fullWidth
+                                value={pcRental}
+                                onChange={e => setPcRental(e.target.value)}
+                                required
+                                helperText={loggedPcNonCash > 0
+                                    ? `₱${loggedPcNonCash} logged as non-cash (GCash/Charge) — cash portion auto-deducted`
+                                    : 'Enter the grand total from your external timer'}
+                            />
+                        ) : (
+                            <Box sx={{ p: 1.5, bgcolor: 'action.hover', borderRadius: 1 }}>
+                                <Typography variant="caption" color="text.secondary">PC Rental Total</Typography>
+                                <Typography variant="body2">
+                                    Computed automatically from session records (v0.6).
+                                </Typography>
+                            </Box>
+                        )}
+                    </Box>
+                )}
 
                 {/* 2. MIDDLE SCROLLABLE: BREAKDOWNS */}
                 <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
                     {/* SALES */}
                     <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>SALES</Typography>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', pl: 1 }}>
-                        <Typography variant="body2">PC Rental</Typography>
-                        <Typography variant="body2">{currency(pcRentalNum)}</Typography>
-                    </Box>
+                    {pcRentalEnabled && (
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', pl: 1 }}>
+                            <Typography variant="body2">
+                                PC Rental{pcRentalMode === 'external' ? ' (external timer)' : ''}
+                            </Typography>
+                            <Typography variant="body2">{currency(pcRentalNum)}</Typography>
+                        </Box>
+                    )}
                     <Box>
                         {salesBreakdown.map(([label, amt]) => (
                             <Box key={label} sx={{ display: 'flex', justifyContent: 'space-between', pl: 1 }}>
@@ -167,7 +192,7 @@ export default function EndShiftDialog({
 
                     <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 'bold' }}>PAYMENT BREAKDOWN</Typography>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', pl: 1 }}>
-                        <Typography variant="body2">Cash Sales (+ PC Rental)</Typography>
+                        <Typography variant="body2">Cash Sales{pcRentalEnabled ? ' (+ PC Rental)' : ''}</Typography>
                         <Typography variant="body2">{currency(totalCash)}</Typography>
                     </Box>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', pl: 1 }}>

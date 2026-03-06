@@ -6,7 +6,7 @@ import {
   Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
   Menu as MuiMenu, useMediaQuery, Chip, Tabs, Tab, List, ListItem,
   Grid, Checkbox, Avatar, CssBaseline, Tooltip, Divider, ListItemButton, Switch,
-  Autocomplete, Snackbar, Alert, Backdrop, CircularProgress // ADDED
+  Autocomplete, Snackbar, Alert, Backdrop, CircularProgress, Collapse // ADDED
 } from '@mui/material';
 import html2canvas from 'html2canvas';
 import { useTheme } from '@mui/material/styles';
@@ -50,13 +50,16 @@ import EditTransactionDialog from './EditTransactionDialog';
 import DeleteTransactionDialog from './DeleteTransactionDialog'; // ADDED
 import ChangeDisplayDialog from './ChangeDisplayDialog'; // ADDED
 import { SimpleReceipt } from './SimpleReceipt';
+import POSHistoryDrawer from './pos/POSHistoryDrawer';
+import POSItemGrid from './pos/POSItemGrid';
+import { VariablePriceDialog } from './pos/POSHelperDialogs';
 // removed duplicate ServiceInvoice import if any, handled above
 
 // Firebase
 import { auth, db } from '../firebase';
 import {
   collection, addDoc, query, onSnapshot, orderBy, doc, writeBatch,
-  updateDoc, where, setDoc, serverTimestamp, getDocs, getDoc, increment
+  updateDoc, where, serverTimestamp, getDocs, getDoc, increment
 } from 'firebase/firestore';
 
 // Helpers
@@ -80,14 +83,13 @@ const currency = fmtCurrency;
 
 function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
   // --- CORE POS STATE ---
   const [activeTab, setActiveTab] = useState(0);
   const [orders, setOrders] = useState([{ id: 1, items: [], customer: null }]);
 
   // Services and staff from shared hooks (replaces manual useEffect blocks)
-  const { serviceList, expenseTypes: expenseServiceItems, categories } = usePOSServices();
+  const { serviceList, expenseTypes: expenseServiceItems, posItems, variantMap } = usePOSServices();
   // POS legacy uses a combo list: serviceList + 'Paid Debt'
   const services = [
     ...serviceList,
@@ -105,7 +107,6 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
   const [price, setPrice] = useState('');
   const [notes, setNotes] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState(null);
-  const itemInputRef = useRef(null);
   const quantityInputRef = useRef(null);
   const priceInputRef = useRef(null);
 
@@ -123,7 +124,6 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
   const [openDrawerDialog, setOpenDrawerDialog] = useState(false);
   const [openEndShiftDialog, setOpenEndShiftDialog] = useState(false);
   const [openCustomerDialog, setOpenCustomerDialog] = useState(false);
-  const [customerDialogMode, setCustomerDialogMode] = useState('pos'); // 'pos' or 'debt'
   const [openOrderCustomerDialog, setOpenOrderCustomerDialog] = useState(false);
   const [openDebtDialog, setOpenDebtDialog] = useState(false);
   const [openCheckout, setOpenCheckout] = useState(false);
@@ -133,18 +133,16 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
   const [editItemDialog, setEditItemDialog] = useState(false);
   const [editingLineItem, setEditingLineItem] = useState(null);
 
+  // --- NEW POS GRID DIALOGS ---
+  const [openHistoryDrawer, setOpenHistoryDrawer] = useState(false);
+  const [variablePriceItem, setVariablePriceItem] = useState(null);
+
   // --- EDIT PAST TX ---
   const [editTxDialog, setEditTxDialog] = useState(false);
   const [editingTx, setEditingTx] = useState(null);
   const [deleteTxDialog, setDeleteTxDialog] = useState(false);
   const [deleteCartItemState, setDeleteCartItemState] = useState(null); // { tabIndex, itemIndex }
-  const [openTxLog, setOpenTxLog] = useState(true); // NEW
-  const [openOrderHistory, setOpenOrderHistory] = useState(true); // NEW
   const [editItemError, setEditItemError] = useState('');
-  const [selectionMode, setSelectionMode] = useState(false);
-
-  // --- ORDER HISTORY SELECTION ---
-  const [orderSelectionMode, setOrderSelectionMode] = useState(false);
   const [selectedOrders, setSelectedOrders] = useState([]);
   const [deleteOrderDialog, setDeleteOrderDialog] = useState(false);
 
@@ -191,10 +189,9 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
   }, [printInvoiceData]);
 
   // --- UI STATE ---
+  const [manualEntryOpen, setManualEntryOpen] = useState(false);
+  const [gridTab, setGridTab] = useState(0); // 0=Sale, 1=PC Rental
   const [menuAnchor, setMenuAnchor] = useState(null);
-  const [staffMenuAnchor, setStaffMenuAnchor] = useState(null);
-
-
   const [selectedTransactions, setSelectedTransactions] = useState([]);
   const [shiftOrders, setShiftOrders] = useState([]);
 
@@ -212,13 +209,10 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
   const handleCloseSnackbar = () => setSnackbar(prev => ({ ...prev, open: false }));
   const showSnackbar = (msg, sev = 'success') => setSnackbar({ open: true, message: msg, severity: sev });
 
-  useEffect(() => {
-    if (!selectionMode) setSelectedTransactions([]);
-  }, [selectionMode]);
-
   // --- SETTINGS STATE ---
   const [systemSettings, setSystemSettings] = useState({
     drawerHotkey: { altKey: true, code: 'Backquote' }, // Fallback default
+    checkoutHotkey: { code: 'F10', key: 'F10', display: 'F10' }, // Fallback default
     logoUrl: null, // Fallback
     storeName: 'PrintPlay', // Fallback
   });
@@ -262,6 +256,27 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [systemSettings.drawerHotkey]);
+
+  // Hotkey for Checkout
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const hk = systemSettings.checkoutHotkey;
+      if (!hk) return;
+      const altMatch = !!hk.altKey === e.altKey;
+      const ctrlMatch = !!hk.ctrlKey === e.ctrlKey;
+      const shiftMatch = !!hk.shiftKey === e.shiftKey;
+      const keyMatch = (hk.code && e.code === hk.code) || (hk.key && e.key === hk.key);
+      if (keyMatch && altMatch && ctrlMatch && shiftMatch) {
+        e.preventDefault();
+        const order = orders[activeTab] || orders[0];
+        if (gridTab === 0 && order?.items?.length > 0 && !openCheckout) {
+          setOpenCheckout(true);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [systemSettings.checkoutHotkey, gridTab, orders, activeTab, openCheckout]);
 
   const currentOrder = orders[activeTab] || orders[0];
   const currentTotal = currentOrder?.items?.reduce((sum, i) => sum + (i.price * i.quantity), 0) || 0;
@@ -324,12 +339,12 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
   }, [shiftStart]);
 
   // Shift alert state (soft enforce)
-  const shiftDurationMs  = (systemSettings.shiftDurationHours  || 12) * 3_600_000;
-  const alertThresholdMs = (systemSettings.shiftAlertMinutes   || 30) *    60_000;
-  const shiftAlertState  = elapsedMs === 0 ? 'normal'
-    : elapsedMs >= shiftDurationMs                        ? 'danger'
-    : elapsedMs >= shiftDurationMs - alertThresholdMs     ? 'warning'
-    : 'normal';
+  const shiftDurationMs = (systemSettings.shiftDurationHours || 12) * 3_600_000;
+  const alertThresholdMs = (systemSettings.shiftAlertMinutes || 30) * 60_000;
+  const shiftAlertState = elapsedMs === 0 ? 'normal'
+    : elapsedMs >= shiftDurationMs ? 'danger'
+      : elapsedMs >= shiftDurationMs - alertThresholdMs ? 'warning'
+        : 'normal';
   const minsRemaining = Math.ceil((shiftDurationMs - elapsedMs) / 60_000);
 
   // Load Transactions Log
@@ -356,23 +371,21 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
       try {
         const qMe = query(collection(db, 'users'), where('email', '==', user.email));
         const snap = await getDocs(qMe);
-        if (!isMounted) return;
         if (!snap.empty) {
           setStaffDisplayName(snap.docs[0].data().fullName || snap.docs[0].data().name || snap.docs[0].data().displayName || user.displayName || user.email);
         } else {
           setStaffDisplayName(user.displayName || user.email);
         }
-      } catch { }
+      } catch (err) {
+        console.error("Error fetching display name:", err);
+      }
     })();
     return () => { isMounted = false; };
   }, [user?.email]);
 
-
-
   const handleLogoutOnly = () => {
-    try { auth.signOut(); } catch (e) { console.error('Logout failed:', e); }
+    auth.signOut();
   };
-
   const handleDownloadReceipt = async () => {
     if (receiptRef.current) {
       try {
@@ -419,6 +432,53 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
         quantityInputRef.current?.select();
       }, 100);
     }
+  };
+
+  const addItemToCart = (itemData, qty = 1, overridePrice = null) => {
+    const p = overridePrice !== null ? overridePrice : Number(itemData.price || 0);
+    const cartItem = {
+      id: Date.now() + Math.random(),
+      serviceId: itemData.id || null,
+      parentServiceId: itemData.parentServiceId || null,
+      variantGroup: itemData.variantGroup || null,
+      variantLabel: itemData.posLabel || null,
+      serviceName: itemData.serviceName || itemData.posLabel,
+      price: p,
+      costPrice: itemData.costPrice || 0,
+      trackStock: itemData.trackStock || false,
+      quantity: qty,
+    };
+
+    const newItems = [...currentOrder.items];
+    const existing = newItems.find(i => i.serviceName === cartItem.serviceName && i.price === cartItem.price);
+    if (existing) {
+      existing.quantity += qty;
+    } else {
+      newItems.push(cartItem);
+    }
+    updateCurrentOrder({ items: newItems });
+    // showSnackbar(`Added ${qty}x ${cartItem.serviceName}`); // Optional, can be noisy
+  };
+
+  // Receives leaf items only — variant drill-down is handled inside POSItemGrid
+  const handleGridItemClick = (item, qty = 1) => {
+    if (item.priceType === 'variable') {
+      setVariablePriceItem(item);
+    } else {
+      addItemToCart(item, qty);
+    }
+  };
+
+  const handlePCSession = ({ pcName, customer, amount }) => {
+    addItemToCart({
+      id: null,
+      serviceName: `PC Rental — ${pcName}`,
+      price: amount,
+      priceType: 'fixed',
+      costPrice: 0,
+      trackStock: false,
+    }, 1, amount);
+    showSnackbar(`${pcName} billed — ${fmtCurrency(amount)}`);
   };
 
   const handleAddEntry = async () => {
@@ -611,8 +671,12 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
         batch.set(txRef, {
           displayId: txIds[index],
           item: item.serviceName,
+          serviceId: item.serviceId || null,
+          parentServiceId: item.parentServiceId || null,
+          variantGroup: item.variantGroup || null,
+          variantLabel: item.variantLabel || null,
           price: Number(item.price),
-          unitCost: Number(item.costPrice || 0), // RENAMED FROM costPrice for P&L
+          unitCost: Number(item.costPrice || 0),
           quantity: Number(item.quantity),
           total: Number(item.price) * Number(item.quantity),
           timestamp: serverTimestamp(),
@@ -621,11 +685,11 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
           customerId: currentOrder.customer?.id || null,
           shiftId: activeShiftId,
           orderNumber: orderNum,
-          category: 'Revenue', // Always Revenue (Accrual)
-          financialCategory: 'Revenue', // Explicit
+          category: 'Revenue',
+          financialCategory: 'Revenue',
           paymentMethod: paymentData.paymentMethod,
-          paymentDetails: paymentData.paymentDetails || {}, // ADDED
-          invoiceStatus: isUnpaid ? 'UNPAID' : 'PAID', // ADD STATUS
+          paymentDetails: paymentData.paymentDetails || {},
+          invoiceStatus: isUnpaid ? 'UNPAID' : 'PAID',
           isDeleted: false
         });
 
@@ -1035,6 +1099,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
 
           {/* Action Buttons */}
           <Box sx={{ display: { xs: 'none', sm: 'flex' }, gap: 1 }}>
+            <Button size="small" variant="outlined" color="primary" onClick={() => setOpenHistoryDrawer(true)} startIcon={<HistoryIcon />}>History</Button>
             <Button size="small" variant="outlined" color="error" onClick={() => setOpenDrawerDialog(true)}>Drawer</Button>
             <Button size="small" variant="outlined" color="error" onClick={() => setOpenExpense(true)}>+ Expense</Button>
             <Button size="small" variant="contained" color="error" onClick={() => setOpenEndShiftDialog(true)}>End Shift</Button>
@@ -1042,6 +1107,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
 
           {/* Mobile Menu */}
           <MuiMenu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)}>
+            <MenuItem onClick={() => { setMenuAnchor(null); setOpenHistoryDrawer(true); }}>History</MenuItem>
             <MenuItem onClick={() => { setMenuAnchor(null); setOpenExpense(true); }}>+ Expense</MenuItem>
             <MenuItem onClick={() => { setMenuAnchor(null); setOpenDebtDialog(true); }}>Debt Log</MenuItem>
             <MenuItem onClick={() => { setMenuAnchor(null); setOpenEndShiftDialog(true); }}>End Shift</MenuItem>
@@ -1071,187 +1137,144 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
         onOpenDebt={() => setOpenDebtDialog(true)}
       />
 
-      {/* --- 2-COLUMN LAYOUT (50/50) --- */}
+      {/* --- REDESIGNED LAYOUT: GRID + CART --- */}
       <Box sx={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', alignItems: 'center', bgcolor: '#0e0e0e' }}>
-        <Grid container sx={{ flex: 1, overflow: 'hidden', maxWidth: '1300px', width: '100%', bgcolor: 'background.default', borderLeft: 1, borderRight: 1, borderColor: 'divider' }}>
+        <Grid container sx={{ flex: 1, overflow: 'hidden', maxWidth: '1400px', width: '100%', bgcolor: 'background.default', borderLeft: 1, borderRight: 1, borderColor: 'divider' }}>
 
-          {/* LEFT COLUMN (50%): ADD PRODUCT + CART */}
+          {/* LEFT COLUMN: expands to full width on PC Rental tab */}
           <Box sx={{
-            width: { xs: '100%', md: '50%' },
-            maxWidth: { md: '50%' },
-            flexBasis: { md: '50%' },
+            width: gridTab === 1 ? '100%' : { xs: '100%', md: '65%', lg: '70%' },
+            flexBasis: gridTab === 1 ? '100%' : { md: '65%', lg: '70%' },
             display: 'flex',
             flexDirection: 'column',
-            borderRight: 1,
+            borderRight: gridTab === 1 ? 0 : 1,
             borderColor: 'divider',
             bgcolor: 'background.paper',
             height: '100%',
-            overflow: 'hidden'
+            overflow: 'hidden',
+            transition: 'width 0.2s, flex-basis 0.2s',
           }}>
-            {/* TOP: ADD PRODUCT */}
+            <POSItemGrid posItems={posItems} variantMap={variantMap} onItemClick={handleGridItemClick} onPCSession={handlePCSession} onTabChange={setGridTab} pcRentalEnabled={systemSettings.pcRentalEnabled !== false} />
+          </Box>
+
+          {/* RIGHT COLUMN (~35%): MAIN CART PANEL — hidden on PC Rental tab */}
+          {gridTab !== 1 && <Box sx={{
+            width: { xs: '100%', md: '35%', lg: '30%' },
+            maxWidth: { md: '35%', lg: '30%' },
+            flexBasis: { md: '35%', lg: '30%' },
+            display: 'flex',
+            flexDirection: 'column',
+            bgcolor: 'background.paper',
+            height: '100%',
+            overflow: 'hidden',
+          }}>
+            {/* TOP: COLLAPSIBLE MANUAL ENTRY (power users / expenses / debt) */}
             <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-              <Box p={1} bgcolor="background.default" display="flex" alignItems="center" borderBottom={1} borderColor="divider">
-                <AddIcon sx={{ mr: 1, opacity: 0.6 }} />
-                <Typography variant="subtitle2" fontWeight="bold" color="text.primary">Add Product</Typography>
+              <Box
+                p={1}
+                bgcolor="background.default"
+                display="flex"
+                alignItems="center"
+                sx={{ cursor: 'pointer', userSelect: 'none' }}
+                onClick={() => setManualEntryOpen(o => !o)}
+              >
+                <AddIcon sx={{ mr: 1, opacity: 0.6, fontSize: '1.2rem' }} />
+                <Typography variant="body2" fontWeight="bold" color="text.primary" sx={{ flex: 1 }}>Manual Entry / Misc</Typography>
+                {manualEntryOpen
+                  ? <ExpandLessIcon fontSize="small" sx={{ opacity: 0.4 }} />
+                  : <ExpandMoreIcon fontSize="small" sx={{ opacity: 0.4 }} />}
               </Box>
-              <Box p={2}>
-                <Stack spacing={1}>
-                  {/* Quick Actions (MOVED) */}
-                  <Stack direction="row" spacing={1} sx={{ overflowX: 'auto', pb: 0.5 }}>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      startIcon={<MonitorIcon />}
-                      onClick={() => {
-                        setItem("PC Rental"); setQuantity(1); setPrice('');
-                        setTimeout(() => priceInputRef.current?.focus(), 50);
-                      }}
-                      sx={{ flex: 1, whiteSpace: 'nowrap', minWidth: 'fit-content' }}
-                    >
-                      PC Rental
-                    </Button>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      startIcon={<PrintIcon />}
-                      onClick={() => {
-                        setItem("Print"); setQuantity(1); setPrice('');
-                        setTimeout(() => priceInputRef.current?.focus(), 50);
-                      }}
-                      sx={{ flex: 1, whiteSpace: 'nowrap', minWidth: 'fit-content' }}
-                    >
-                      Print
-                    </Button>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      startIcon={<ContentCopyIcon />}
-                      onClick={() => {
-                        setItem("Photocopy"); setQuantity(1); setPrice('');
-                        setTimeout(() => priceInputRef.current?.focus(), 50);
-                      }}
-                      sx={{ flex: 1, whiteSpace: 'nowrap', minWidth: 'fit-content' }}
-                    >
-                      Photocopy
-                    </Button>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      startIcon={<PhotoCameraIcon />}
-                      onClick={() => {
-                        setItem("Photo"); setQuantity(1); setPrice('');
-                        setTimeout(() => priceInputRef.current?.focus(), 50);
-                      }}
-                      sx={{ flex: 1, whiteSpace: 'nowrap', minWidth: 'fit-content' }}
-                    >
-                      ID Photo
-                    </Button>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      startIcon={<LayersIcon />}
-                      onClick={() => {
-                        setItem("Laminate"); setQuantity(1); setPrice('');
-                        setTimeout(() => priceInputRef.current?.focus(), 50);
-                      }}
-                      sx={{ flex: 1, whiteSpace: 'nowrap', minWidth: 'fit-content' }}
-                    >
-                      Laminate
-                    </Button>
-                  </Stack>
-                  {/* CONDITIONAL EXTRA FIELDS (Expenses/Debt) */}
-                  {item === 'Expenses' && (
-                    <Stack direction="row" spacing={1}>
+              <Collapse in={manualEntryOpen}>
+              <Box p={1} sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                {/* CONDITIONAL EXTRA FIELDS (Expenses/Debt) */}
+                {item === 'Expenses' && (
+                  <Stack direction="row" spacing={1}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel>Type</InputLabel>
+                      <Select value={expenseType} label="Type" onChange={e => setExpenseType(e.target.value)}>
+                        {expenseServiceItems.map(e => <MenuItem key={e.id} value={e.serviceName}>{e.serviceName}</MenuItem>)}
+                      </Select>
+                    </FormControl>
+                    {(expenseType === 'Salary' || expenseType === 'Salary Advance') && (
                       <FormControl fullWidth size="small">
-                        <InputLabel>Type</InputLabel>
-                        <Select value={expenseType} label="Type" onChange={e => setExpenseType(e.target.value)}>
-                          {expenseServiceItems.map(e => <MenuItem key={e.id} value={e.serviceName}>{e.serviceName}</MenuItem>)}
+                        <InputLabel>Staff</InputLabel>
+                        <Select value={expenseStaffEmail} label="Staff" onChange={e => {
+                          const s = staffOptions.find(o => o.email === e.target.value);
+                          if (s) { setExpenseStaffEmail(s.email); setExpenseStaffId(s.id); }
+                        }}>
+                          {staffOptions.map(s => <MenuItem key={s.id} value={s.email}>{s.fullName}</MenuItem>)}
                         </Select>
                       </FormControl>
-                      {(expenseType === 'Salary' || expenseType === 'Salary Advance') && (
-                        <FormControl fullWidth size="small">
-                          <InputLabel>Staff</InputLabel>
-                          <Select value={expenseStaffEmail} label="Staff" onChange={e => {
-                            const s = staffOptions.find(o => o.email === e.target.value);
-                            if (s) { setExpenseStaffEmail(s.email); setExpenseStaffId(s.id); setExpenseStaffName(s.fullName); }
-                          }}>
-                            {staffOptions.map(s => <MenuItem key={s.id} value={s.email}>{s.fullName}</MenuItem>)}
-                          </Select>
-                        </FormControl>
-                      )}
-                    </Stack>
-                  )}
-
-                  {(item === 'New Debt' || item === 'Paid Debt') && (
-                    <Box sx={{ border: '1px dashed', borderColor: 'divider', p: 1, borderRadius: 1 }}>
-                      {selectedCustomer ? (
-                        <Box display="flex" justifyContent="space-between" alignItems="center">
-                          <Typography variant="body2" fontWeight="bold">{selectedCustomer.fullName}</Typography>
-                          <IconButton size="small" onClick={() => setSelectedCustomer(null)}><ClearIcon fontSize="small" /></IconButton>
-                        </Box>
-                      ) : (
-                        <Button fullWidth size="small" variant="outlined" onClick={() => { setCustomerDialogMode('debt'); setOpenCustomerDialog(true); }}>Select Customer</Button>
-                      )}
-                    </Box>
-                  )}
-
-                  {/* MAIN PRODUCT ROW (40/20/20/20) */}
-                  <Stack direction="row" spacing={1} alignItems="flex-start">
-                    <Autocomplete
-                      sx={{ flex: 4 }}
-                      size="small"
-                      freeSolo
-                      options={[...new Set([
-                        ...services.map(s => s.serviceName),
-                        "Expenses", "New Debt", "Paid Debt"
-                      ])]}
-                      value={item}
-                      onChange={(e, newVal) => handleItemChange({ target: { value: newVal } })}
-                      renderInput={(params) => <TextField {...params} label="Item / Service" />}
-                    />
-
-                    <TextField
-                      label="Qty"
-                      type="number"
-                      size="small"
-                      inputRef={quantityInputRef}
-                      sx={{ flex: 2 }}
-                      value={quantity}
-                      onChange={e => setQuantity(e.target.value)}
-                      disabled={!item}
-                      onKeyDown={(e) => e.key === 'Enter' && handleAddEntry()}
-                    />
-                    <TextField
-                      label="Price"
-                      type="number"
-                      size="small"
-                      inputRef={priceInputRef}
-                      sx={{ flex: 2 }}
-                      value={price}
-                      onChange={e => setPrice(e.target.value)}
-                      disabled={!item}
-                      onKeyDown={(e) => e.key === 'Enter' && handleAddEntry()}
-                    />
-
-                    <Button
-                      variant="outlined"
-                      size="large"
-                      onClick={handleAddEntry}
-                      sx={{ flex: 2, height: 40, whiteSpace: 'nowrap', minWidth: 'auto' }}
-                      disabled={!item || !quantity || !price}
-                    >
-                      {item === 'Expenses' || isDebtItem ? "Log" : "Add"}
-                    </Button>
+                    )}
                   </Stack>
+                )}
 
+                {(item === 'New Debt' || item === 'Paid Debt') && (
+                  <Box sx={{ border: '1px dashed', borderColor: 'divider', p: 1, borderRadius: 1 }}>
+                    {selectedCustomer ? (
+                      <Box display="flex" justifyContent="space-between" alignItems="center">
+                        <Typography variant="body2" fontWeight="bold">{selectedCustomer.fullName}</Typography>
+                        <IconButton size="small" onClick={() => setSelectedCustomer(null)}><ClearIcon fontSize="small" /></IconButton>
+                      </Box>
+                    ) : (
+                      <Button fullWidth size="small" variant="outlined" onClick={() => { setCustomerDialogMode('debt'); setOpenCustomerDialog(true); }}>Select Customer</Button>
+                    )}
+                  </Box>
+                )}
 
+                {/* MAIN MANUAL INPUT ROW */}
+                <Stack direction="row" spacing={1} alignItems="flex-start">
+                  <Autocomplete
+                    sx={{ flex: 3 }}
+                    size="small"
+                    freeSolo
+                    options={[...new Set([
+                      ...services.map(s => s.serviceName),
+                      "Expenses", "New Debt", "Paid Debt"
+                    ])]}
+                    value={item}
+                    onChange={(e, newVal) => handleItemChange({ target: { value: newVal } })}
+                    renderInput={(params) => <TextField {...params} label="Item / Service" placeholder="Keyboard Search" />}
+                  />
+
+                  <TextField
+                    label="Qty"
+                    type="number"
+                    size="small"
+                    inputRef={quantityInputRef}
+                    sx={{ flex: 1.5 }}
+                    value={quantity}
+                    onChange={e => setQuantity(e.target.value)}
+                    disabled={!item}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddEntry()}
+                  />
+                  <TextField
+                    label="Price"
+                    type="number"
+                    size="small"
+                    inputRef={priceInputRef}
+                    sx={{ flex: 1.5 }}
+                    value={price}
+                    onChange={e => setPrice(e.target.value)}
+                    disabled={!item}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddEntry()}
+                  />
+
+                  <Button
+                    variant="outlined"
+                    size="large"
+                    onClick={handleAddEntry}
+                    sx={{ flex: 1.5, height: 40, whiteSpace: 'nowrap', minWidth: 'auto', px: 1 }}
+                    disabled={!item || !quantity || !price}
+                  >
+                    {item === 'Expenses' || isDebtItem ? "Log" : "Add"}
+                  </Button>
                 </Stack>
-
-
               </Box>
+              </Collapse>
             </Box>
 
-            {/* BOTTOM: POS CART (Flex Grow) */}
+            {/* CART (Flex Grow) */}
             <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               <Box p={1} bgcolor="background.default" display="flex" alignItems="center" borderBottom={1} borderColor="divider">
                 <ShoppingCartIcon sx={{ mr: 1, opacity: 0.6 }} />
@@ -1302,6 +1325,20 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
                 </Typography>
               </Box>
 
+              {/* Order Total — prominent, above cart items */}
+              <Box sx={{
+                px: 2, py: 1.25, borderBottom: 1, borderColor: 'divider',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                bgcolor: 'background.paper', flexShrink: 0,
+              }}>
+                <Typography variant="overline" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
+                  Order Total
+                </Typography>
+                <Typography variant="h4" fontWeight="bold" color="primary">
+                  {currency(currentTotal)}
+                </Typography>
+              </Box>
+
               {/* Cart Items Table */}
               <TableContainer sx={{ flex: 1, overflowY: 'auto' }}>
                 <Table stickyHeader size="small">
@@ -1347,10 +1384,6 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
 
               {/* Footer */}
               <Box p={2} borderTop={1} borderColor="divider" bgcolor="background.paper">
-                <Box display="flex" justifyContent="space-between" mb={2}>
-                  <Typography variant="h6">Total</Typography>
-                  <Typography variant="h5" fontWeight="bold" color="primary">{currency(currentTotal)}</Typography>
-                </Box>
                 {currentOrder.isExisting ? (
                   <Stack direction="row" spacing={1}>
                     <Button fullWidth variant="contained" size="large" onClick={() => setOpenCheckout(true)} disabled={currentOrder.items.length === 0}>
@@ -1364,177 +1397,26 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
                     </Button>
                   </Stack>
                 ) : (
-                  <Button fullWidth variant="contained" size="large" onClick={() => setOpenCheckout(true)} disabled={currentOrder.items.length === 0}>
+                  <Button
+                    fullWidth
+                    variant="contained"
+                    size="large"
+                    onClick={() => setOpenCheckout(true)}
+                    disabled={currentOrder.items.length === 0}
+                  >
                     CHECKOUT
+                    {systemSettings.checkoutHotkey?.display && (
+                      <Box component="span" sx={{ ml: 0.75, fontSize: '0.55rem', opacity: 0.55, fontWeight: 'normal', letterSpacing: 0 }}>
+                        [{systemSettings.checkoutHotkey.display}]
+                      </Box>
+                    )}
                   </Button>
                 )}
               </Box>
             </Box>
-          </Box>
-
-          {/* RIGHT COLUMN (50%): LOGS + HISTORY */}
-          <Box sx={{
-            width: { xs: '100%', md: '50%' },
-            maxWidth: { md: '50%' },
-            flexBasis: { md: '50%' },
-            display: 'flex',
-            flexDirection: 'column',
-            bgcolor: 'background.paper',
-            height: '100%',
-            overflow: 'hidden',
-            justifyContent: 'flex-start' // Anchor to top
-          }}>
-            {/* TOP: TRANSACTION LOG */}
-            <Box sx={{
-              flexGrow: openTxLog ? 1 : 0,
-              flexShrink: 0,
-              flexBasis: '49px',
-              overflow: 'hidden',
-              display: 'flex',
-              flexDirection: 'column',
-              borderBottom: 1,
-              borderColor: 'divider',
-              transition: 'flex-grow 0.3s ease'
-            }}>
-              <Box p={1} bgcolor="background.default" display="flex" alignItems="center" borderBottom={1} borderColor="divider" sx={{ height: 49, boxSizing: 'border-box' }}>
-                <IconButton size="small" onClick={() => setOpenTxLog(!openTxLog)} sx={{ mr: 1 }}>
-                  {openTxLog ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                </IconButton>
-                <HistoryIcon sx={{ mr: 1, opacity: 0.6 }} />
-                <Typography variant="subtitle2" fontWeight="bold" sx={{ flexGrow: 1 }}>Transaction Log</Typography>
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <Tooltip title="Toggle Selection Mode">
-                    <Switch size="small" checked={selectionMode} onChange={(e) => setSelectionMode(e.target.checked)} />
-                  </Tooltip>
-                  {selectionMode && selectedTransactions.length === 1 && (
-                    <Button size="small" variant="outlined" onClick={() => {
-                      const tx = transactions.find(t => t.id === selectedTransactions[0]);
-                      if (tx) handleOpenEditTx(tx);
-                    }}>Edit</Button>
-                  )}
-                  {selectionMode && selectedTransactions.length > 0 && (
-                    <Button size="small" color="error" onClick={handleDeleteLogs}>Delete</Button>
-                  )}
-                </Stack>
-              </Box>
-              <TableContainer sx={{ flex: 1 }}>
-                <Table stickyHeader size="small">
-                  <TableHead>
-                    <TableRow>
-                      {selectionMode ? (
-                        <TableCell padding="checkbox" sx={{ bgcolor: 'background.paper', width: '10%' }} />
-                      ) : (
-                        <TableCell sx={{ bgcolor: 'background.paper', width: '10%' }}>Select</TableCell>
-                      )}
-                      <TableCell sx={{ bgcolor: 'background.paper', width: '15%' }}>Time</TableCell>
-                      <TableCell sx={{ bgcolor: 'background.paper', width: '30%' }}>Product</TableCell>
-                      <TableCell sx={{ bgcolor: 'background.paper', width: '30%' }}>Details</TableCell>
-                      <TableCell align="right" sx={{ bgcolor: 'background.paper', width: '15%' }}>Total</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {transactions.map((tx) => (
-                      <TableRow key={tx.id} hover selected={selectedTransactions.includes(tx.id)}>
-                        {selectionMode ? (
-                          <TableCell padding="checkbox" sx={{ width: '10%' }}>
-                            <Checkbox size="small" checked={selectedTransactions.includes(tx.id)} onChange={() => setSelectedTransactions(p => p.includes(tx.id) ? p.filter(x => x !== tx.id) : [...p, tx.id])} />
-                          </TableCell>
-                        ) : (
-                          <TableCell sx={{ width: '10%', opacity: 0.3 }}><Checkbox size="small" disabled /></TableCell>
-                        )}
-                        <TableCell sx={{ width: '15%' }}>{tx.timestamp?.seconds ? new Date(tx.timestamp.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</TableCell>
-                        <TableCell sx={{ width: '30%' }}>
-                          {tx.item === 'Expenses' ? (
-                            <Box display="flex" alignItems="center" gap={0.5}>
-                              <Avatar sx={{ width: 16, height: 16, bgcolor: 'error.main', fontSize: 10 }}>E</Avatar>
-                              <Typography variant="body2">{tx.expenseType}</Typography>
-                            </Box>
-                          ) : (
-                            <Typography variant="body2" fontWeight="bold">{tx.item}</Typography>
-                          )}
-                          <Typography variant="caption" display="block" color="text.secondary">
-                            {tx.expenseStaffName || ''}
-                          </Typography>
-                        </TableCell>
-                        <TableCell sx={{ width: '30%' }}>
-                          <Typography variant="caption" color="text.secondary">
-                            {tx.quantity} x {currency(tx.price)}
-                          </Typography>
-                        </TableCell>
-                        <TableCell align="right" sx={{ width: '15%' }}>{currency(tx.total)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            </Box>
-
-            {/* BOTTOM: ORDER HISTORY */}
-            <Box sx={{
-              flexGrow: openOrderHistory ? 1 : 0,
-              flexShrink: 0,
-              flexBasis: '49px',
-              overflow: 'hidden',
-              display: 'flex',
-              flexDirection: 'column',
-              transition: 'flex-grow 0.3s ease'
-            }}>
-              <Box p={1} bgcolor="background.default" display="flex" alignItems="center" borderBottom={1} borderColor="divider" sx={{ height: 49, boxSizing: 'border-box' }}>
-                <IconButton size="small" onClick={() => setOpenOrderHistory(!openOrderHistory)} sx={{ mr: 1 }}>
-                  {openOrderHistory ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                </IconButton>
-                <PointOfSaleIcon sx={{ mr: 1, opacity: 0.6 }} />
-                <Typography variant="subtitle2" fontWeight="bold" sx={{ flexGrow: 1 }}>Order History</Typography>
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <Tooltip title="Toggle Selection Mode">
-                    <Switch size="small" checked={orderSelectionMode} onChange={(e) => setOrderSelectionMode(e.target.checked)} />
-                  </Tooltip>
-                  {orderSelectionMode && selectedOrders.length > 0 && (
-                    <Button size="small" color="error" onClick={handleDeleteOrders}>Delete</Button>
-                  )}
-                </Stack>
-              </Box>
-              <TableContainer sx={{ flex: 1 }}>
-                <Table stickyHeader size="small">
-                  <TableHead>
-                    <TableRow>
-                      {orderSelectionMode ? (
-                        <TableCell padding="checkbox" sx={{ bgcolor: 'background.paper', width: '10%' }} />
-                      ) : (
-                        <TableCell sx={{ bgcolor: 'background.paper', width: '10%' }}>Select</TableCell>
-                      )}
-                      <TableCell sx={{ bgcolor: 'background.paper', width: '15%' }}>Time</TableCell>
-                      <TableCell sx={{ bgcolor: 'background.paper', width: '30%' }}>Order No</TableCell>
-                      <TableCell sx={{ bgcolor: 'background.paper', width: '30%' }}>Customer Name</TableCell>
-                      <TableCell align="right" sx={{ bgcolor: 'background.paper', width: '15%' }}>Total</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {shiftOrders.map((o) => (
-                      <TableRow key={o.id} hover sx={{ cursor: 'pointer' }} onClick={() => handleOpenOrderAsTab(o)} selected={selectedOrders.includes(o.id)}>
-                        {orderSelectionMode ? (
-                          <TableCell padding="checkbox" sx={{ width: '10%' }} onClick={(e) => e.stopPropagation()}>
-                            <Checkbox size="small" checked={selectedOrders.includes(o.id)} onChange={() => setSelectedOrders(p => p.includes(o.id) ? p.filter(x => x !== o.id) : [...p, o.id])} />
-                          </TableCell>
-                        ) : (
-                          <TableCell sx={{ width: '10%', opacity: 0.3 }}>
-                            <Checkbox size="small" disabled />
-                          </TableCell>
-                        )}
-                        <TableCell sx={{ width: '15%' }}>{o.timestamp?.seconds ? new Date(o.timestamp.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</TableCell>
-                        <TableCell sx={{ width: '30%' }}>#{o.orderNumber}</TableCell>
-                        <TableCell sx={{ width: '30%' }}>{o.customerName || 'Walk-in'}</TableCell>
-                        <TableCell align="right" sx={{ width: '15%' }}>{currency(o.items?.reduce((s, i) => s + (i.price * i.quantity), 0))}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            </Box>
-          </Box>
-
+          </Box>}
         </Grid>
-      </Box > {/* Close centered content box - FIXED */}
+      </Box>
 
       {/* --- DIALOGS --- */}
       <DrawerDialog open={openDrawerDialog} onClose={() => setOpenDrawerDialog(false)} user={user} showSnackbar={showSnackbar} />
@@ -1548,9 +1430,9 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
         transactions={transactions}
         onShiftEnded={onShiftEnded}
         showSnackbar={showSnackbar}
+        settings={systemSettings}
       />
       <EditTransactionDialog open={editTxDialog} onClose={() => setEditTxDialog(false)} transaction={editingTx} onSave={handleEditTx} />
-      <DeleteTransactionDialog open={deleteTxDialog} onClose={() => setDeleteTxDialog(false)} onConfirm={handleConfirmDelete} />
       <DeleteTransactionDialog
         open={!!deleteCartItemState}
         onClose={() => setDeleteCartItemState(null)}
@@ -1576,6 +1458,31 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
           // Only used for Debt now
           setSelectedCustomer(c);
           setOpenCustomerDialog(false);
+        }}
+      />
+
+      <POSHistoryDrawer
+        open={openHistoryDrawer}
+        onClose={() => setOpenHistoryDrawer(false)}
+        transactions={transactions}
+        shiftOrders={shiftOrders}
+        selectedTransactions={selectedTransactions}
+        setSelectedTransactions={setSelectedTransactions}
+        selectedOrders={selectedOrders}
+        setSelectedOrders={setSelectedOrders}
+        handleOpenEditTx={handleOpenEditTx}
+        handleDeleteLogs={handleDeleteLogs}
+        handleDeleteOrders={handleDeleteOrders}
+        handleOpenOrderAsTab={handleOpenOrderAsTab}
+      />
+
+      <VariablePriceDialog
+        open={Boolean(variablePriceItem)}
+        item={variablePriceItem}
+        onClose={() => setVariablePriceItem(null)}
+        onSubmit={(price) => {
+          addItemToCart(variablePriceItem, 1, price);
+          setVariablePriceItem(null);
         }}
       />
 
@@ -1830,16 +1737,6 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
       </Dialog>
 
       {/* Existing Log Edit/Delete Dialogs */}
-      {
-        editingTx && (
-          <EditTransactionDialog
-            open={editTxDialog}
-            onClose={() => setEditTxDialog(false)}
-            transaction={editingTx}
-            user={user}
-          />
-        )
-      }
       <DeleteTransactionDialog
         open={deleteTxDialog}
         onClose={() => setDeleteTxDialog(false)}

@@ -46,7 +46,14 @@
   *(forward-only — old transactions unaffected)*
 - Begin breaking `POS.jsx` (~1700 lines) into focused sub-components
 
-### v0.2.2 — Kunek Rebranding
+### v0.2.2 — POS Automated Tests
+**Goal**: Regression safety net for the POS. Must pass before every deploy touching POS code.
+
+Full test plan: `memory/pos-test-plan.md`. Covers item grid, tile clicks, variants, qty dialog, manual entry, cart CRUD, checkout (Cash/GCash/Charge), hotkeys, PC Rental tab, tab switching, and end-shift PC rental modes.
+
+**Tooling:** Vitest + React Testing Library (UI/hooks) · Playwright (E2E + Firestore writes)
+
+### v0.2.3 — Kunek Rebranding
 **Goal**: Platform shell says "Kunek". Business branding is 100% dynamic from tenant settings. Zero hardcoded brand strings in code.
 
 - Rename `package.json`, `index.html` title, window/tab title to "Kunek"
@@ -145,11 +152,29 @@ invoices/{id}
 - Session history per station
 - Admin: add / remove / rename PC units (never hardcoded count or names)
 - Admin: set hourly rate, minimum session time, rounding rules
+- Create "PC Rental" catalog service (variable price, Sale category) and link it in Settings → POS → PC Rental Billing Service — this is the one-time admin setup required before v0.6 go-live
+- Once built-in timer is live: remove `pcRentalTotal` manual entry from EndShiftDialog, retire `splitPcRental` special-case math — PC rental becomes a normal catalog service with no separate computation
+- `pcRentalMode: 'builtin'` in EndShiftDialog: compute total from `pcSessions` instead of manual input
+- Optional: data migration script to backfill `serviceId` on old PC Rental transactions (cosmetic only — doesn't affect frozen shift totals, string match already covers them)
 
 ---
 
-## v0.7 — POS Polish & Power Features
+## v0.7 — Payment Methods & POS Polish
+**Goal**: Make payment methods fully configurable. Clean up POS power features.
 
+**Payment method configuration (admin settings):**
+- Toggle Cash / GCash / Charge (Pay Later) per tenant
+- GCash setup: store GCash name, number, and QR code image upload
+- QR code displayed in checkout dialog when GCash is selected (cashier shows to customer)
+- Charge (Pay Later) requires customer assigned — already enforced; toggle hides the option entirely if not needed
+- When a method is disabled, it disappears from the checkout ToggleButtonGroup
+- Stored in `settings/config`: `{ gcashEnabled, gcashName, gcashNumber, gcashQrUrl, chargeEnabled }`
+
+**PC Rental payment method scoping:**
+- When `pcRentalMode: 'external'` (third-party timer), GCash/Charge for PC rental is separately configured
+- Prevents cashiers from accidentally logging non-cash PC rental transactions that would confuse shift-end math
+
+**POS Polish:**
 - Notes field on cart line items (stores in transaction)
 - Order-level discount (flat ₱ or %) at checkout
 - Focus Mode: single-column POS, logs panel hidden

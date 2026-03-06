@@ -5,8 +5,17 @@
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const PC_RENTAL_ITEM = 'PC Rental';
+// Legacy string match — used as fallback when pcRentalServiceId is not configured.
+// v0.6: this constant will be retired once all callers pass pcRentalServiceId.
+const PC_RENTAL_ITEM_FALLBACK = 'pc rental'; // lowercase for case-insensitive compare
 const EXPENSE_ITEMS = new Set(['Expenses', 'New Debt']);
+
+// Determine if a transaction is a PC Rental billing transaction.
+// Uses OR logic so both new transactions (serviceId) and old ones (item name) always match.
+// No data migration needed — old transactions identified by name, new ones by serviceId.
+const isPcRentalTx = (tx, pcRentalServiceId) =>
+    (pcRentalServiceId ? tx.serviceId === pcRentalServiceId : false) ||
+    String(tx.item ?? '').trim().toLowerCase() === PC_RENTAL_ITEM_FALLBACK;
 
 // ---------------------------------------------------------------------------
 // Denominations
@@ -37,14 +46,17 @@ export const sumDenominations = (denoms = {}) => {
 
 /**
  * Split a transaction list into PC Rental transactions and everything else.
- * @param {Array} transactions
+ * @param {Array}       transactions
+ * @param {string|null} pcRentalServiceId - Firestore serviceId of the PC Rental catalog item.
+ *   When provided, matching is by serviceId (clean). When null, falls back to item name
+ *   string match for backward compatibility with legacy transactions.
  * @returns {{ pcRentalTxs: Array, otherTxs: Array }}
  */
-export const splitPcRental = (transactions = []) => {
+export const splitPcRental = (transactions = [], pcRentalServiceId = null) => {
     const pcRentalTxs = [];
     const otherTxs = [];
     for (const tx of transactions) {
-        if (tx.item === PC_RENTAL_ITEM) pcRentalTxs.push(tx);
+        if (isPcRentalTx(tx, pcRentalServiceId)) pcRentalTxs.push(tx);
         else otherTxs.push(tx);
     }
     return { pcRentalTxs, otherTxs };
@@ -80,8 +92,10 @@ export const tallyPaymentMethods = (saleTxs = []) => {
  *   - Logged PC Rental transactions may capture non-cash methods (GCash/Charge)
  *   - The cash portion of PC Rental = pcRentalTotal − logged non-cash PC Rental
  *
- * @param {Array}  transactions  - All shift transactions (raw, unfiltered)
- * @param {number} pcRentalTotal - Manual PC Rental total (from timer system)
+ * @param {Array}       transactions     - All shift transactions (raw, unfiltered)
+ * @param {number}      pcRentalTotal    - Manual PC Rental total (from timer system)
+ * @param {string|null} pcRentalServiceId - Catalog serviceId for PC Rental billing item.
+ *   Pass from settings.pcRentalServiceId. Null = fallback to item name string match.
  * @returns {{
  *   servicesTotal:    number,   // non-PC, non-expense sales
  *   expensesTotal:    number,   // Expenses + New Debt
@@ -95,9 +109,9 @@ export const tallyPaymentMethods = (saleTxs = []) => {
  *   loggedPcNonCash:  number,   // GCash + Charge logged as PC Rental
  * }}
  */
-export const computeShiftFinancials = (transactions = [], pcRentalTotal = 0) => {
+export const computeShiftFinancials = (transactions = [], pcRentalTotal = 0, pcRentalServiceId = null) => {
     const pc = Number(pcRentalTotal || 0);
-    const { pcRentalTxs, otherTxs } = splitPcRental(transactions);
+    const { pcRentalTxs, otherTxs } = splitPcRental(transactions, pcRentalServiceId);
 
     // --- PC Rental logged payment methods ---
     let pcGcash = 0, pcAr = 0;
@@ -196,8 +210,9 @@ export const computeExpectedCash = (shift, txAgg = {}) => {
  * This intentionally does NOT include PC Rental in the base sales total
  * because PC Rental is entered manually at end-of-shift.
  *
- * @param {Array}  txList       - Shift transactions (filtered, non-deleted)
- * @param {Array}  serviceMeta  - [{ name: string, category: string }] from Firestore
+ * @param {Array}       txList            - Shift transactions (filtered, non-deleted)
+ * @param {Array}       serviceMeta       - [{ name: string, category: string }] from Firestore
+ * @param {string|null} pcRentalServiceId - Catalog serviceId for PC Rental item (null = string fallback)
  * @returns {{
  *   serviceTotals: Object,
  *   sales:         number,
@@ -209,7 +224,7 @@ export const computeExpectedCash = (shift, txAgg = {}) => {
  *   pcNonCashSales: number,  // GCash + Charge logged as PC Rental (NOT cash in drawer)
  * }}
  */
-export const aggregateShiftTransactions = (txList = [], serviceMeta = []) => {
+export const aggregateShiftTransactions = (txList = [], serviceMeta = [], pcRentalServiceId = null) => {
     const normalize = (s) => String(s ?? '').trim().toLowerCase();
 
     // Build serviceName → category lookup from meta
@@ -231,7 +246,7 @@ export const aggregateShiftTransactions = (txList = [], serviceMeta = []) => {
         const itemName = normalize(tx.item);
         if (!itemName) continue;
 
-        const isPcRental = itemName === 'pc rental';
+        const isPcRental = isPcRentalTx(tx, pcRentalServiceId);
 
         // Determine category (sale = revenue, expense = cost)
         // New values: 'Sale' / 'Expense'

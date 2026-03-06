@@ -32,6 +32,7 @@ export default function StoreSettings({ section, showSnackbar, user }) {
         receiptFooter: 'Thank you for your business!',
         showTaxBreakdown: false,
         drawerHotkey: { altKey: true, code: 'Backquote', display: 'Alt + `' },
+        checkoutHotkey: { code: 'F10', key: 'F10', display: 'F10' },
         idPrefixes: {
             shifts: 'SHIFT',
             expenses: 'EXP',
@@ -41,13 +42,27 @@ export default function StoreSettings({ section, showSnackbar, user }) {
         shiftDurationHours: 12,
         shiftAlertMinutes: 30,
         schedulePostingFrequency: 'weekly',
+        pcRentalEnabled: true,
+        pcRentalMode: 'external', // 'external' = third-party timer | 'builtin' = Kunek v0.6
+        pcRentalServiceId: '',    // Firestore serviceId of the catalog item used for PC billing
     });
 
     const [capturingHotkey, setCapturingHotkey] = useState(false);
+    const [capturingCheckoutHotkey, setCapturingCheckoutHotkey] = useState(false);
+    const [saleServices, setSaleServices] = useState([]); // for pcRentalServiceId picker
 
     useEffect(() => {
         loadSettings();
         checkBiometricStatus();
+        if (section === 'pos') {
+            getDocs(query(collection(db, 'services'), orderBy('serviceName')))
+                .then(snap => setSaleServices(
+                    snap.docs
+                        .map(d => ({ id: d.id, ...d.data() }))
+                        .filter(s => s.active !== false && s.category !== 'Expense')
+                ))
+                .catch(() => {});
+        }
     }, []);
 
     const loadSettings = async () => {
@@ -115,24 +130,29 @@ export default function StoreSettings({ section, showSnackbar, user }) {
         }
     };
 
+    const buildHotkeyObj = (e) => {
+        const modifier = e.altKey ? 'Alt' : (e.ctrlKey ? 'Ctrl' : (e.shiftKey ? 'Shift' : ''));
+        return {
+            altKey: e.altKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey,
+            key: e.key, code: e.code,
+            display: `${modifier ? modifier + ' + ' : ''}${e.key.toUpperCase()}`,
+        };
+    };
+
     const handleCaptureHotkey = (e) => {
         e.preventDefault();
         e.stopPropagation();
         if (['Alt', 'Control', 'Shift', 'Meta'].includes(e.key)) return;
-        const modifier = e.altKey ? 'Alt' : (e.ctrlKey ? 'Ctrl' : (e.shiftKey ? 'Shift' : ''));
-        const display = `${modifier ? modifier + ' + ' : ''}${e.key.toUpperCase()}`;
-        setSettings(prev => ({
-            ...prev,
-            drawerHotkey: {
-                altKey: e.altKey,
-                ctrlKey: e.ctrlKey,
-                shiftKey: e.shiftKey,
-                key: e.key,
-                code: e.code,
-                display
-            }
-        }));
+        setSettings(prev => ({ ...prev, drawerHotkey: buildHotkeyObj(e) }));
         setCapturingHotkey(false);
+    };
+
+    const handleCaptureCheckoutHotkey = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (['Alt', 'Control', 'Shift', 'Meta'].includes(e.key)) return;
+        setSettings(prev => ({ ...prev, checkoutHotkey: buildHotkeyObj(e) }));
+        setCapturingCheckoutHotkey(false);
     };
 
     const handleBackfillShifts = async () => {
@@ -440,6 +460,59 @@ export default function StoreSettings({ section, showSnackbar, user }) {
                         <MenuItem value="biweekly">Bi-weekly</MenuItem>
                         <MenuItem value="monthly">Monthly</MenuItem>
                     </TextField>
+
+                    <Typography variant="subtitle2" sx={{ pt: 1 }}>PC Rental</Typography>
+                    <Paper variant="outlined" sx={{ p: 2 }}>
+                        <FormControlLabel
+                            control={
+                                <Switch
+                                    checked={!!settings.pcRentalEnabled}
+                                    onChange={e => setSettings({ ...settings, pcRentalEnabled: e.target.checked })}
+                                />
+                            }
+                            label="PC Rental enabled"
+                        />
+                        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
+                            Enables the PC Rental tab in the POS and includes PC rental in shift-end calculations.
+                        </Typography>
+                        {settings.pcRentalEnabled && (
+                            <Stack spacing={2} sx={{ mt: 1 }}>
+                                <TextField
+                                    select
+                                    label="PC Timer Mode"
+                                    fullWidth
+                                    value={settings.pcRentalMode || 'external'}
+                                    onChange={e => setSettings({ ...settings, pcRentalMode: e.target.value })}
+                                    helperText={
+                                        settings.pcRentalMode === 'external'
+                                            ? 'Cashier enters the grand total from the external timer at shift end.'
+                                            : 'PC rental total is computed automatically from Kunek session records (v0.6).'
+                                    }
+                                >
+                                    <MenuItem value="external">External timer — manual total at shift end</MenuItem>
+                                    <MenuItem value="builtin">Kunek built-in timer (v0.6+)</MenuItem>
+                                </TextField>
+
+                                <TextField
+                                    select
+                                    label="PC Rental Billing Service"
+                                    fullWidth
+                                    value={settings.pcRentalServiceId || ''}
+                                    onChange={e => setSettings({ ...settings, pcRentalServiceId: e.target.value })}
+                                    helperText="When a customer pays for PC time via GCash or Charge, cashier adds this catalog item. Shift-end math uses it to correctly split cash vs. non-cash PC rental revenue."
+                                >
+                                    <MenuItem value="">— Not linked (uses &quot;PC Rental&quot; name match)</MenuItem>
+                                    {saleServices.map(s => (
+                                        <MenuItem key={s.id} value={s.id}>
+                                            {s.serviceName}
+                                            {s.priceType === 'variable' ? ' (variable)' : s.price ? ` — ₱${s.price}` : ''}
+                                        </MenuItem>
+                                    ))}
+                                </TextField>
+                            </Stack>
+                        )}
+                    </Paper>
+
                     {renderSaveButton()}
                 </Stack>
             )}
@@ -462,6 +535,23 @@ export default function StoreSettings({ section, showSnackbar, user }) {
                             onKeyDown={capturingHotkey ? handleCaptureHotkey : undefined}
                         >
                             {capturingHotkey ? "Press Keys Now..." : "Change Hotkey"}
+                        </Button>
+                    </Paper>
+                    <Typography variant="subtitle2">Checkout Hotkey</Typography>
+                    <Paper variant="outlined" sx={{ p: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+                        <Box flex={1}>
+                            <Typography variant="caption" color="text.secondary">Current Hotkey</Typography>
+                            <Typography variant="h5" color="primary" fontWeight="bold">
+                                {settings.checkoutHotkey?.display || 'None'}
+                            </Typography>
+                        </Box>
+                        <Button
+                            variant={capturingCheckoutHotkey ? "contained" : "outlined"}
+                            color={capturingCheckoutHotkey ? "error" : "primary"}
+                            onClick={() => setCapturingCheckoutHotkey(!capturingCheckoutHotkey)}
+                            onKeyDown={capturingCheckoutHotkey ? handleCaptureCheckoutHotkey : undefined}
+                        >
+                            {capturingCheckoutHotkey ? "Press Keys Now..." : "Change Hotkey"}
                         </Button>
                     </Paper>
                     {renderSaveButton()}
