@@ -83,7 +83,7 @@ const currency = fmtCurrency;
 
 
 
-function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
+function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime, appSettings, staffDisplayName: initialStaffDisplayName }) {
   const theme = useTheme();
 
   // --- CORE POS STATE ---
@@ -113,14 +113,21 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
   const priceInputRef = useRef(null);
 
   // --- LEGACY SHIFT STATE ---
-  const [shiftStart, setShiftStart] = useState(null);
-  const [elapsed, setElapsed] = useState('00:00:00');
-  const [elapsedMs, setElapsedMs] = useState(0);
+  const [shiftStart, setShiftStart] = useState(shiftStartTime || null);
+  const [elapsed, setElapsed] = useState(() => {
+    if (!shiftStartTime) return '00:00:00';
+    const diffMs = Date.now() - shiftStartTime.getTime();
+    const pad = n => String(n).padStart(2, '0');
+    return `${pad(Math.floor(diffMs / 3600000))}:${pad(Math.floor((diffMs % 3600000) / 60000))}:${pad(Math.floor((diffMs % 60000) / 1000))}`;
+  });
+  const [elapsedMs, setElapsedMs] = useState(() =>
+    shiftStartTime ? Date.now() - shiftStartTime.getTime() : 0
+  );
 
   // --- SIDEBAR ---
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [transactions, setTransactions] = useState([]);
-  const [staffDisplayName, setStaffDisplayName] = useState(user?.email || '');
+  const [staffDisplayName, setStaffDisplayName] = useState(initialStaffDisplayName || user?.email || '');
 
   // --- DIALOGS ---
   const [openDrawerDialog, setOpenDrawerDialog] = useState(false);
@@ -219,27 +226,14 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
     localStorage.setItem('kunek_posView', next);
   };
 
-  // --- SETTINGS STATE ---
-  const [systemSettings, setSystemSettings] = useState({
-    drawerHotkey: { altKey: true, code: 'Backquote' }, // Fallback default
-    checkoutHotkey: { code: 'F10', key: 'F10', display: 'F10' }, // Fallback default
-    logoUrl: null, // Fallback
-    storeName: null, // Fallback — null prevents flash before settings load
-  });
-
-  // Load Settings on Mount
-  useEffect(() => {
-    const loadSettings = async () => {
-      try {
-        const docRef = doc(db, 'settings', 'config');
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setSystemSettings(prev => ({ ...prev, ...docSnap.data() }));
-        }
-      } catch (e) { console.error("Error loading settings:", e); }
-    };
-    loadSettings();
-  }, []);
+  // --- SETTINGS STATE (seeded from App-level fetch — no separate load needed) ---
+  const [systemSettings] = useState(() => ({
+    drawerHotkey: { altKey: true, code: 'Backquote' },
+    checkoutHotkey: { code: 'F10', key: 'F10', display: 'F10' },
+    logoUrl: null,
+    storeName: 'Kunek',
+    ...(appSettings || {}),
+  }));
 
   // Hotkey for Drawer (Dynamic)
   useEffect(() => {
@@ -316,23 +310,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
 
 
 
-  // Shift Timer
-  useEffect(() => {
-    if (!activeShiftId) return;
-    const fetchStart = async () => {
-      try {
-        const sDoc = await getDoc(doc(db, 'shifts', activeShiftId));
-        if (sDoc.exists()) {
-          const data = sDoc.data();
-          if (data?.startTime?.seconds) setShiftStart(new Date(data.startTime.seconds * 1000));
-          else if (data?.startTime instanceof Date) setShiftStart(data.startTime);
-        }
-      } catch (e) {
-        console.error("Error fetching shift start:", e);
-      }
-    };
-    fetchStart();
-  }, [activeShiftId]);
+  // Shift Timer — shiftStart seeded from prop (fetched by App.jsx during auth bootstrap)
 
   useEffect(() => {
     if (!shiftStart) return;
@@ -374,24 +352,6 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
     return () => unsubscribe();
   }, [activeShiftId]);
 
-  // Display Name Logic
-  useEffect(() => {
-    let isMounted = true;
-    (async () => {
-      try {
-        const qMe = query(collection(db, 'users'), where('email', '==', user.email));
-        const snap = await getDocs(qMe);
-        if (!snap.empty) {
-          setStaffDisplayName(snap.docs[0].data().fullName || snap.docs[0].data().name || snap.docs[0].data().displayName || user.displayName || user.email);
-        } else {
-          setStaffDisplayName(user.displayName || user.email);
-        }
-      } catch (err) {
-        console.error("Error fetching display name:", err);
-      }
-    })();
-    return () => { isMounted = false; };
-  }, [user?.email]);
 
   const handleLogoutOnly = () => {
     auth.signOut();
@@ -1089,11 +1049,9 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
               <img src={logo} alt="logo" width={24} height={24} />
             )}
             <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-              {systemSettings.storeName && (
-                <Typography variant="subtitle2" sx={{ fontWeight: 'bold', lineHeight: 1.2, color: 'text.primary', letterSpacing: '0.02em' }}>
-                  {systemSettings.storeName}
-                </Typography>
-              )}
+              <Typography variant="subtitle2" sx={{ fontWeight: 'bold', lineHeight: 1.2, color: 'text.primary', letterSpacing: '0.02em' }}>
+                {systemSettings.storeName}
+              </Typography>
               <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1, fontSize: '0.7rem', opacity: 0.8 }}>
                 {staffDisplayName} • {shiftPeriod}
               </Typography>

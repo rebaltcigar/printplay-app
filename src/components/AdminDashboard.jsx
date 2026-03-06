@@ -45,9 +45,8 @@ import MeetingRoomIcon from '@mui/icons-material/MeetingRoom';
 import DrawerDialog from "./DrawerDialog";
 import { openDrawer } from "../utils/drawerService";
 
-import { auth, db } from "../firebase";
+import { auth } from "../firebase";
 import { signOut } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
 
 import Shifts from "./Shifts";
 import ExpenseManagement from "./ExpenseManagement";
@@ -62,7 +61,7 @@ import Reports from "./Reports";
 import OrderManagement from "./OrderManagement";
 import Schedule from "./admin/Schedule";
 
-export default function AdminDashboard({ user, onLogout }) {
+export default function AdminDashboard({ user, onLogout, appSettings }) {
   // Router hooks
   const navigate = useNavigate();
   const location = useLocation();
@@ -72,26 +71,10 @@ export default function AdminDashboard({ user, onLogout }) {
   const [cashDrawerOpen, setCashDrawerOpen] = useState(false);
 
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
-  const [storeSettings, setStoreSettings] = useState({ storeName: null, logoUrl: '/icon.ico' });
-
-  useEffect(() => {
-    const fetchBranding = async () => {
-      try {
-        const docRef = doc(db, 'settings', 'config');
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          setStoreSettings({
-            storeName: data.storeName || 'PrintPlay',
-            logoUrl: data.logoUrl || '/icon.ico'
-          });
-        }
-      } catch (e) {
-        console.error("Error fetching branding:", e);
-      }
-    };
-    fetchBranding();
-  }, []);
+  const storeSettings = {
+    storeName: appSettings?.storeName || 'Kunek',
+    logoUrl: appSettings?.logoUrl || '/icon.ico',
+  };
 
   const [confirmDialog, setConfirmDialog] = useState({
     open: false,
@@ -318,11 +301,9 @@ export default function AdminDashboard({ user, onLogout }) {
                 alt="logo"
                 sx={{ width: 32, height: 32, borderRadius: "6px" }}
               />
-              {storeSettings.storeName && (
-                <Typography variant="h6" sx={{ fontWeight: 600, color: '#fff' }}>
-                  {storeSettings.storeName}
-                </Typography>
-              )}
+              <Typography variant="h6" sx={{ fontWeight: 600, color: '#fff' }}>
+                {storeSettings.storeName}
+              </Typography>
             </Box>
 
             {devMode && (

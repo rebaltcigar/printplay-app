@@ -13,6 +13,24 @@
 
 ---
 
+## [0.2.2] — 2026-03-06
+
+### Changed
+
+- **Kunek rebranding** — All hardcoded "PrintPlay" / "Print+Play" strings removed from the codebase. Store name, logo, and branding are now strictly data-driven from `settings/config`. Fallbacks to "Kunek" (not "PrintPlay") everywhere. Sets the foundation for multi-tenancy.
+- **App-level settings bootstrap** — `settings/config` is now fetched once in `App.jsx` at startup, logo preloaded into browser cache, and passed as `appSettings` prop to POS and AdminDashboard. Eliminates per-component settings fetches and flash of wrong branding.
+- **Staff display name bootstrap** — Staff full name resolved from the user doc already fetched during auth bootstrap. Eliminates a separate Firestore query in POS on every load.
+- **Shift start time bootstrap** — Shift `startTime` extracted from the shift doc already fetched during auth bootstrap and passed to POS as a prop. Shift timer initializes on first render with the correct elapsed time — no 1-second flash delay.
+- **`package.json` name** — Renamed from `print-play-app` to `kunek`.
+- **`index.html` title** — Updated to "Kunek".
+
+### Fixed
+
+- **Branding flash on POS and Admin headers** — Store name and logo no longer flash to fallback values on load. The existing app-level loading screen now gates all routes until settings (including logo image) are fully loaded.
+- **Shift timer flash** — Timer no longer pops in 1 second after POS renders. Elapsed time is computed synchronously on mount from the bootstrapped shift start time.
+
+---
+
 ## [0.2.1] — 2026-03-06
 
 ### Added

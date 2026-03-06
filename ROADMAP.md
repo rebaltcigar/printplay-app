@@ -1,7 +1,7 @@
 # Kunek — Product Roadmap
 
 > Living document. "Kunek" is the platform. "PrintPlay" is the first business (tenant) running on it.
-> Updated: 2026-03-06
+> Updated: 2026-03-06 (v0.2.2)
 
 ---
 
@@ -9,11 +9,12 @@
 
 | Version | Branch | Status |
 |---------|--------|--------|
-| v0.2.1 | `feature/catalog-foundation` | Merging → `main` |
+| v0.2.2 | `feature/rebrand` | Merging → `main` |
+| v0.2.1 | `feature/catalog-foundation` | Merged |
 | v0.2.0 | `feature/catalog-foundation` | Merged |
 | v0.1.32 | `feature/next-dev-2` | Merged |
 
-## Up Next — `feature/rebrand`
+## Up Next — `feature/invoice-management`
 
 ---
 
@@ -54,17 +55,17 @@
   *(forward-only — old transactions unaffected)*
 - Begin breaking `POS.jsx` (~1700 lines) into focused sub-components
 
-### v0.2.2 — Kunek Rebranding ← **NEXT**
+### v0.2.2 — Kunek Rebranding ✓
 **Goal**: Platform shell says "Kunek". Business branding is 100% dynamic from tenant settings. Zero hardcoded brand strings in code.
 
-- Rename `package.json`, `index.html` title, window/tab title to "Kunek"
-- Replace favicon/manifest with Kunek platform assets
-- Audit and remove all hardcoded "PrintPlay" / "Print+Play" references in JSX/JS
-- `Login.jsx`, `Dashboard.jsx`, `POS.jsx` — branding strictly from `settings/config`
-- `storeName`, `logoUrl` fallback to "Kunek" defaults (not "PrintPlay")
-- This sets the stage for multi-tenancy — all branding is already data-driven
+- Renamed `package.json`, `index.html` title to "Kunek"
+- Removed all hardcoded "PrintPlay" / "Print+Play" references from JSX/JS
+- `storeName`, `logoUrl` fallback to "Kunek" defaults everywhere
+- Settings fetched once at app level (App.jsx), passed as props — no per-component fetch
+- Logo preloaded before app renders — no image flash
+- Staff display name and shift start time bootstrapped from auth — no POS-level fetches
 
-### v0.2.3 — Invoice & Charge Management
+### v0.2.3 — Invoice & Charge Management ← **NEXT**
 **Goal**: Replace the crude `New Debt` / `Paid Debt` system with proper receivables — invoices, charge accounts, payment tracking.
 
 ### v0.2.4 — POS Automated Tests
@@ -236,6 +237,21 @@ invoices/{id}
 | Biometric staff auth (mobile) | Staff approves sensitive actions from their phone via WebAuthn/Passkeys. |
 | Sync strategy refinements | Remove console-spamming retries, manual sync controls, better offline UI. |
 | **Game Launcher** | Integrated game launcher for internet cafe PCs. Ties into the PC Timer module (v0.6.0). Admin-managed game library, per-game session tracking. Scope to be designed alongside v0.6.0 PC Timer work. |
+
+---
+
+## Caching Strategy (Backlog)
+
+Firestore reads on mount (settings/config, services list, etc.) cause brief UI delays and potential flashes before data loads. Options to explore:
+
+| Approach | What it solves | Notes |
+|----------|---------------|-------|
+| `localStorage` cache for `settings/config` | Eliminates storeName/logoUrl flash on every page load | Read cache instantly on mount, refresh from Firestore in background (stale-while-revalidate). Invalidate on settings save. |
+| `localStorage` cache for `services` list | Faster POS tile grid on first paint | Same pattern. Services change infrequently. |
+| React Context / singleton fetch | Avoid duplicate `settings/config` reads across components (Admin header, POS header, Receipt, Invoice, Paystub all fetch separately) | Single fetch at App level, pass down via Context |
+| Firestore persistence (enableIndexedDbPersistence) | Full offline support + instant cache on reload | Firestore SDK feature — works automatically once enabled. Most comprehensive fix. |
+
+**Recommended order:** Context singleton first (eliminates duplicate reads cheaply) → localStorage stale-while-revalidate → Firestore persistence when offline mode is needed (v0.4+).
 
 ---
 
