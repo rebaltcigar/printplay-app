@@ -105,8 +105,8 @@ export function AnalyticsProvider({ children }) {
         fetchData();
 
         return () => {
-            unsubTx();
-            unsubShifts();
+            try { if (unsubTx) unsubTx(); } catch (e) { console.warn("Firebase unsub err:", e); }
+            try { if (unsubShifts) unsubShifts(); } catch (e) { console.warn("Firebase unsub err:", e); }
         };
 
     }, [r.startUtc, r.endUtc, preset]); // Re-run when range changes

@@ -42,9 +42,9 @@ import AppsIcon from '@mui/icons-material/Apps';
 // Components
 import OrderCustomerDialog from './OrderCustomerDialog';
 import CustomerDialog from './CustomerDialog';
-import StaffDebtLookupDialog from './StaffDebtLookupDialog';
 import CheckoutDialog from './CheckoutDialog';
 import ExpenseDialog from './ExpenseDialog';
+import POSInvoiceLookupDrawer from './pos/POSInvoiceLookupDrawer';
 import DrawerDialog from './DrawerDialog';
 import EndShiftDialog from './EndShiftDialog';
 import POSSidebar from './pos/POSSidebar';
@@ -67,6 +67,7 @@ import {
 // Helpers
 import { openDrawer } from '../utils/drawerService';
 import { generateOrderNumber, createOrderObject } from '../utils/orderService';
+import { createInvoice } from '../utils/invoiceService';
 
 import { generateDisplayId, generateBatchIds } from '../utils/idGenerator';
 import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice } from '../utils/printHelper';
@@ -92,11 +93,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
 
   // Services and staff from shared hooks (replaces manual useEffect blocks)
   const { serviceList, expenseTypes: expenseServiceItems, posItems, variantMap } = usePOSServices();
-  // POS legacy uses a combo list: serviceList + 'Paid Debt'
-  const services = [
-    ...serviceList,
-    { id: 'pd', serviceName: 'Paid Debt' },
-  ];
+  const services = serviceList;
   const { staffOptions } = useStaffList();
 
   // --- LEGACY INPUT STATE (Left Panel) ---
@@ -134,7 +131,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
   const [openEndShiftDialog, setOpenEndShiftDialog] = useState(false);
   const [openCustomerDialog, setOpenCustomerDialog] = useState(false);
   const [openOrderCustomerDialog, setOpenOrderCustomerDialog] = useState(false);
-  const [openDebtDialog, setOpenDebtDialog] = useState(false);
+  const [openInvoiceLookup, setOpenInvoiceLookup] = useState(false);
   const [openCheckout, setOpenCheckout] = useState(false);
   const [openExpense, setOpenExpense] = useState(false); // For header button
 
@@ -200,7 +197,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
   // --- UI STATE ---
   const [manualEntryOpen, setManualEntryOpen] = useState(false);
   const [gridTab, setGridTab] = useState(0); // 0=Sale, 1=PC Rental
-  const [posView, setPosView] = useState(() => localStorage.getItem('kunek_posView') || 'legacy');
+  const [posView, setPosView] = useState('legacy'); // Changed from localStorage to enforce Classic as default on load
   const [menuAnchor, setMenuAnchor] = useState(null);
   const [selectedTransactions, setSelectedTransactions] = useState([]);
   const [shiftOrders, setShiftOrders] = useState([]);
@@ -391,9 +388,6 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
       setExpenseType('');
       setExpenseStaffId('');
     }
-    if (val !== 'New Debt' && val !== 'Paid Debt') {
-      setSelectedCustomer(null);
-    }
 
     // UX: Auto-focus Quantity after selecting item
     if (val) {
@@ -460,51 +454,41 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
     if (isNaN(qtyNum) || qtyNum <= 0) return showSnackbar("Invalid quantity.", "error");
     if (isNaN(priceNum) || priceNum < 0) return showSnackbar("Invalid price.", "error");
 
-    // A. DIRECT DATABASE WRITES (Expenses & Debts)
-    if (item === 'Expenses' || item === 'New Debt' || item === 'Paid Debt') {
+    // A. DIRECT DATABASE WRITES (Expenses)
+    if (item === 'Expenses') {
 
       // Expense Validation
-      if (item === 'Expenses') {
-        if (!expenseType) return showSnackbar("Select Expense Type.", "error");
+      if (!expenseType) return showSnackbar("Select Expense Type.", "error");
 
-        // Validation with Admin Override
-        if (expenseType !== 'Salary Advance' && !isAdmin && !notes) {
-          return showSnackbar("Notes required for expenses.", "error");
-        }
+      // Validation with Admin Override
+      if (expenseType !== 'Salary Advance' && !isAdmin && !notes) {
+        return showSnackbar("Notes required for expenses.", "error");
+      }
 
-        if ((expenseType === 'Salary' || expenseType === 'Salary Advance') && !expenseStaffId) return showSnackbar("Select Staff.", "error");
-      }
-      // Debt Validation
-      if ((item === 'New Debt' || item === 'Paid Debt') && !selectedCustomer) {
-        return showSnackbar("Select a Customer for debt.", "error");
-      }
+      if ((expenseType === 'Salary' || expenseType === 'Salary Advance') && !expenseStaffId) return showSnackbar("Select Staff.", "error");
 
       setIsLoading(true); // START LOADING
       try {
-        const displayId = item === 'Expenses'
-          ? await generateDisplayId("expenses", "EXP")
-          : await generateDisplayId("transactions", "TX"); // For Debts
+        const displayId = await generateDisplayId("expenses", "EXP");
 
         await addDoc(collection(db, 'transactions'), {
           displayId,
           item,
-          expenseType: item === 'Expenses' ? expenseType : null,
+          expenseType,
           expenseStaffId: expenseStaffId || null,
           expenseStaffName: expenseStaffName || null,
           quantity: qtyNum,
           price: priceNum,
           total: qtyNum * priceNum,
           notes: notes || '',
-          customerId: selectedCustomer?.id || null,
-          customerName: selectedCustomer?.fullName || null,
           timestamp: serverTimestamp(),
           staffEmail: user.email,
           shiftId: activeShiftId,
-          category: item === 'Expenses' ? 'Expense' : 'Debt',
+          category: 'Expense',
           isDeleted: false
         });
         setItem(''); setQuantity(''); setPrice(''); setNotes('');
-        setExpenseType(''); setSelectedCustomer(null);
+        setExpenseType('');
         showSnackbar(`${item} recorded successfully.`);
       } catch (e) {
         console.error(e);
@@ -630,7 +614,15 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
         )
       };
 
-      await addDoc(collection(db, 'orders'), fullOrder);
+      const orderRef = await addDoc(collection(db, 'orders'), fullOrder);
+
+      // Create AR invoice when payment method is Charge
+      if (paymentData.paymentMethod === 'Charge') {
+        await createInvoice(
+          { ...fullOrder, id: orderRef.id },
+          { staffEmail: user.email, shiftId: activeShiftId, dueDate: paymentData.dueDate || null }
+        );
+      }
 
       // Generate Batch IDs for line items
       const txIds = await generateBatchIds("transactions", "TX", currentOrder.items.length);
@@ -1089,7 +1081,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
           <MuiMenu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)}>
             <MenuItem onClick={() => { setMenuAnchor(null); setOpenHistoryDrawer(true); }}>Logs</MenuItem>
             <MenuItem onClick={() => { setMenuAnchor(null); setOpenExpense(true); }}>+ Expense</MenuItem>
-            <MenuItem onClick={() => { setMenuAnchor(null); setOpenDebtDialog(true); }}>Debt Log</MenuItem>
+            <MenuItem onClick={() => { setMenuAnchor(null); setOpenInvoiceLookup(true); }}>Invoices / Receivables</MenuItem>
             <MenuItem onClick={() => { setMenuAnchor(null); setOpenEndShiftDialog(true); }}>End Shift</MenuItem>
           </MuiMenu>
         </Toolbar>
@@ -1114,7 +1106,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
         user={user}
         onLogout={handleLogoutOnly}
         showSnackbar={showSnackbar}
-        onOpenDebt={() => setOpenDebtDialog(true)}
+        onOpenInvoices={() => setOpenInvoiceLookup(true)}
       />
 
       {/* --- REDESIGNED LAYOUT: GRID + CART --- */}
@@ -1211,7 +1203,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
                     sx={{ flex: 3 }}
                     size="small"
                     freeSolo
-                    options={[...new Set([...services.map(s => s.serviceName), "Expenses", "New Debt", "Paid Debt"])]}
+                    options={[...new Set([...services.map(s => s.serviceName), "Expenses"])]}
                     value={item}
                     onChange={(e, newVal) => handleItemChange({ target: { value: newVal || '' } })}
                     renderInput={(params) => <TextField {...params} label="Item / Service" placeholder="Search or type..." />}
@@ -1267,92 +1259,92 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
                   : <ExpandMoreIcon fontSize="small" sx={{ opacity: 0.4 }} />}
               </Box>
               <Collapse in={manualEntryOpen}>
-              <Box p={1} sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                {/* CONDITIONAL EXTRA FIELDS (Expenses/Debt) */}
-                {item === 'Expenses' && (
-                  <Stack direction="row" spacing={1}>
-                    <FormControl fullWidth size="small">
-                      <InputLabel>Type</InputLabel>
-                      <Select value={expenseType} label="Type" onChange={e => setExpenseType(e.target.value)}>
-                        {expenseServiceItems.map(e => <MenuItem key={e.id} value={e.serviceName}>{e.serviceName}</MenuItem>)}
-                      </Select>
-                    </FormControl>
-                    {(expenseType === 'Salary' || expenseType === 'Salary Advance') && (
+                <Box p={1} sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  {/* CONDITIONAL EXTRA FIELDS (Expenses/Debt) */}
+                  {item === 'Expenses' && (
+                    <Stack direction="row" spacing={1}>
                       <FormControl fullWidth size="small">
-                        <InputLabel>Staff</InputLabel>
-                        <Select value={expenseStaffEmail} label="Staff" onChange={e => {
-                          const s = staffOptions.find(o => o.email === e.target.value);
-                          if (s) { setExpenseStaffEmail(s.email); setExpenseStaffId(s.id); }
-                        }}>
-                          {staffOptions.map(s => <MenuItem key={s.id} value={s.email}>{s.fullName}</MenuItem>)}
+                        <InputLabel>Type</InputLabel>
+                        <Select value={expenseType} label="Type" onChange={e => setExpenseType(e.target.value)}>
+                          {expenseServiceItems.map(e => <MenuItem key={e.id} value={e.serviceName}>{e.serviceName}</MenuItem>)}
                         </Select>
                       </FormControl>
-                    )}
+                      {(expenseType === 'Salary' || expenseType === 'Salary Advance') && (
+                        <FormControl fullWidth size="small">
+                          <InputLabel>Staff</InputLabel>
+                          <Select value={expenseStaffEmail} label="Staff" onChange={e => {
+                            const s = staffOptions.find(o => o.email === e.target.value);
+                            if (s) { setExpenseStaffEmail(s.email); setExpenseStaffId(s.id); }
+                          }}>
+                            {staffOptions.map(s => <MenuItem key={s.id} value={s.email}>{s.fullName}</MenuItem>)}
+                          </Select>
+                        </FormControl>
+                      )}
+                    </Stack>
+                  )}
+
+                  {(item === 'New Debt' || item === 'Paid Debt') && (
+                    <Box sx={{ border: '1px dashed', borderColor: 'divider', p: 1, borderRadius: 1 }}>
+                      {selectedCustomer ? (
+                        <Box display="flex" justifyContent="space-between" alignItems="center">
+                          <Typography variant="body2" fontWeight="bold">{selectedCustomer.fullName}</Typography>
+                          <IconButton size="small" onClick={() => setSelectedCustomer(null)}><ClearIcon fontSize="small" /></IconButton>
+                        </Box>
+                      ) : (
+                        <Button fullWidth size="small" variant="outlined" onClick={() => setOpenCustomerDialog(true)}>Select Customer</Button>
+                      )}
+                    </Box>
+                  )}
+
+                  {/* MAIN MANUAL INPUT ROW */}
+                  <Stack direction="row" spacing={1} alignItems="flex-start">
+                    <Autocomplete
+                      sx={{ flex: 3 }}
+                      size="small"
+                      freeSolo
+                      options={[...new Set([
+                        ...services.map(s => s.serviceName),
+                        "Expenses"
+                      ])]}
+                      value={item}
+                      onChange={(e, newVal) => handleItemChange({ target: { value: newVal } })}
+                      renderInput={(params) => <TextField {...params} label="Item / Service" placeholder="Keyboard Search" />}
+                    />
+
+                    <TextField
+                      label="Qty"
+                      type="number"
+                      size="small"
+                      inputRef={quantityInputRef}
+                      sx={{ flex: 1.5 }}
+                      value={quantity}
+                      onChange={e => setQuantity(e.target.value)}
+                      disabled={!item}
+                      onKeyDown={(e) => e.key === 'Enter' && handleAddEntry()}
+                    />
+                    <TextField
+                      label="Price"
+                      type="number"
+                      size="small"
+                      inputRef={priceInputRef}
+                      sx={{ flex: 1.5 }}
+                      value={price}
+                      onChange={e => setPrice(e.target.value)}
+                      disabled={!item}
+                      onKeyDown={(e) => e.key === 'Enter' && handleAddEntry()}
+                    />
+
+                    <Button
+                      variant="outlined"
+                      size="large"
+                      onClick={handleAddEntry}
+                      sx={{ flex: 1.5, height: 40, whiteSpace: 'nowrap', minWidth: 'auto', px: 1 }}
+                      disabled={!item || !quantity || !price}
+                    >
+                      {item === 'Expenses' || isDebtItem ? "Log" : "Add"}
+                    </Button>
                   </Stack>
-                )}
-
-                {(item === 'New Debt' || item === 'Paid Debt') && (
-                  <Box sx={{ border: '1px dashed', borderColor: 'divider', p: 1, borderRadius: 1 }}>
-                    {selectedCustomer ? (
-                      <Box display="flex" justifyContent="space-between" alignItems="center">
-                        <Typography variant="body2" fontWeight="bold">{selectedCustomer.fullName}</Typography>
-                        <IconButton size="small" onClick={() => setSelectedCustomer(null)}><ClearIcon fontSize="small" /></IconButton>
-                      </Box>
-                    ) : (
-                      <Button fullWidth size="small" variant="outlined" onClick={() => setOpenCustomerDialog(true)}>Select Customer</Button>
-                    )}
-                  </Box>
-                )}
-
-                {/* MAIN MANUAL INPUT ROW */}
-                <Stack direction="row" spacing={1} alignItems="flex-start">
-                  <Autocomplete
-                    sx={{ flex: 3 }}
-                    size="small"
-                    freeSolo
-                    options={[...new Set([
-                      ...services.map(s => s.serviceName),
-                      "Expenses", "New Debt", "Paid Debt"
-                    ])]}
-                    value={item}
-                    onChange={(e, newVal) => handleItemChange({ target: { value: newVal } })}
-                    renderInput={(params) => <TextField {...params} label="Item / Service" placeholder="Keyboard Search" />}
-                  />
-
-                  <TextField
-                    label="Qty"
-                    type="number"
-                    size="small"
-                    inputRef={quantityInputRef}
-                    sx={{ flex: 1.5 }}
-                    value={quantity}
-                    onChange={e => setQuantity(e.target.value)}
-                    disabled={!item}
-                    onKeyDown={(e) => e.key === 'Enter' && handleAddEntry()}
-                  />
-                  <TextField
-                    label="Price"
-                    type="number"
-                    size="small"
-                    inputRef={priceInputRef}
-                    sx={{ flex: 1.5 }}
-                    value={price}
-                    onChange={e => setPrice(e.target.value)}
-                    disabled={!item}
-                    onKeyDown={(e) => e.key === 'Enter' && handleAddEntry()}
-                  />
-
-                  <Button
-                    variant="outlined"
-                    size="large"
-                    onClick={handleAddEntry}
-                    sx={{ flex: 1.5, height: 40, whiteSpace: 'nowrap', minWidth: 'auto', px: 1 }}
-                    disabled={!item || !quantity || !price}
-                  >
-                    {item === 'Expenses' || isDebtItem ? "Log" : "Add"}
-                  </Button>
-                </Stack>
-              </Box>
+                </Box>
               </Collapse>
             </Box>}
 
@@ -1534,8 +1526,15 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
         total={currentTotal}
         onConfirm={currentOrder.isExisting ? actuallyUpdateOrder : handleCheckout}
         customer={currentOrder.customer}
+        defaultDueDays={systemSettings.invoiceDueDays || 7}
       />
-      <StaffDebtLookupDialog open={openDebtDialog} onClose={() => setOpenDebtDialog(false)} />
+      <POSInvoiceLookupDrawer
+        open={openInvoiceLookup}
+        onClose={() => setOpenInvoiceLookup(false)}
+        user={user}
+        showSnackbar={showSnackbar}
+        activeShiftId={activeShiftId}
+      />
 
       {/* Customer Dialog (For Debt Log) */}
       <CustomerDialog
@@ -1648,7 +1647,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
                   {shiftPeriod} Shift — {new Date().toLocaleDateString()}
                 </Typography>
               </Box>
-              <Typography variant="caption" color="gray" display="block" flexShrink={0} fontWeight="bold">SALES</Typography>
+              <Typography variant="caption" color="text.primary" display="block" flexShrink={0} fontWeight="bold">SALES</Typography>
               <Box display="flex" justifyContent="space-between" pl={1}>
                 <Typography sx={{ fontSize: '0.75rem' }}>PC Rental</Typography>
                 <Typography sx={{ fontSize: '0.75rem' }}>{currency(endShiftReceiptData?.pcRentalTotal)}</Typography>
@@ -1666,8 +1665,9 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
                   {currency((endShiftReceiptData?.servicesTotal || 0) + (endShiftReceiptData?.pcRentalTotal || 0))}
                 </Typography>
               </Box>
+              {/* AR Payments moved to bottom Collections section */}
               <Box mt={1}>
-                <Typography variant="caption" color="gray" display="block" fontWeight="bold">EXPENSES</Typography>
+                <Typography variant="caption" color="text.primary" display="block" fontWeight="bold">EXPENSES</Typography>
                 {endShiftReceiptData?.expensesBreakdown?.map(([label, amt]) => (
                   <Box key={label} display="flex" justifyContent="space-between" pl={1}>
                     <Typography sx={{ fontSize: '0.75rem' }}>{label}</Typography>
@@ -1680,6 +1680,28 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
                   <Typography variant="body2" fontWeight="bold">{currency(endShiftReceiptData?.expensesTotal)}</Typography>
                 </Box>
               </Box>
+              {endShiftReceiptData?.arPaymentsTotal > 0 && (
+                <Box mt={1}>
+                  <Typography variant="caption" color="gray" display="block" fontWeight="bold">COLLECTIONS</Typography>
+                  {endShiftReceiptData.arCashTotal > 0 && (
+                    <Box display="flex" justifyContent="space-between" pl={1}>
+                      <Typography sx={{ fontSize: '0.75rem' }}>AR Payments (Cash)</Typography>
+                      <Typography sx={{ fontSize: '0.75rem' }}>{currency(endShiftReceiptData.arCashTotal)}</Typography>
+                    </Box>
+                  )}
+                  {endShiftReceiptData.arGcashTotal > 0 && (
+                    <Box display="flex" justifyContent="space-between" pl={1}>
+                      <Typography sx={{ fontSize: '0.75rem' }}>AR Payments (GCash)</Typography>
+                      <Typography sx={{ fontSize: '0.75rem' }}>{currency(endShiftReceiptData.arGcashTotal)}</Typography>
+                    </Box>
+                  )}
+                  <Divider sx={{ my: 0.5, borderStyle: 'dashed', borderColor: '#555' }} />
+                  <Box display="flex" justifyContent="space-between">
+                    <Typography variant="body2" fontWeight="bold">Total Collections</Typography>
+                    <Typography variant="body2" fontWeight="bold">{currency(endShiftReceiptData.arPaymentsTotal)}</Typography>
+                  </Box>
+                </Box>
+              )}
               <Divider sx={{ borderColor: '#333', my: 2 }} />
               <Box display="flex" justifyContent="space-between" alignItems="center" mt={1}>
                 <Typography variant="h6" fontWeight="900">SYSTEM TOTAL</Typography>
@@ -1687,7 +1709,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
               </Box>
               <Divider sx={{ borderColor: '#333', my: 2 }} />
               <Box mt={1}>
-                <Typography variant="caption" color="gray" display="block" mb={0.5} fontWeight="bold">PAYMENT BREAKDOWN</Typography>
+                <Typography variant="caption" color="text.primary" display="block" mb={0.5} fontWeight="bold">PAYMENT BREAKDOWN</Typography>
                 <Box display="flex" justifyContent="space-between" pl={1}>
                   <Typography variant="body2">Cash</Typography>
                   <Typography variant="body2">{currency(endShiftReceiptData?.breakdown?.cash)}</Typography>
@@ -1727,7 +1749,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
           <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
 
             {/* SALES */}
-            <Typography variant="caption" color="gray" display="block" flexShrink={0} fontWeight="bold">SALES</Typography>
+            <Typography variant="caption" color="text.primary" display="block" flexShrink={0} fontWeight="bold">SALES</Typography>
             <Box display="flex" justifyContent="space-between" pl={1}>
               <Typography sx={{ fontSize: '0.75rem' }}>PC Rental</Typography>
               <Typography sx={{ fontSize: '0.75rem' }}>{currency(endShiftReceiptData?.pcRentalTotal)}</Typography>
@@ -1748,9 +1770,11 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
               </Typography>
             </Box>
 
+            {/* AR Payments moved to bottom Collections section */}
+
             {/* EXPENSES */}
-            <Box mt={1}>
-              <Typography variant="caption" color="gray" display="block" fontWeight="bold">EXPENSES</Typography>
+            <Box mt={2}>
+              <Typography variant="caption" color="text.primary" display="block" fontWeight="bold">EXPENSES</Typography>
               {endShiftReceiptData?.expensesBreakdown?.length === 0 && (
                 <Typography variant="caption" color="text.secondary" pl={1}>No expenses</Typography>
               )}
@@ -1766,6 +1790,30 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
                 <Typography variant="body2" fontWeight="bold">{currency(endShiftReceiptData?.expensesTotal)}</Typography>
               </Box>
             </Box>
+
+            {/* COLLECTIONS */}
+            {endShiftReceiptData?.arPaymentsTotal > 0 && (
+              <Box mt={2}>
+                <Typography variant="caption" color="text.primary" display="block" fontWeight="bold">COLLECTIONS</Typography>
+                {endShiftReceiptData.arCashTotal > 0 && (
+                  <Box display="flex" justifyContent="space-between" pl={1}>
+                    <Typography sx={{ fontSize: '0.75rem' }}>AR Payments (Cash)</Typography>
+                    <Typography sx={{ fontSize: '0.75rem' }}>{currency(endShiftReceiptData.arCashTotal)}</Typography>
+                  </Box>
+                )}
+                {endShiftReceiptData.arGcashTotal > 0 && (
+                  <Box display="flex" justifyContent="space-between" pl={1}>
+                    <Typography sx={{ fontSize: '0.75rem' }}>AR Payments (GCash)</Typography>
+                    <Typography sx={{ fontSize: '0.75rem' }}>{currency(endShiftReceiptData.arGcashTotal)}</Typography>
+                  </Box>
+                )}
+                <Divider sx={{ my: 0.5, borderStyle: 'dashed', borderColor: '#555' }} />
+                <Box display="flex" justifyContent="space-between">
+                  <Typography variant="body2" fontWeight="bold">Total Collections</Typography>
+                  <Typography variant="body2" fontWeight="bold">{currency(endShiftReceiptData.arPaymentsTotal)}</Typography>
+                </Box>
+              </Box>
+            )}
           </Box>
 
           {/* ANCHORED FOOTER: TOTALS */}
@@ -1781,7 +1829,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
 
             {/* SECTION 4: PAYMENT BREAKDOWN */}
             <Box mt={1}>
-              <Typography variant="caption" color="gray" display="block" mb={0.5} fontWeight="bold">PAYMENT BREAKDOWN</Typography>
+              <Typography variant="caption" color="text.primary" display="block" mb={0.5} fontWeight="bold">PAYMENT BREAKDOWN</Typography>
               <Box display="flex" justifyContent="space-between" pl={1}>
                 <Typography variant="body2">Cash</Typography>
                 <Typography variant="body2">{currency(endShiftReceiptData?.breakdown?.cash)}</Typography>

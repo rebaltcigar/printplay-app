@@ -4,6 +4,46 @@ Completed versions archived from ROADMAP.md. CHANGELOG.md has the authoritative 
 
 ---
 
+## v0.3.0 — Invoice & Charge Management (2026-03-07)
+Branch: `feature/invoice-management`
+
+**Goal**: Replace the crude `New Debt` / `Paid Debt` system with proper receivables — invoices, charge accounts, and payment tracking.
+
+**Why**: The current debt system loses detail, has no status tracking, and doesn't support partial payments or invoice documents.
+
+**New concept: Charge / Invoice**
+- At checkout, cashier chooses: **Pay Now** (existing flow) or **Charge to Account** (creates an invoice)
+- Invoices have status: `Draft → Sent → Partial → Paid → Overdue`
+- Invoices linked to a customer; partial payments supported
+
+**New `invoices` collection:**
+```
+invoices/{id}
+  orderId: string
+  customerId: string
+  customerName: string
+  items: []
+  subtotal, total, amountPaid, balance: number
+  status: 'draft'|'sent'|'partial'|'paid'|'overdue'
+  dueDate: timestamp
+  notes: string
+  createdAt: timestamp
+  staffEmail: string
+  shiftId: string
+  payments: [{ amount, method, date, staffEmail, note }]
+```
+
+**Features:**
+- POS checkout: "Charge to Account" option creates invoice instead of direct payment
+- Customer profile: invoice history, outstanding balance
+- Admin: invoice list with status filters, bulk actions
+- Record payment against invoice (full or partial)
+- Invoice PDF / print (extends existing `ServiceInvoice` component)
+- Dashboard widget: total outstanding receivables
+- Deprecate `New Debt` / `Paid Debt` — old transactions remain readable, new flow uses invoices
+
+---
+
 ## v0.2.2 — Kunek Rebranding (2026-03-06)
 Branch: `feature/rebrand`
 

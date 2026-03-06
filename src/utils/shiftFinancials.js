@@ -107,6 +107,9 @@ export const tallyPaymentMethods = (saleTxs = []) => {
  *   systemTotal:      number,   // servicesTotal + pcRentalTotal - expensesTotal
  *   expectedCash:     number,   // totalCash - expensesTotal
  *   loggedPcNonCash:  number,   // GCash + Charge logged as PC Rental
+ *   arPaymentsTotal:  number,   // Total AR Payments collected this shift (NOT counted as sales)
+ *   arCashTotal:      number,   // Total AR Payments collected in Cash
+ *   arGcashTotal:     number,   // Total AR Payments collected in GCash
  * }}
  */
 export const computeShiftFinancials = (transactions = [], pcRentalTotal = 0, pcRentalServiceId = null) => {
@@ -126,6 +129,9 @@ export const computeShiftFinancials = (transactions = [], pcRentalTotal = 0, pcR
     // --- Regular sales and expenses ---
     let servicesTotal = 0;
     let expensesTotal = 0;
+    let arPaymentsTotal = 0;
+    let arCashTotal = 0;
+    let arGcashTotal = 0;
     let regularCash = 0, regularGcash = 0, regularAr = 0;
     const salesMap = new Map();
     const expensesMap = new Map();
@@ -138,6 +144,17 @@ export const computeShiftFinancials = (transactions = [], pcRentalTotal = 0, pcR
                 ? `Expense: ${tx.expenseType || 'Other'}`
                 : 'New Debt';
             expensesMap.set(key, (expensesMap.get(key) || 0) + amt);
+        } else if (tx.item === 'AR Payment') {
+            arPaymentsTotal += amt;
+            if (tx.paymentMethod === 'GCash') {
+                regularGcash += amt;
+                arGcashTotal += amt;
+            } else if (tx.paymentMethod === 'Charge') {
+                regularAr += amt; // Should rarely happen for AR Payment
+            } else {
+                regularCash += amt;
+                arCashTotal += amt;
+            }
         } else {
             servicesTotal += amt;
             salesMap.set(tx.item || '—', (salesMap.get(tx.item || '—') || 0) + amt);
@@ -167,6 +184,9 @@ export const computeShiftFinancials = (transactions = [], pcRentalTotal = 0, pcR
         systemTotal,
         expectedCash,
         loggedPcNonCash,
+        arPaymentsTotal,
+        arCashTotal: Number(arCashTotal.toFixed(2)),
+        arGcashTotal: Number(arGcashTotal.toFixed(2)),
     };
 };
 
@@ -222,6 +242,7 @@ export const computeExpectedCash = (shift, txAgg = {}) => {
  *   gcashSales:    number,
  *   arSales:       number,
  *   pcNonCashSales: number,  // GCash + Charge logged as PC Rental (NOT cash in drawer)
+ *   arPayments:    number,  // Collections of old receivables (NOT sales)
  * }}
  */
 export const aggregateShiftTransactions = (txList = [], serviceMeta = [], pcRentalServiceId = null) => {
@@ -239,6 +260,7 @@ export const aggregateShiftTransactions = (txList = [], serviceMeta = [], pcRent
     let cashSales = 0, gcashSales = 0, arSales = 0;
     // Track non-cash PC Rental so expectedCash is not inflated
     let pcNonCashSales = 0;
+    let arPayments = 0;
 
     for (const tx of txList) {
         if (!tx || tx.isDeleted === true) continue;
@@ -268,11 +290,18 @@ export const aggregateShiftTransactions = (txList = [], serviceMeta = [], pcRent
             tx.item ||
             'Unknown';
 
-        serviceTotals[displayName] = (serviceTotals[displayName] || 0) + amt;
+        if (itemName !== 'ar payment') {
+            serviceTotals[displayName] = (serviceTotals[displayName] || 0) + amt;
+        }
 
         if (normalize(cat) === 'sale' || normalize(cat) === 'debit') {
-            if (!isPcRental) {
+            const isArPayment = itemName === 'ar payment';
+
+            if (!isPcRental && !isArPayment) {
                 sales += amt;
+            }
+            if (isArPayment) {
+                arPayments += amt;
             }
 
             if (tx.paymentMethod === 'GCash') {
@@ -301,6 +330,7 @@ export const aggregateShiftTransactions = (txList = [], serviceMeta = [], pcRent
         gcashSales,
         arSales,
         pcNonCashSales,
+        arPayments,
     };
 };
 

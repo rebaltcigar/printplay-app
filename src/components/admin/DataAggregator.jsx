@@ -9,6 +9,7 @@ import {
 import dayjs from 'dayjs';
 import { txAmount } from '../../utils/analytics';
 import PageHeader from '../common/PageHeader';
+import DebtMigrationTool from './DebtMigrationTool';
 
 export default function DataAggregator({ showSnackbar }) {
     const [processing, setProcessing] = useState(false);
@@ -188,6 +189,10 @@ export default function DataAggregator({ showSnackbar }) {
                     {processing ? "Running..." : "Regenerate Aggregates"}
                 </Button>
             </Paper>
+
+            <Box sx={{ mt: 4 }}>
+                <DebtMigrationTool showSnackbar={showSnackbar} />
+            </Box>
         </Box >
     );
 }

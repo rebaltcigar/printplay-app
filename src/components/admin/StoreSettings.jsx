@@ -45,6 +45,7 @@ export default function StoreSettings({ section, showSnackbar, user }) {
         pcRentalEnabled: true,
         pcRentalMode: 'external', // 'external' = third-party timer | 'builtin' = Kunek v0.6
         pcRentalServiceId: '',    // Firestore serviceId of the catalog item used for PC billing
+        invoiceDueDays: 7,        // Default days until an invoice is due
     });
 
     const [capturingHotkey, setCapturingHotkey] = useState(false);
@@ -61,7 +62,7 @@ export default function StoreSettings({ section, showSnackbar, user }) {
                         .map(d => ({ id: d.id, ...d.data() }))
                         .filter(s => s.active !== false && s.category !== 'Expense')
                 ))
-                .catch(() => {});
+                .catch(() => { });
         }
     }, []);
 
@@ -447,6 +448,17 @@ export default function StoreSettings({ section, showSnackbar, user }) {
                             inputProps={{ min: 1, max: 120 }}
                         />
                     </Stack>
+                    <Typography variant="subtitle2" sx={{ pt: 1 }}>Invoicing</Typography>
+                    <TextField
+                        label="Default Invoice Due Days"
+                        type="number"
+                        fullWidth
+                        value={settings.invoiceDueDays ?? 7}
+                        onChange={e => setSettings({ ...settings, invoiceDueDays: Math.max(0, parseInt(e.target.value) || 7) })}
+                        helperText="Number of days before a Charge to Account order becomes overdue."
+                        InputProps={{ endAdornment: <InputAdornment position="end">days</InputAdornment> }}
+                        inputProps={{ min: 0 }}
+                    />
                     <Typography variant="subtitle2" sx={{ pt: 1 }}>Schedule Posting</Typography>
                     <TextField
                         select

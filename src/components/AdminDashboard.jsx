@@ -50,7 +50,7 @@ import { signOut } from "firebase/auth";
 
 import Shifts from "./Shifts";
 import ExpenseManagement from "./ExpenseManagement";
-import DebtReport from "./DebtReport";
+
 import ServiceCatalog from "./admin/ServiceCatalog";
 import InventoryManagement from "./admin/InventoryManagement";
 import UserManagement from "./UserManagement";
@@ -60,6 +60,8 @@ import Payroll from "./Payroll";
 import Reports from "./Reports";
 import OrderManagement from "./OrderManagement";
 import Schedule from "./admin/Schedule";
+import ReceivablesReport from "./admin/ReceivablesReport";
+import InvoiceManagement from "./admin/InvoiceManagement";
 
 export default function AdminDashboard({ user, onLogout, appSettings }) {
   // Router hooks
@@ -110,7 +112,8 @@ export default function AdminDashboard({ user, onLogout, appSettings }) {
     { label: "Orders", path: "orders", icon: <ReceiptIcon /> },
     { label: "Transactions", path: "transactions", icon: <ReceiptLongIcon /> },
     { label: "Expense Log", path: "expenses", icon: <ReceiptIcon /> },
-    { label: "Debts", path: "debts", icon: <MoneyOffIcon /> },
+    { label: "Invoices", path: "invoices", icon: <ReceiptLongIcon /> },
+    { label: "Receivables", path: "receivables", icon: <MoneyOffIcon /> },
     { label: "Catalog", path: "catalog", icon: <CategoryIcon /> },
     { label: "Inventory", path: "inventory", icon: <InventoryIcon /> },
     { label: "Users", path: "users", icon: <PeopleIcon /> },
@@ -339,71 +342,76 @@ export default function AdminDashboard({ user, onLogout, appSettings }) {
         {/* --- MAIN CONTENT AREA WITH ROUTING --- */}
         <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-          <Routes>
-            <Route index element={<AdminHome user={user} showSnackbar={showSnackbar} />} />
-            <Route path="reports/*" element={
-              <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
-                <Reports isActive={true} />
-              </Box>
-            } />
-            <Route path="shifts" element={
-              <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
-                <Shifts showSnackbar={showSnackbar} />
-              </Box>
-            } />
-            <Route path="orders" element={
-              <Box sx={{ p: 0, height: '100%', overflow: 'hidden' }}>
-                <OrderManagement showSnackbar={showSnackbar} />
-              </Box>
-            } />
-            <Route path="transactions" element={
-              <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
-                <Transactions showSnackbar={showSnackbar} />
-              </Box>
-            } />
-            <Route path="expenses" element={
-              <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
-                <ExpenseManagement showSnackbar={showSnackbar} />
-              </Box>
-            } />
-            <Route path="debts" element={
-              <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
-                <DebtReport showSnackbar={showSnackbar} />
-              </Box>
-            } />
-            <Route path="catalog" element={
-              <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
-                <ServiceCatalog showSnackbar={showSnackbar} />
-              </Box>
-            } />
-            <Route path="inventory" element={
-              <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
-                <InventoryManagement showSnackbar={showSnackbar} />
-              </Box>
-            } />
-            <Route path="users" element={
-              <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
-                <UserManagement showSnackbar={showSnackbar} />
-              </Box>
-            } />
-            <Route path="schedule" element={
-              <Box sx={{ p: 0, height: '100%', overflow: 'hidden' }}>
-                <Schedule showSnackbar={showSnackbar} />
-              </Box>
-            } />
-            <Route path="payroll" element={
-              <Box sx={{ p: 2, height: '100%', overflowY: 'auto' }}>
-                <Payroll showSnackbar={showSnackbar} />
-              </Box>
-            } />
-            <Route path="settings/*" element={
-              <Box sx={{ p: 0, height: '100%', overflow: 'hidden' }}>
-                <Settings user={user} showSnackbar={showSnackbar} isActive={true} />
-              </Box>
-            } />
-            {/* Fallback */}
-            <Route path="*" element={<Navigate to="/admin" replace />} />
-          </Routes>
+            <Routes>
+              <Route index element={<AdminHome user={user} showSnackbar={showSnackbar} />} />
+              <Route path="reports/*" element={
+                <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
+                  <Reports isActive={true} />
+                </Box>
+              } />
+              <Route path="shifts" element={
+                <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
+                  <Shifts showSnackbar={showSnackbar} />
+                </Box>
+              } />
+              <Route path="orders" element={
+                <Box sx={{ p: 0, height: '100%', overflow: 'hidden' }}>
+                  <OrderManagement showSnackbar={showSnackbar} />
+                </Box>
+              } />
+              <Route path="transactions" element={
+                <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
+                  <Transactions showSnackbar={showSnackbar} />
+                </Box>
+              } />
+              <Route path="expenses" element={
+                <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
+                  <ExpenseManagement showSnackbar={showSnackbar} />
+                </Box>
+              } />
+              <Route path="invoices" element={
+                <Box sx={{ p: 0, height: '100%', overflow: 'hidden' }}>
+                  <InvoiceManagement user={user} showSnackbar={showSnackbar} />
+                </Box>
+              } />
+              <Route path="receivables" element={
+                <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
+                  <ReceivablesReport showSnackbar={showSnackbar} />
+                </Box>
+              } />
+              <Route path="catalog" element={
+                <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
+                  <ServiceCatalog showSnackbar={showSnackbar} />
+                </Box>
+              } />
+              <Route path="inventory" element={
+                <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
+                  <InventoryManagement showSnackbar={showSnackbar} />
+                </Box>
+              } />
+              <Route path="users" element={
+                <Box sx={{ p: 2, height: '100%', overflow: 'hidden' }}>
+                  <UserManagement showSnackbar={showSnackbar} />
+                </Box>
+              } />
+              <Route path="schedule" element={
+                <Box sx={{ p: 0, height: '100%', overflow: 'hidden' }}>
+                  <Schedule showSnackbar={showSnackbar} />
+                </Box>
+              } />
+              <Route path="payroll" element={
+                <Box sx={{ p: 2, height: '100%', overflowY: 'auto' }}>
+                  <Payroll showSnackbar={showSnackbar} />
+                </Box>
+              } />
+              <Route path="settings/*" element={
+                <Box sx={{ p: 0, height: '100%', overflow: 'hidden' }}>
+                  <Settings user={user} showSnackbar={showSnackbar} isActive={true} />
+                </Box>
+              } />
+              {/* Fallback */}
+              <Route path="*" element={<Navigate to="/admin" replace />} />
+            </Routes>
           </Box>
 
           {/* Powered by footer */}

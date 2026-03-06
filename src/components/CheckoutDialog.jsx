@@ -8,12 +8,19 @@ import PaymentsIcon from '@mui/icons-material/Payments';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import HistoryIcon from '@mui/icons-material/History';
 
-export default function CheckoutDialog({ open, onClose, total, onConfirm, customer }) {
+export default function CheckoutDialog({ open, onClose, total, onConfirm, customer, defaultDueDays = 7 }) {
     const [method, setMethod] = useState('Cash');
     const [tendered, setTendered] = useState('');
     const [gcashRef, setGcashRef] = useState('');
     const [gcashPhone, setGcashPhone] = useState('');
+    const [dueDate, setDueDate] = useState('');
     const tenderedRef = useRef(null);
+
+    const defaultDueDateStr = () => {
+        const d = new Date();
+        d.setDate(d.getDate() + (defaultDueDays || 7));
+        return d.toISOString().split('T')[0];
+    };
 
     useEffect(() => {
         if (open) {
@@ -21,6 +28,7 @@ export default function CheckoutDialog({ open, onClose, total, onConfirm, custom
             setTendered('');
             setGcashRef('');
             setGcashPhone('');
+            setDueDate(defaultDueDateStr());
             setTimeout(() => tenderedRef.current?.focus(), 150);
         }
     }, [open]);
@@ -51,7 +59,8 @@ export default function CheckoutDialog({ open, onClose, total, onConfirm, custom
             paymentMethod: method,
             amountTendered: method === 'Cash' ? tenderNum : total,
             change: method === 'Cash' ? change : 0,
-            paymentDetails
+            paymentDetails,
+            dueDate: method === 'Charge' && dueDate ? new Date(dueDate) : null,
         }, shouldPrint);
     };
 
@@ -100,9 +109,20 @@ export default function CheckoutDialog({ open, onClose, total, onConfirm, custom
                     </ToggleButtonGroup>
 
                     {method === 'Charge' && (
-                        <Alert severity="warning">
-                            This will be recorded as "Unpaid" (Accounts Receivable).
-                        </Alert>
+                        <Stack spacing={2}>
+                            <Alert severity="warning">
+                                This will be recorded as an invoice (Accounts Receivable). Customer must be assigned.
+                            </Alert>
+                            <TextField
+                                label="Due Date"
+                                type="date"
+                                value={dueDate}
+                                onChange={(e) => setDueDate(e.target.value)}
+                                fullWidth
+                                InputLabelProps={{ shrink: true }}
+                                helperText="Date by which payment is expected"
+                            />
+                        </Stack>
                     )}
 
                     {method === 'Cash' && (

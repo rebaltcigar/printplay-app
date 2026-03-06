@@ -13,6 +13,33 @@
 
 ---
 
+## [0.3.0] — 2026-03-07
+
+### Added
+
+- **Invoice management** — Replaced the legacy "New Debt" system with a full invoice tracker. Cashiers can select "Charge to Account" at checkout to create a linkable Invoice.
+- **Invoice lifecycles** — Invoices track `status` (Draft, Sent, Partial, Paid, Overdue) and support multiple partial payments over time.
+- **Record payment dialog** — Dedicated UI for recording AR collections against invoices. Enforces strict GCash validation (11-digit mobile, 13-digit reference) and records staff emails.
+- **Admin invoice hub** — New `/admin/invoices` interface to list, filter, search, view, and record payments on all historical invoices. Dashboards now feature total outstanding receivables.
+- **Detailed invoice view** — Slide-out drawer displaying line items, payment history, dynamic balance resolution, and conditional 'Write Off' controls strictly reserved for super admins.
+- **Automatic drawer close** — Paying off an invoice now automatically sweeps away related POS drawers for a faster cashier workflow.
+- **Legacy read support** — Old "New Debt" transactions remain readable with a deprecation notice, while all new flows exclusively utilize the invoice architecture.
+
+### Changed
+
+- **Financial aggregation** — Shift financials logic rewritten to strictly segregate "AR Payments" (collections) from standard "Sales" to prevent double counting in daily revenue reports.
+- **End shift and receipt UX** — Shift breakdown and shift summary receipts visually standardized to distinctly block Sales, Expenses, and Collections with high-contrast formatting.
+- **POS view forced default** — The POS actively defaults to 'Classic' (legacy) view strictly on page load for consistent cashier transitions.
+- **Debt flows removed** — The legacy raw string inputs and generic "Paid Debt" workflows have been scrubbed from POS checkout interfaces.
+
+### Infrastructure
+
+- **New collection: `invoices`** — Captures robust schema including arrays of sub-item references, total/amountPaid/balance trackers, and nested payment arrays.
+- **Firestore security rules** — Extended to support the new `invoices` structure.
+- **Firestore index** — Added composite index on `invoices` collection for `customerId` and `createdAt` descending.
+
+---
+
 ## [0.2.2] — 2026-03-06
 
 ### Changed

@@ -8,23 +8,23 @@ import {
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
+import ReceiptIcon from '@mui/icons-material/Receipt';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
-import MoneyOffIcon from '@mui/icons-material/MoneyOff';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import LogoutIcon from '@mui/icons-material/Logout';
 
-import MyScheduleDrawer   from './MyScheduleDrawer';
-import MyPaystubsDrawer   from './MyPaystubsDrawer';
-import MyAccountDrawer    from './MyAccountDrawer';
+import MyScheduleDrawer from './MyScheduleDrawer';
+import MyPaystubsDrawer from './MyPaystubsDrawer';
+import MyAccountDrawer from './MyAccountDrawer';
 
 export default function POSSidebar({
   open, onClose,
   user, onLogout, showSnackbar,
-  onOpenDebt, // callback to open StaffDebtLookupDialog
+  onOpenInvoices, // callback to open POSInvoiceLookupDrawer
 }) {
-  const [scheduleOpen,  setScheduleOpen]  = useState(false);
-  const [paystubsOpen,  setPaystubsOpen]  = useState(false);
-  const [accountOpen,   setAccountOpen]   = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [paystubsOpen, setPaystubsOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
 
   const nav = (action) => {
     onClose();
@@ -44,9 +44,9 @@ export default function POSSidebar({
       onClick: () => nav(() => setPaystubsOpen(true)),
     },
     {
-      label: 'Debt Lookup',
-      icon: <MoneyOffIcon />,
-      onClick: () => nav(() => onOpenDebt?.()),
+      label: 'Invoices / Receivables',
+      icon: <ReceiptIcon />,
+      onClick: () => nav(() => onOpenInvoices?.()),
     },
     {
       label: 'My Account',

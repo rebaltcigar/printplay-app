@@ -1,4 +1,3 @@
-// src/components/AdminHome.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Box, Card, Typography, Stack, FormControl, InputLabel, Select, MenuItem, useMediaQuery
@@ -7,6 +6,7 @@ import { useTheme } from "@mui/material/styles";
 import { db } from "../firebase";
 import { doc, updateDoc, deleteDoc, serverTimestamp, query, collection, where, onSnapshot } from "firebase/firestore";
 import { useAnalytics } from "../contexts/AnalyticsContext"; // Context hook
+import { useOutstandingReceivables } from "../hooks/useInvoices";
 
 import {
   buildServiceMap,
@@ -56,6 +56,8 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
     services,
     loading: analyticsLoading
   } = useAnalytics();
+
+  const { total: outstandingReceivables, loading: receivablesLoading } = useOutstandingReceivables();
 
   // Local re-filter for deleted (Context gives everything found in range)
   // Actually context *could* filter, but let's do it here to be safe or use `filteredTx` name for raw and then filter.
@@ -139,8 +141,6 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
     let sales = 0;
     let expenses = 0;
     let profit = 0;
-    let debtsCollected = 0;
-    let debtsIssued = 0;
 
     // Sum PC Rentals from Shifts
     let pcRentalRevenue = 0;
@@ -156,19 +156,10 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
       const amt = txAmount(t);
       const isExp =
         t.category === "expense" ||
-        t.category === "credit" || // legacy fallback
-        (t.amount < 0 && !t.serviceId) ||
         t.expenseType ||
         t.item === "Expenses";
 
-      const isDebtNew = t.item === "New Debt";
-      const isDebtPaid = t.item === "Paid Debt";
-
-      if (isDebtNew) {
-        debtsIssued += amt;
-      } else if (isDebtPaid) {
-        debtsCollected += amt;
-      } else if (isExp) {
+      if (isExp) {
         // ... (keep capital check)
         const isCap =
           (t.expenseType || "").toLowerCase().includes("asset") ||
@@ -186,10 +177,9 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
       }
     });
 
-    sales += pcRentalRevenue;
     profit = sales - expenses;
 
-    return { sales, expenses, profit, debtsIssued, debtsCollected };
+    return { sales, expenses, profit };
   }, [filteredTxValid, shiftsScope]);
 
   // 3. TRENDS
@@ -413,14 +403,24 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
             <Typography variant="body2" color="text.secondary">
               Operating Expenses
             </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Operating Expenses Only (Excl. Assets)
+            </Typography>
+          </Card>
+
+          {/* OUTSTANDING RECEIVABLES */}
+          <Card sx={{ p: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              Outstanding Receivables
+            </Typography>
             <Typography
               variant="h4"
               sx={{ color: "error.main", fontWeight: "bold", my: 1 }}
             >
-              {currency(kpi.expenses)}
+              {receivablesLoading ? "—" : currency(outstandingReceivables)}
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              Operating Expenses Only (Excl. Assets)
+              Unpaid Customer Accounts
             </Typography>
           </Card>
         </Box>

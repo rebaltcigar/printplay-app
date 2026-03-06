@@ -23,6 +23,10 @@ export const ServiceInvoice = ({ order, settings }) => {
     const orderId = order.orderNumber || order.id || "---";
     const dateStr = order.timestamp?.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
+    // AR Mode (Unpaid / Partial)
+    const isAR = order.invoiceStatus === 'UNPAID' || order.invoiceStatus === 'PARTIAL' || order.isAR;
+    const dueDateStr = order.dueDate ? new Date(order.dueDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '---';
+
     // Customer
     const custName = order.customerName || '';
     const custAddr = order.customerAddress || '-';
@@ -164,13 +168,20 @@ export const ServiceInvoice = ({ order, settings }) => {
 
                         {/* INVOICE TITLE & NO */}
                         <Box sx={{ textAlign: 'right' }}>
-                            <Typography className="title" sx={{ color: 'black', fontSize: '22px', lineHeight: 1 }}>SERVICE INVOICE</Typography>
+                            <Typography className="title" sx={{ color: 'black', fontSize: '22px', lineHeight: 1 }}>
+                                {isAR ? 'CHARGE INVOICE' : 'SERVICE INVOICE'}
+                            </Typography>
                             <Typography sx={{ fontSize: '14px', color: 'red', fontWeight: 'bold', mt: 0.5 }}>
                                 No. {orderId}
                             </Typography>
                             <Typography sx={{ fontSize: '12px', mt: 0.25 }}>
                                 Date: <b>{dateStr}</b>
                             </Typography>
+                            {isAR && (
+                                <Typography sx={{ fontSize: '12px', mt: 0.25 }}>
+                                    Due Date: <b style={{ color: 'red' }}>{dueDateStr}</b>
+                                </Typography>
+                            )}
                         </Box>
                     </Box>
 
@@ -252,6 +263,12 @@ export const ServiceInvoice = ({ order, settings }) => {
                                 <Typography sx={{ fontSize: '14px', fontWeight: '900' }}>TOTAL AMOUNT DUE</Typography>
                                 <Typography sx={{ fontSize: '14px', fontWeight: '900' }}>{currency(order.total)}</Typography>
                             </Box>
+                            {isAR && (
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 1, color: 'blue' }}>
+                                    <Typography sx={{ fontSize: '14px', fontWeight: '900' }}>BALANCE DUE</Typography>
+                                    <Typography sx={{ fontSize: '14px', fontWeight: '900' }}>{currency(order.balance ?? order.total)}</Typography>
+                                </Box>
+                            )}
                         </Box>
                     </Box>
 

@@ -11,54 +11,27 @@
 
 | Version | Branch | Status |
 |---------|--------|--------|
+| v0.3.0 | `feature/invoice-management` | Merged |
 | v0.2.2 | `feature/rebrand` | Merged |
 | v0.2.1 | `feature/catalog-foundation` | Merged |
 | v0.2.0 | `feature/catalog-foundation` | Merged |
 | v0.1.32 | `feature/next-dev-2` | Merged |
 
-## Up Next — `feature/invoice-management`
+## Up Next — `feature/basic-crm`
 
 ---
 
-## v0.3 — Invoice & Charge Management ← **NEXT**
-**Goal**: Replace the crude `New Debt` / `Paid Debt` system with proper receivables — invoices, charge accounts, and payment tracking.
+## v0.4 — Basic CRM Foundation ← **NEXT**
+**Goal**: Unified customer profiles to speed up checkout and prepare for PC rentals.
 
-**Why**: The current debt system loses detail, has no status tracking, and doesn't support partial payments or invoice documents.
-
-**New concept: Charge / Invoice**
-- At checkout, cashier chooses: **Pay Now** (existing flow) or **Charge to Account** (creates an invoice)
-- Invoices have status: `Draft → Sent → Partial → Paid → Overdue`
-- Invoices linked to a customer; partial payments supported
-
-**New `invoices` collection:**
-```
-invoices/{id}
-  orderId: string
-  customerId: string
-  customerName: string
-  items: []
-  subtotal, total, amountPaid, balance: number
-  status: 'draft'|'sent'|'partial'|'paid'|'overdue'
-  dueDate: timestamp
-  notes: string
-  createdAt: timestamp
-  staffEmail: string
-  shiftId: string
-  payments: [{ amount, method, date, staffEmail, note }]
-```
-
-**Features:**
-- POS checkout: "Charge to Account" option creates invoice instead of direct payment
-- Customer profile: invoice history, outstanding balance
-- Admin: invoice list with status filters, bulk actions
-- Record payment against invoice (full or partial)
-- Invoice PDF / print (extends existing `ServiceInvoice` component)
-- Dashboard widget: total outstanding receivables
-- Deprecate `New Debt` / `Paid Debt` — old transactions remain readable, new flow uses invoices
+- Normalized `customers` collection (`id`, `fullName`, `email`, `phone`, `tin`, `lifetimeValue`, `outstandingBalance`).
+- **Admin**: New `/admin/customers` module for viewing and editing profiles.
+- **POS**: Replace raw text fields with `CustomerSearchAutocomplete` in Checkout and AR Payment drawers.
+- Auto-calculate outstanding balances and link new orders/invoices to profiles.
 
 ---
 
-## v0.4 — Retail & Inventory
+## v0.5 — Retail & Inventory
 **Goal**: Proper retail item management with stock tracking.
 
 - Retail tab in POS fully operational
@@ -71,7 +44,7 @@ invoices/{id}
 
 ---
 
-## v0.5 — Reporting & Analytics
+## v0.6 — Reporting & Analytics
 **Goal**: Deeper business intelligence from data already being captured.
 
 - Shift breakdown by service variant (B&W vs Color, etc.)
@@ -85,7 +58,7 @@ invoices/{id}
 
 ---
 
-## v0.6 — Automated Tests
+## v0.7 — Automated Tests
 **Goal**: Regression safety net for the POS. Must pass before every deploy touching POS code.
 
 Full test plan: `memory/pos-test-plan.md`. Covers item grid, tile clicks, variants, qty dialog, manual entry, cart CRUD, checkout (Cash/GCash/Charge), hotkeys, PC Rental tab, tab switching, and end-shift PC rental modes.
@@ -94,7 +67,7 @@ Full test plan: `memory/pos-test-plan.md`. Covers item grid, tile clicks, varian
 
 ---
 
-## v0.7 — Bundle/Package Services
+## v0.8 — Bundle/Package Services
 **Goal**: Support fixed-price service bundles where the system knows the contents — enabling proper inventory deduction and clear cashier UX.
 
 - New `bundle` concept in the service catalog: a parent item with a fixed total price and a defined list of included services/items
@@ -106,7 +79,7 @@ Full test plan: `memory/pos-test-plan.md`. Covers item grid, tile clicks, varian
 
 ---
 
-## v0.8 — Biometric Staff Auth
+## v0.9 — Biometric Staff Auth
 **Goal**: Physical fingerprint reader identifies which staff member is present — enabling fast staff switching, sensitive action approval, and clock-in/out without shared Windows Hello.
 
 **Approach — custom Windows companion app:**
@@ -128,7 +101,7 @@ Full test plan: `memory/pos-test-plan.md`. Covers item grid, tile clicks, varian
 
 ---
 
-## v0.9 — PC Timer Module
+## v0.10 — PC Timer Module
 **Goal**: Dedicated PC session management integrated into POS as a new tab. Replaces the current "PC Rental as a manual line item" workaround.
 
 **New collections:**
@@ -149,7 +122,7 @@ Full test plan: `memory/pos-test-plan.md`. Covers item grid, tile clicks, varian
 
 ---
 
-## v0.10 — Payment Methods & POS Polish
+## v0.11 — Payment Methods & POS Polish
 **Goal**: Make payment methods fully configurable. Clean up POS power features.
 
 **Payment method configuration:**

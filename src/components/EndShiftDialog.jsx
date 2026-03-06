@@ -49,7 +49,12 @@ export default function EndShiftDialog({
         totalAr,
         systemTotal: finalTotal,
         loggedPcNonCash,
+        arPaymentsTotal,
+        arCashTotal,
+        arGcashTotal,
     } = financials;
+
+    const shiftPeriod = settings.shiftPeriod || ''; // Ensure shiftPeriod is available
 
 
 
@@ -68,6 +73,7 @@ export default function EndShiftDialog({
             totalCash,     // NEW: Required,
             totalGcash,    // NEW: Required
             totalAr,       // NEW: Required
+            arPaymentsTotal: arPaymentsTotal || 0,
             endTime: serverTimestamp()
         };
 
@@ -90,7 +96,10 @@ export default function EndShiftDialog({
                         cash: totalCash,
                         gcash: totalGcash,
                         receivables: totalAr
-                    }
+                    },
+                    arPaymentsTotal,
+                    arCashTotal,
+                    arGcashTotal
                 });
             }
             onClose();
@@ -131,53 +140,78 @@ export default function EndShiftDialog({
                     </Box>
                 )}
 
-                {/* 2. MIDDLE SCROLLABLE: BREAKDOWNS */}
-                <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
-                    {/* SALES */}
-                    <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>SALES</Typography>
-                    {pcRentalEnabled && (
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', pl: 1 }}>
-                            <Typography variant="body2">
-                                PC Rental{pcRentalMode === 'external' ? ' (external timer)' : ''}
-                            </Typography>
-                            <Typography variant="body2">{currency(pcRentalNum)}</Typography>
-                        </Box>
-                    )}
-                    <Box>
+                {/* 2. MIDDLE SCROLLABLE: BREAKDOWNS (Receipt Style) */}
+                <Box sx={{ flex: 1, overflowY: 'auto', p: 0 }}>
+                    {/* Header (Receipt Top) */}
+                    <Box sx={{ p: 2, pb: 1, borderBottom: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
+                        <Typography variant="body2" fontWeight="bold">{user?.displayName || user?.email}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                            {shiftPeriod} Shift — {new Date().toLocaleDateString()}
+                        </Typography>
+                    </Box>
+
+                    <Box sx={{ p: 2 }}>
+                        {/* SALES SECTION */}
+                        <Typography variant="overline" color="text.primary" sx={{ fontWeight: 'bold', letterSpacing: 1.2 }}>SALES</Typography>
+                        {pcRentalEnabled && (
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', pl: 1 }}>
+                                <Typography variant="body2">PC Rental</Typography>
+                                <Typography variant="body2">{currency(pcRentalNum)}</Typography>
+                            </Box>
+                        )}
                         {salesBreakdown.map(([label, amt]) => (
                             <Box key={label} sx={{ display: 'flex', justifyContent: 'space-between', pl: 1 }}>
                                 <Typography sx={{ fontSize: '0.75rem' }}>{label}</Typography>
                                 <Typography sx={{ fontSize: '0.75rem' }}>{currency(amt)}</Typography>
                             </Box>
                         ))}
-                    </Box>
+                        <Divider sx={{ my: 0.5, borderStyle: 'dashed' }} />
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
+                            <Typography variant="body2" fontWeight="bold">Total Sales</Typography>
+                            <Typography variant="body2" fontWeight="bold">{currency(pcRentalNum + servicesTotal)}</Typography>
+                        </Box>
 
-                    <Divider sx={{ my: 0.5, borderStyle: 'dashed' }} />
+                        {/* EXPENSES SECTION */}
+                        <Typography variant="overline" color="text.primary" sx={{ fontWeight: 'bold', letterSpacing: 1.2 }}>EXPENSES</Typography>
+                        {expensesBreakdown.length === 0 ? (
+                            <Typography variant="caption" display="block" sx={{ pl: 1, opacity: 0.7 }}>No expenses</Typography>
+                        ) : (
+                            expensesBreakdown.map(([label, amt]) => (
+                                <Box key={label} sx={{ display: 'flex', justifyContent: 'space-between', pl: 1 }}>
+                                    <Typography sx={{ fontSize: '0.75rem' }}>{label}</Typography>
+                                    <Typography sx={{ fontSize: '0.75rem' }}>{currency(amt)}</Typography>
+                                </Box>
+                            ))
+                        )}
+                        <Divider sx={{ my: 0.5, borderStyle: 'dashed' }} />
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
+                            <Typography variant="body2" fontWeight="bold">Total Expenses</Typography>
+                            <Typography variant="body2" fontWeight="bold">{currency(expensesTotal)}</Typography>
+                        </Box>
 
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <Typography variant="subtitle2">Total Sales</Typography>
-                        <Typography variant="subtitle2">{currency(pcRentalNum + servicesTotal)}</Typography>
-                    </Box>
-
-                    {/* EXPENSES */}
-                    <Typography variant="subtitle2" sx={{ mt: 2, fontWeight: 'bold' }}>EXPENSES</Typography>
-                    {expensesBreakdown.length === 0 && (
-                        <Typography variant="caption" sx={{ pl: 1, opacity: 0.7 }}>No expenses</Typography>
-                    )}
-                    <Box>
-                        {expensesBreakdown.map(([label, amt]) => (
-                            <Box key={label} sx={{ display: 'flex', justifyContent: 'space-between', pl: 1 }}>
-                                <Typography sx={{ fontSize: '0.75rem' }}>{label}</Typography>
-                                <Typography sx={{ fontSize: '0.75rem' }}>{currency(amt)}</Typography>
-                            </Box>
-                        ))}
-                    </Box>
-
-                    <Divider sx={{ my: 0.5, borderStyle: 'dashed' }} />
-
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <Typography variant="subtitle2">Total Expenses</Typography>
-                        <Typography variant="subtitle2">{currency(expensesTotal)}</Typography>
+                        {/* COLLECTIONS SECTION */}
+                        {(arPaymentsTotal > 0) && (
+                            <>
+                                <Typography variant="overline" color="text.primary" sx={{ fontWeight: 'bold', letterSpacing: 1.2 }}>COLLECTIONS</Typography>
+                                {arCashTotal > 0 && (
+                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', pl: 1 }}>
+                                        <Typography sx={{ fontSize: '0.75rem' }}>AR Payments (Cash)</Typography>
+                                        <Typography sx={{ fontSize: '0.75rem' }}>{currency(arCashTotal)}</Typography>
+                                    </Box>
+                                )}
+                                {arGcashTotal > 0 && (
+                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', pl: 1 }}>
+                                        <Typography sx={{ fontSize: '0.75rem' }}>AR Payments (GCash)</Typography>
+                                        <Typography sx={{ fontSize: '0.75rem' }}>{currency(arGcashTotal)}</Typography>
+                                    </Box>
+                                )}
+                                <Divider sx={{ my: 0.5, borderStyle: 'divider' }} />
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                                    <Typography variant="body2" fontWeight="bold">Total Collections</Typography>
+                                    <Typography variant="body2" fontWeight="bold">{currency(arPaymentsTotal)}</Typography>
+                                </Box>
+                            </>
+                        )}
                     </Box>
                 </Box>
 
@@ -190,7 +224,7 @@ export default function EndShiftDialog({
 
                     <Divider sx={{ my: 1 }} />
 
-                    <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 'bold' }}>PAYMENT BREAKDOWN</Typography>
+                    <Typography variant="caption" sx={{ color: 'text.primary', fontWeight: 'bold' }}>PAYMENT BREAKDOWN</Typography>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', pl: 1 }}>
                         <Typography variant="body2">Cash Sales{pcRentalEnabled ? ' (+ PC Rental)' : ''}</Typography>
                         <Typography variant="body2">{currency(totalCash)}</Typography>

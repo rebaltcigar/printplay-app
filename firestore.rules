@@ -191,6 +191,17 @@ service cloud.firestore {
       allow read, write: if isSignedIn();
     }
 
+    /* ---------- Invoices (AR) ---------- */
+    match /invoices/{invoiceId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn();
+      // Staff can update (record payments); written_off can only be set by admin
+      allow update: if isAdmin() ||
+        (isStaff() && !request.resource.data.diff(resource.data).changedKeys().hasAny(['status']) ) ||
+        (isStaff() && request.resource.data.status != 'written_off');
+      allow delete: if isAdmin();
+    }
+
     /* ---------- POS Orders & Counters ---------- */
     match /orders/{orderId} {
       allow read, write: if isSignedIn();
