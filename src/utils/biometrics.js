@@ -32,7 +32,7 @@ export const registerFingerprint = async (userEmail, userDisplayName) => {
   // WebAuthn Registration Options
   const publicKey = {
     challenge: challenge,
-    rp: { name: "Print+Play POS" }, // The name shown in the Windows prompt
+    rp: { name: "Kunek POS" }, // The name shown in the Windows prompt
     user: {
       id: Uint8Array.from(userEmail, c => c.charCodeAt(0)), // Use email as unique ID bytes
       name: userEmail,

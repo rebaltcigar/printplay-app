@@ -18,7 +18,7 @@ import {
 import DetailDrawer from "./common/DetailDrawer";
 import DownloadIcon from "@mui/icons-material/Download";
 import { db } from "../firebase";
-import { collection, getDocs } from "firebase/firestore";
+import { collection, getDocs, doc, getDoc } from "firebase/firestore";
 import html2canvas from "html2canvas";
 
 // ====== CONFIG ======
@@ -54,6 +54,12 @@ const formatTimeRange = (start, end) => {
 // ---------- Single Paystub ----------
 export function Paystub({ stub }) {
   const paystubRef = useRef(null);
+  const [storeName, setStoreName] = useState('Kunek');
+  useEffect(() => {
+    getDoc(doc(db, 'settings', 'config')).then(snap => {
+      if (snap.exists() && snap.data().storeName) setStoreName(snap.data().storeName);
+    }).catch(() => {});
+  }, []);
 
   if (!stub) {
     return (
@@ -134,7 +140,7 @@ export function Paystub({ stub }) {
         {/* Header */}
         <Box sx={{ mb: 3, textAlign: "center" }}>
           <Typography variant="h5" component="div" sx={{ fontWeight: "bold" }}>
-            Print+Play Computer Shop
+            {storeName}
           </Typography>
           <Typography variant="body1">
             6 Abra St. Bago Bantay Quezon City

@@ -224,7 +224,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
     drawerHotkey: { altKey: true, code: 'Backquote' }, // Fallback default
     checkoutHotkey: { code: 'F10', key: 'F10', display: 'F10' }, // Fallback default
     logoUrl: null, // Fallback
-    storeName: 'PrintPlay', // Fallback
+    storeName: 'Kunek', // Fallback
   });
 
   // Load Settings on Mount
@@ -1538,6 +1538,13 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod }) {
             </Box>
           </Box>}
         </Grid>
+      </Box>
+
+      {/* Powered by footer */}
+      <Box sx={{ textAlign: 'center', py: 0.4, bgcolor: 'background.paper', borderTop: 1, borderColor: 'divider', flexShrink: 0 }}>
+        <Typography variant="caption" sx={{ opacity: 0.3, fontSize: '0.6rem', letterSpacing: '0.08em' }}>
+          Powered by Kunek
+        </Typography>
       </Box>
 
       {/* --- DIALOGS --- */}

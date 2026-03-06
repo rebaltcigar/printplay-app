@@ -11,7 +11,7 @@ export const ServiceInvoice = ({ order, settings }) => {
     if (!order) return null;
 
     // Default Settings
-    const storeName = settings?.storeName || 'PrintPlay';
+    const storeName = settings?.storeName || 'Kunek';
     const address = settings?.address || '6 Abra St. Bago Bantay, Quezon City'; // Main/Registered Address
     const phone = settings?.phone || '';
     const mobile = settings?.mobile || '';

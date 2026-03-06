@@ -175,7 +175,7 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
 
   const [loading, setLoading] = useState(false);
   const [err,     setErr]     = useState("");
-  const [branding, setBranding] = useState({ storeName: "Print+Play", logoUrl: "/logo.png" });
+  const [branding, setBranding] = useState({ storeName: "Kunek", logoUrl: "/logo.png" });
 
   useEffect(() => {
     (async () => {
@@ -183,7 +183,7 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
         const snap = await getDoc(doc(db, "settings", "config"));
         if (snap.exists()) {
           const d = snap.data();
-          setBranding({ storeName: d.storeName || "Print+Play", logoUrl: d.logoUrl || "/logo.png" });
+          setBranding({ storeName: d.storeName || "Kunek", logoUrl: d.logoUrl || "/logo.png" });
         }
       } catch {}
     })();
@@ -577,6 +577,13 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
             {cardContent}
           </Card>
         </Box>
+      </Box>
+
+      {/* Powered by + version */}
+      <Box sx={{ position: 'absolute', bottom: 16, left: 0, right: 0, textAlign: 'center', zIndex: 10 }}>
+        <Typography variant="caption" sx={{ opacity: 0.35, fontSize: '0.65rem', letterSpacing: '0.08em', color: 'text.secondary' }}>
+          Powered by Kunek &nbsp;·&nbsp; v{__APP_VERSION__}
+        </Typography>
       </Box>
 
       {/* Loading overlay */}

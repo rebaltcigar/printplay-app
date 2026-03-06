@@ -72,7 +72,7 @@ export default function AdminDashboard({ user, onLogout }) {
   const [cashDrawerOpen, setCashDrawerOpen] = useState(false);
 
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
-  const [storeSettings, setStoreSettings] = useState({ storeName: 'PrintPlay', logoUrl: '/icon.ico' });
+  const [storeSettings, setStoreSettings] = useState({ storeName: 'Kunek', logoUrl: '/icon.ico' });
 
   useEffect(() => {
     const fetchBranding = async () => {
@@ -420,6 +420,13 @@ export default function AdminDashboard({ user, onLogout }) {
             {/* Fallback */}
             <Route path="*" element={<Navigate to="/admin" replace />} />
           </Routes>
+
+          {/* Powered by footer */}
+          <Box sx={{ textAlign: 'center', py: 0.5, borderTop: 1, borderColor: 'divider', flexShrink: 0 }}>
+            <Typography variant="caption" sx={{ opacity: 0.25, fontSize: '0.6rem', letterSpacing: '0.08em' }}>
+              Powered by Kunek
+            </Typography>
+          </Box>
         </Box>
       </Box>
 
