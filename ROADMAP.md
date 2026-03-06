@@ -2,6 +2,8 @@
 
 > Living document. "Kunek" is the platform. "PrintPlay" is the first business (tenant) running on it.
 > Updated: 2026-03-06 (v0.2.2)
+>
+> Completed version details archived in `memory/release-history.md`.
 
 ---
 
@@ -9,7 +11,7 @@
 
 | Version | Branch | Status |
 |---------|--------|--------|
-| v0.2.2 | `feature/rebrand` | Merging → `main` |
+| v0.2.2 | `feature/rebrand` | Merged |
 | v0.2.1 | `feature/catalog-foundation` | Merged |
 | v0.2.0 | `feature/catalog-foundation` | Merged |
 | v0.1.32 | `feature/next-dev-2` | Merged |
@@ -18,107 +20,41 @@
 
 ---
 
-## v0.2 — POS Foundation
+## v0.3 — Invoice & Charge Management ← **NEXT**
+**Goal**: Replace the crude `New Debt` / `Paid Debt` system with proper receivables — invoices, charge accounts, and payment tracking.
 
-### v0.2.0 — Catalog Foundation
-**Goal**: Flexible, fully admin-managed service catalog. No hardcoded services anywhere in code.
-
-**Schema additions to `services` (all backward-compatible):**
-- `hasVariants: boolean` — marks a container item (not sold directly, opens picker)
-- `variantGroup: string` — section header within the picker (e.g., "Text Only", "Resume", "Size")
-- `priceType: 'fixed' | 'variable'` — replaces ambiguous `price: 0`
-- `pricingNote: string` — cashier hint for variable items (e.g., "₱5–₱20")
-- `posLabel: string` — short tile name inside picker (falls back to serviceName)
-- `posIcon: string` — icon key from a preset admin-selectable list
-- `attributes: []` — optional trackable tags per transaction that don't affect price (e.g., paper size for inventory analytics)
-
-**ServiceCatalog admin UI updates:**
-- "Has Variants" toggle in add/edit form
-- `variantGroup`, `priceType`, `pricingNote`, `posLabel`, `posIcon` fields (conditional)
-- `attributes` builder (key, label, options list, required toggle)
-- Table: child count badge on parent rows
-
-**Hook updates:**
-- `usePOSServices` restructured: returns `directItems`, `variantParents`, `variantMap`, `retailItems`
-- `useServiceList` extended to expose variant relationships
-
-### v0.2.1 — POS Redesign
-**Goal**: Faster cashier workflow. Tile grid replaces dropdown. Tabbed workspace.
-
-- Replace hardcoded quick-action strip with dynamic admin-configured tile grid
-- VariantPicker component (bottom sheet, sections from `variantGroup`)
-- Optional attribute selector after variant pick (e.g., paper size tag — no price impact)
-- Category filter chips on the tile grid
-- Tabbed POS workspace: **Services** | **Retail** | *(future: PC Timers)*
-- Transaction Log + Order History panel collapse state persisted to `localStorage`
-- New transaction fields: `serviceId`, `parentServiceId`, `variantGroup`, `variantLabel`, `attributes`
-  *(forward-only — old transactions unaffected)*
-- Begin breaking `POS.jsx` (~1700 lines) into focused sub-components
-
-### v0.2.2 — Kunek Rebranding ✓
-**Goal**: Platform shell says "Kunek". Business branding is 100% dynamic from tenant settings. Zero hardcoded brand strings in code.
-
-- Renamed `package.json`, `index.html` title to "Kunek"
-- Removed all hardcoded "PrintPlay" / "Print+Play" references from JSX/JS
-- `storeName`, `logoUrl` fallback to "Kunek" defaults everywhere
-- Settings fetched once at app level (App.jsx), passed as props — no per-component fetch
-- Logo preloaded before app renders — no image flash
-- Staff display name and shift start time bootstrapped from auth — no POS-level fetches
-
-### v0.2.3 — Invoice & Charge Management ← **NEXT**
-**Goal**: Replace the crude `New Debt` / `Paid Debt` system with proper receivables — invoices, charge accounts, payment tracking.
-
-### v0.2.4 — POS Automated Tests
-**Goal**: Regression safety net for the POS. Must pass before every deploy touching POS code.
-
-Full test plan: `memory/pos-test-plan.md`. Covers item grid, tile clicks, variants, qty dialog, manual entry, cart CRUD, checkout (Cash/GCash/Charge), hotkeys, PC Rental tab, tab switching, and end-shift PC rental modes.
-
-**Tooling:** Vitest + React Testing Library (UI/hooks) · Playwright (E2E + Firestore writes)
-
----
-
-## v0.3 — Invoice & Charge Management (detail)
-**Goal**: Replace the crude `New Debt` / `Paid Debt` system with proper receivables — invoices, charge accounts, payment tracking.
-
-**Why urgent**: The current debt system loses detail, has no status tracking, and doesn't support partial payments or invoice documents.
+**Why**: The current debt system loses detail, has no status tracking, and doesn't support partial payments or invoice documents.
 
 **New concept: Charge / Invoice**
-- At checkout, cashier can choose: **Pay Now** (existing flow) or **Charge to Account** (creates an invoice)
+- At checkout, cashier chooses: **Pay Now** (existing flow) or **Charge to Account** (creates an invoice)
 - Invoices have status: `Draft → Sent → Partial → Paid → Overdue`
-- Invoices linked to a customer
-- Partial payments can be recorded against an invoice
-- Invoice document (extends existing `ServiceInvoice` component)
+- Invoices linked to a customer; partial payments supported
 
-**Data model: new `invoices` collection**
+**New `invoices` collection:**
 ```
 invoices/{id}
-  orderId: string              // source order
+  orderId: string
   customerId: string
   customerName: string
-  items: []                    // same as order items
-  subtotal: number
-  total: number
-  amountPaid: number           // running total of payments received
-  balance: number              // total - amountPaid
+  items: []
+  subtotal, total, amountPaid, balance: number
   status: 'draft'|'sent'|'partial'|'paid'|'overdue'
   dueDate: timestamp
   notes: string
   createdAt: timestamp
   staffEmail: string
   shiftId: string
-  payments: []                 // payment history log
-    { amount, method, date, staffEmail, note }
+  payments: [{ amount, method, date, staffEmail, note }]
 ```
 
 **Features:**
 - POS checkout: "Charge to Account" option creates invoice instead of direct payment
 - Customer profile: invoice history, outstanding balance
-- Admin: Invoice list with status filters, bulk actions
+- Admin: invoice list with status filters, bulk actions
 - Record payment against invoice (full or partial)
-- Invoice PDF / print (builds on ServiceInvoice)
+- Invoice PDF / print (extends existing `ServiceInvoice` component)
 - Dashboard widget: total outstanding receivables
-- Deprecate `New Debt` / `Paid Debt` — migrate to invoice system
-  *(old debt transactions remain readable, new flow uses invoices)*
+- Deprecate `New Debt` / `Paid Debt` — old transactions remain readable, new flow uses invoices
 
 ---
 
@@ -128,7 +64,7 @@ invoices/{id}
 - Retail tab in POS fully operational
 - Stock decrement on checkout when `trackStock: true`
 - Low stock indicator on POS tile
-- Paper / consumable tracking via transaction `attributes` (e.g., paper size analytics)
+- Paper / consumable tracking via transaction `attributes`
 - Restock flow in admin (adjust stockCount with reason log)
 - Inventory report: current stock levels, sales velocity, low stock list
 - Weighted average cost calculation for retail items
@@ -136,20 +72,29 @@ invoices/{id}
 ---
 
 ## v0.5 — Reporting & Analytics
-**Goal**: Deeper business intelligence from the data already being captured.
+**Goal**: Deeper business intelligence from data already being captured.
 
-- Shift breakdown by service variant (B&W vs Color, Text vs Image, etc.)
+- Shift breakdown by service variant (B&W vs Color, etc.)
 - Parent-level aggregation in reports ("all Document Printing" combined)
 - Paper size consumption report (from transaction attributes)
 - Retail vs Service revenue split
 - Transaction volume by hour chart
 - Invoice aging report (outstanding 0–30d, 31–60d, 60d+)
-- Staff performance leaderboard (tied to shift data)
+- Staff performance leaderboard
 - Fix remaining Shift Sales vs Total Sales discrepancies
 
 ---
 
-## v0.6 — PC Timer Module
+## v0.6 — Automated Tests
+**Goal**: Regression safety net for the POS. Must pass before every deploy touching POS code.
+
+Full test plan: `memory/pos-test-plan.md`. Covers item grid, tile clicks, variants, qty dialog, manual entry, cart CRUD, checkout (Cash/GCash/Charge), hotkeys, PC Rental tab, tab switching, and end-shift PC rental modes.
+
+**Tooling:** Vitest + React Testing Library (UI/hooks) · Playwright (E2E + Firestore writes)
+
+---
+
+## v0.7 — PC Timer Module
 **Goal**: Dedicated PC session management integrated into POS as a new tab. Replaces the current "PC Rental as a manual line item" workaround.
 
 **New collections:**
@@ -162,66 +107,45 @@ invoices/{id}
 - Configurable billing: postpaid (charge on stop) or prepaid (charge on start)
 - Auto-billing: session end creates a cart item linked to the PC Rental catalog service
 - Session history per station
-- Admin: add / remove / rename PC units (never hardcoded count or names)
+- Admin: add / remove / rename PC units (never hardcoded)
 - Admin: set hourly rate, minimum session time, rounding rules
-- Create "PC Rental" catalog service (variable price, Sale category) and link it in Settings → POS → PC Rental Billing Service — this is the one-time admin setup required before v0.6 go-live
-- Once built-in timer is live: remove `pcRentalTotal` manual entry from EndShiftDialog, retire `splitPcRental` special-case math — PC rental becomes a normal catalog service with no separate computation
-- `pcRentalMode: 'builtin'` in EndShiftDialog: compute total from `pcSessions` instead of manual input
-- Optional: data migration script to backfill `serviceId` on old PC Rental transactions (cosmetic only — doesn't affect frozen shift totals, string match already covers them)
+- One-time setup: create "PC Rental" catalog service and link in Settings → POS → PC Rental Billing Service
+- Once live: remove `pcRentalTotal` manual entry from EndShiftDialog, retire `splitPcRental` math
+- `pcRentalMode: 'builtin'` in EndShiftDialog: compute total from `pcSessions`
 
 ---
 
-## v0.7 — Payment Methods & POS Polish
+## v0.8 — Payment Methods & POS Polish
 **Goal**: Make payment methods fully configurable. Clean up POS power features.
 
-**Payment method configuration (admin settings):**
+**Payment method configuration:**
 - Toggle Cash / GCash / Charge (Pay Later) per tenant
-- GCash setup: store GCash name, number, and QR code image upload
-- QR code displayed in checkout dialog when GCash is selected (cashier shows to customer)
-- Charge (Pay Later) requires customer assigned — already enforced; toggle hides the option entirely if not needed
-- When a method is disabled, it disappears from the checkout ToggleButtonGroup
+- GCash setup: store name, number, QR code image upload
+- QR code displayed in checkout dialog when GCash selected
+- Disabled methods disappear from checkout ToggleButtonGroup
 - Stored in `settings/config`: `{ gcashEnabled, gcashName, gcashNumber, gcashQrUrl, chargeEnabled }`
 
-**PC Rental payment method scoping:**
-- When `pcRentalMode: 'external'` (third-party timer), GCash/Charge for PC rental is separately configured
-- Prevents cashiers from accidentally logging non-cash PC rental transactions that would confuse shift-end math
-
 **POS Polish:**
-- Notes field on cart line items (stores in transaction)
+- Notes field on cart line items
 - Order-level discount (flat ₱ or %) at checkout
-- Focus Mode: single-column POS, logs panel hidden
-- Keyboard shortcut map (admin-configurable hotkeys per business)
 - Senior / PWD / Student discount presets at checkout or per line item
 - Shift handover: pass shift to another staff without ending
-- Mobile companion app groundwork (time-in/time-out)
+- Keyboard shortcut map (admin-configurable hotkeys per business)
 
 ---
 
 ## v1.0 — Multi-Tenancy (Kunek SaaS)
 **Goal**: Transform the app into a proper multi-tenant SaaS platform. "PrintPlay" becomes `tenantId: "printplay"`.
 
-> This is a breaking architectural change. Requires data migration and careful planning.
+> Breaking architectural change. Requires data migration and careful planning.
 
-**Architecture changes:**
-- Data schema: `/users` → `/tenants/{tenantId}/users` (all root collections scoped)
+- Data schema: all root collections scoped under `/tenants/{tenantId}/`
 - Firestore rules: enforce tenant path boundaries
-- `TenantContext` — provides `tenantId` to entire app (derived from URL subdomain or user claim)
-- Authentication: tenant-aware login (URL-based: `app.kunek.com/login?tenant=printplay` or subdomain)
-
-**Verification:**
-- Create test tenant "DemoCafe"
-- Log in as DemoCafe staff — their data must not bleed into PrintPlay
-- PrintPlay staff must not see DemoCafe data
-
-**Migration:**
-- Existing PrintPlay data migrated to `/tenants/printplay/...`
-- One-time migration script (Firestore batch writes)
-- Rollback plan required before execution
-
-**Tenant management (Kunek admin portal):**
-- Create / suspend / configure tenants
-- Per-tenant feature flags (e.g., PC Timers enabled/disabled per plan)
-- Billing integration (subscription per tenant)
+- `TenantContext` — provides `tenantId` to entire app (URL subdomain or user claim)
+- Tenant-aware login (`app.kunek.com/login?tenant=printplay` or subdomain)
+- One-time migration script for PrintPlay data (Firestore batch writes, rollback plan required)
+- Kunek admin portal: create / suspend / configure tenants, per-tenant feature flags, billing integration
+- Verification: create test tenant "DemoCafe", confirm zero data bleed between tenants
 
 ---
 
@@ -229,29 +153,15 @@ invoices/{id}
 
 | Feature | Notes |
 |---------|-------|
-| Bundle/Package services | Rush ID Packages at flat ₱40 are fixed-price bundles. Need a bundle concept where the system knows what's inside (for inventory deduction). |
+| Bundle/Package services | Fixed-price bundles (e.g., Rush ID Package ₱40). System needs to know bundle contents for inventory deduction. |
 | Barcode scanner for retail | Scan to add retail item to cart. |
 | Customer loyalty tracking | Repeat customer tagging, frequency tracking. |
-| Canva Resume / Graphic Design job queue | These are job-order services needing a queue/ticket system, not just a cart item. |
+| Job queue (Canva / Graphic Design) | Job-order services needing a queue/ticket system, not just a cart item. |
 | Service-level sales targets | Per-service goals per shift or per day. |
-| Biometric staff auth (mobile) | Staff approves sensitive actions from their phone via WebAuthn/Passkeys. |
+| Biometric staff auth (mobile) | Staff approves sensitive actions via WebAuthn/Passkeys on their phone. |
 | Sync strategy refinements | Remove console-spamming retries, manual sync controls, better offline UI. |
-| **Game Launcher** | Integrated game launcher for internet cafe PCs. Ties into the PC Timer module (v0.6.0). Admin-managed game library, per-game session tracking. Scope to be designed alongside v0.6.0 PC Timer work. |
-
----
-
-## Caching Strategy (Backlog)
-
-Firestore reads on mount (settings/config, services list, etc.) cause brief UI delays and potential flashes before data loads. Options to explore:
-
-| Approach | What it solves | Notes |
-|----------|---------------|-------|
-| `localStorage` cache for `settings/config` | Eliminates storeName/logoUrl flash on every page load | Read cache instantly on mount, refresh from Firestore in background (stale-while-revalidate). Invalidate on settings save. |
-| `localStorage` cache for `services` list | Faster POS tile grid on first paint | Same pattern. Services change infrequently. |
-| React Context / singleton fetch | Avoid duplicate `settings/config` reads across components (Admin header, POS header, Receipt, Invoice, Paystub all fetch separately) | Single fetch at App level, pass down via Context |
-| Firestore persistence (enableIndexedDbPersistence) | Full offline support + instant cache on reload | Firestore SDK feature — works automatically once enabled. Most comprehensive fix. |
-
-**Recommended order:** Context singleton first (eliminates duplicate reads cheaply) → localStorage stale-while-revalidate → Firestore persistence when offline mode is needed (v0.4+).
+| Game Launcher | Integrated game launcher for internet cafe PCs. Ties into PC Timer (v0.7). Admin-managed game library, per-game session tracking. |
+| Firestore offline persistence | `enableIndexedDbPersistence` — full offline support + instant cache on reload. Revisit when offline mode becomes a requirement (v0.4+). |
 
 ---
 
@@ -259,7 +169,8 @@ Firestore reads on mount (settings/config, services list, etc.) cause brief UI d
 
 | Item | Priority |
 |------|----------|
-| `POS.jsx` is ~1700 lines — decompose into sub-components | Do during v0.2.1 |
+| `POS.jsx` is ~1700 lines — decompose into sub-components | Ongoing |
 | Standardize all alerts/errors to Snackbar system | Ongoing |
 | JSDoc / TypeScript types for Transaction, Shift, Order, Invoice | v0.3+ |
 | Unit tests for critical calculations (Payroll, Cart Totals, Invoice Balance) | v0.3+ |
+| `localStorage` cache for `services` list — stale-while-revalidate for faster POS tile grid on first paint | v0.4+ |
