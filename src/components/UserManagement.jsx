@@ -3,11 +3,12 @@ import {
   Box, Card, Typography, Divider, Paper,
   Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
   IconButton, Tooltip, Stack, Button, TextField, InputAdornment,
-  ToggleButtonGroup, ToggleButton, Chip, Dialog, DialogTitle,
-  DialogContent, DialogActions, MenuItem, Select, FormControl,
-  InputLabel, CircularProgress, Alert,
+  ToggleButtonGroup, ToggleButton, Chip, MenuItem, Select, FormControl,
+  InputLabel, CircularProgress, Alert, Dialog, DialogTitle, DialogContent, DialogActions
 } from "@mui/material";
 import PageHeader from "./common/PageHeader";
+import ValidatedInput from "./common/ValidatedInput";
+import DetailDrawer from "./common/DetailDrawer";
 import FingerprintIcon from "@mui/icons-material/Fingerprint";
 import EditIcon from "@mui/icons-material/Edit";
 import LockResetIcon from "@mui/icons-material/LockReset";
@@ -53,9 +54,9 @@ const StatusChip = ({ suspended }) =>
   );
 
 // ---------------------------------------------------------------------------
-// AddUserDialog
+// AddUserDrawer
 // ---------------------------------------------------------------------------
-function AddUserDialog({ open, onClose, onSave }) {
+function AddUserDrawer({ open, onClose, onSave }) {
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -87,48 +88,51 @@ function AddUserDialog({ open, onClose, onSave }) {
   };
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
-      <DialogTitle>Add New User</DialogTitle>
-      <DialogContent dividers>
-        <Stack spacing={2} pt={1}>
-          {error && <Alert severity="error">{error}</Alert>}
-          <TextField
-            label="Full Name" fullWidth required
-            value={fullName} onChange={(e) => setFullName(e.target.value)}
-          />
-          <TextField
-            label="Email" type="email" fullWidth required
-            value={email} onChange={(e) => setEmail(e.target.value)}
-          />
-          <TextField
-            label="Temporary Password" type="password" fullWidth required
-            value={password} onChange={(e) => setPassword(e.target.value)}
-            helperText="Min. 6 characters. User should reset after first login."
-          />
-          <FormControl fullWidth>
-            <InputLabel>Role</InputLabel>
-            <Select value={role} label="Role" onChange={(e) => setRole(e.target.value)}>
-              <MenuItem value="staff">Staff</MenuItem>
-              <MenuItem value="superadmin">Super Admin</MenuItem>
-            </Select>
-          </FormControl>
-        </Stack>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose} disabled={saving}>Cancel</Button>
-        <Button variant="contained" onClick={handleSave} disabled={saving}
-          startIcon={saving ? <CircularProgress size={16} /> : null}>
-          Create User
-        </Button>
-      </DialogActions>
-    </Dialog>
+    <DetailDrawer
+      open={open}
+      onClose={onClose}
+      title="Add New User"
+      actions={
+        <>
+          <Button onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button variant="contained" onClick={handleSave} disabled={saving}
+            startIcon={saving ? <CircularProgress size={16} /> : null}>
+            Create User
+          </Button>
+        </>
+      }
+    >
+      <Stack spacing={2} pt={1}>
+        {error && <Alert severity="error">{error}</Alert>}
+        <ValidatedInput
+          label="Full Name" rule="text" fullWidth required
+          value={fullName} onChange={setFullName}
+        />
+        <ValidatedInput
+          label="Email" rule="email" fullWidth required
+          value={email} onChange={setEmail}
+        />
+        <TextField
+          label="Temporary Password" type="password" fullWidth required
+          value={password} onChange={(e) => setPassword(e.target.value)}
+          helperText="Min. 6 characters. User should reset after first login."
+        />
+        <FormControl fullWidth>
+          <InputLabel>Role</InputLabel>
+          <Select value={role} label="Role" onChange={(e) => setRole(e.target.value)}>
+            <MenuItem value="staff">Staff</MenuItem>
+            <MenuItem value="superadmin">Super Admin</MenuItem>
+          </Select>
+        </FormControl>
+      </Stack>
+    </DetailDrawer>
   );
 }
 
 // ---------------------------------------------------------------------------
-// EditUserDialog
+// EditUserDrawer
 // ---------------------------------------------------------------------------
-function EditUserDialog({ open, onClose, user, onSave }) {
+function EditUserDrawer({ open, onClose, user, onSave }) {
   const [fullName, setFullName] = useState("");
   const [role, setRole] = useState("staff");
   const [saving, setSaving] = useState(false);
@@ -152,36 +156,39 @@ function EditUserDialog({ open, onClose, user, onSave }) {
   };
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
-      <DialogTitle>Edit User</DialogTitle>
-      <DialogContent dividers>
-        <Stack spacing={2} pt={1}>
-          <TextField
-            label="Email" fullWidth value={user?.email || ""}
-            InputProps={{ readOnly: true }}
-            helperText="Email cannot be changed here."
-          />
-          <TextField
-            label="Full Name" fullWidth required
-            value={fullName} onChange={(e) => setFullName(e.target.value)}
-          />
-          <FormControl fullWidth>
-            <InputLabel>Role</InputLabel>
-            <Select value={role} label="Role" onChange={(e) => setRole(e.target.value)}>
-              <MenuItem value="staff">Staff</MenuItem>
-              <MenuItem value="superadmin">Super Admin</MenuItem>
-            </Select>
-          </FormControl>
-        </Stack>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose} disabled={saving}>Cancel</Button>
-        <Button variant="contained" onClick={handleSave} disabled={saving}
-          startIcon={saving ? <CircularProgress size={16} /> : null}>
-          Save
-        </Button>
-      </DialogActions>
-    </Dialog>
+    <DetailDrawer
+      open={open}
+      onClose={onClose}
+      title="Edit User"
+      actions={
+        <>
+          <Button onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button variant="contained" onClick={handleSave} disabled={saving}
+            startIcon={saving ? <CircularProgress size={16} /> : null}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      <Stack spacing={2} pt={1}>
+        <ValidatedInput
+          label="Email" rule="email" fullWidth value={user?.email || ""}
+          InputProps={{ readOnly: true }}
+          helperText="Email cannot be changed here."
+        />
+        <ValidatedInput
+          label="Full Name" rule="text" fullWidth required
+          value={fullName} onChange={setFullName}
+        />
+        <FormControl fullWidth>
+          <InputLabel>Role</InputLabel>
+          <Select value={role} label="Role" onChange={(e) => setRole(e.target.value)}>
+            <MenuItem value="staff">Staff</MenuItem>
+            <MenuItem value="superadmin">Super Admin</MenuItem>
+          </Select>
+        </FormControl>
+      </Stack>
+    </DetailDrawer>
   );
 }
 
@@ -272,6 +279,7 @@ export default function UserManagement({ showSnackbar }) {
       fullName,
       role,
       suspended: false,
+      requiresPasswordReset: true,
       createdAt: serverTimestamp(),
     });
     showSnackbar?.(`User ${fullName} created successfully.`, "success");
@@ -335,19 +343,19 @@ export default function UserManagement({ showSnackbar }) {
   const confirmMeta = confirmTarget
     ? confirmTarget.action === "delete"
       ? {
-          title: `Delete ${confirmTarget.user.fullName}?`,
-          message: `This will hide the account from the system. Their Firebase Auth account must be deleted separately from the Firebase Console.`,
-          confirmLabel: "Delete",
-          confirmColor: "error",
-        }
+        title: `Delete ${confirmTarget.user.fullName}?`,
+        message: `This will hide the account from the system. Their Firebase Auth account must be deleted separately from the Firebase Console.`,
+        confirmLabel: "Delete",
+        confirmColor: "error",
+      }
       : confirmTarget.action === "suspend"
-      ? {
+        ? {
           title: `Suspend ${confirmTarget.user.fullName}?`,
           message: `They will be blocked from logging in immediately.`,
           confirmLabel: "Suspend",
           confirmColor: "warning",
         }
-      : {
+        : {
           title: `Reactivate ${confirmTarget.user.fullName}?`,
           message: `They will be able to log in again.`,
           confirmLabel: "Reactivate",
@@ -558,9 +566,8 @@ export default function UserManagement({ showSnackbar }) {
       </Card>
 
       {/* Dialogs */}
-      <AddUserDialog open={addOpen} onClose={() => setAddOpen(false)} onSave={handleAddUser} />
-
-      <EditUserDialog
+      <AddUserDrawer open={addOpen} onClose={() => setAddOpen(false)} onSave={handleAddUser} />
+      <EditUserDrawer
         open={!!editTarget}
         onClose={() => setEditTarget(null)}
         user={editTarget}

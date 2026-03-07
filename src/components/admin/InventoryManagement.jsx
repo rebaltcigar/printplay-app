@@ -10,6 +10,7 @@ import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, 
 import { db, auth } from '../../firebase';
 import { fmtPeso } from '../../utils/analytics';
 import { generateDisplayId } from '../../utils/idGenerator';
+import ValidatedInput from '../common/ValidatedInput';
 import PageHeader from '../common/PageHeader';
 import SummaryCards from '../common/SummaryCards';
 import DetailDrawer from '../common/DetailDrawer';
@@ -111,20 +112,20 @@ export default function InventoryManagement({ showSnackbar }) {
         }
     };
 
-    // Handlers for form inputs to auto-cal total/unit
+    // Handlers for form inputs
     const onUnitChange = (val) => {
-        const qty = Number(restockForm.qtyAdded || 0);
-        setRestockForm({ ...restockForm, unitCost: val, totalCost: (qty * Number(val)).toFixed(2) });
+        const qty = parseFloat(restockForm.qtyAdded) || 0;
+        setRestockForm({ ...restockForm, unitCost: val, totalCost: (qty * parseFloat(val || 0)).toFixed(2) });
     };
 
     const onTotalChange = (val) => {
-        const qty = Number(restockForm.qtyAdded || 1); // avoid NaN
-        setRestockForm({ ...restockForm, totalCost: val, unitCost: (Number(val) / qty).toFixed(2) });
+        const qty = parseFloat(restockForm.qtyAdded) || 1; // avoid NaN
+        setRestockForm({ ...restockForm, totalCost: val, unitCost: (parseFloat(val || 0) / qty).toFixed(2) });
     };
 
     const onQtyChange = (val) => {
-        const unit = Number(restockForm.unitCost || 0);
-        setRestockForm({ ...restockForm, qtyAdded: val, totalCost: (Number(val) * unit).toFixed(2) });
+        const unit = parseFloat(restockForm.unitCost) || 0;
+        setRestockForm({ ...restockForm, qtyAdded: val, totalCost: (parseFloat(val || 0) * unit).toFixed(2) });
     };
 
     // --- Summary Calculations ---
@@ -268,31 +269,31 @@ export default function InventoryManagement({ showSnackbar }) {
                         </Stack>
                     </Box>
 
-                    <TextField
+                    <ValidatedInput
                         label="Quantity Added"
-                        type="number"
+                        rule="numeric"
                         fullWidth
                         autoFocus
                         value={restockForm.qtyAdded}
-                        onChange={e => onQtyChange(e.target.value)}
+                        onChange={onQtyChange}
                         placeholder="How many units were received?"
                     />
 
                     <Stack direction="row" spacing={2}>
-                        <TextField
+                        <ValidatedInput
                             label="Unit Cost"
-                            type="number"
+                            rule="numeric"
                             fullWidth
                             value={restockForm.unitCost}
-                            onChange={e => onUnitChange(e.target.value)}
+                            onChange={onUnitChange}
                             InputProps={{ startAdornment: <InputAdornment position="start">₱</InputAdornment> }}
                         />
-                        <TextField
+                        <ValidatedInput
                             label="Total Cost"
-                            type="number"
+                            rule="numeric"
                             fullWidth
                             value={restockForm.totalCost}
-                            onChange={e => onTotalChange(e.target.value)}
+                            onChange={onTotalChange}
                             InputProps={{ startAdornment: <InputAdornment position="start">₱</InputAdornment> }}
                         />
                     </Stack>

@@ -11,6 +11,7 @@ import Login from "./components/Login.jsx";
 import POS from "./components/POS.jsx";
 import ClockInDashboard from "./components/ClockInDashboard.jsx";
 import AdminDashboard from "./components/AdminDashboard.jsx";
+import ForcePasswordReset from "./components/common/ForcePasswordReset.jsx";
 import { AnalyticsProvider } from "./contexts/AnalyticsContext";
 
 import { auth, db } from "./firebase";
@@ -40,6 +41,7 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false); // true once first onAuthStateChanged fires
   const [currentUser, setCurrentUser] = useState(null);
   const [userRole, setUserRole] = useState(null); // 'staff' | 'superadmin' | null
+  const [requiresPasswordReset, setRequiresPasswordReset] = useState(false);
 
   // Staff-only session/shift info
   const [activeShiftId, setActiveShiftId] = useState(null);
@@ -81,6 +83,7 @@ export default function App() {
           // reset everything on sign out
           setCurrentUser(null);
           setUserRole(null);
+          setRequiresPasswordReset(false);
           setActiveShiftId(null);
           setActiveShiftPeriod("");
           setShiftStartTime(null);
@@ -103,6 +106,7 @@ export default function App() {
         const role = userData?.role || null;
         setCurrentUser(user);
         setUserRole(role);
+        setRequiresPasswordReset(userData?.requiresPasswordReset || false);
         setStaffDisplayName(userData?.fullName || userData?.name || userData?.displayName || user.displayName || user.email || '');
 
         if (role === "staff") {
@@ -372,6 +376,7 @@ export default function App() {
     } finally {
       setCurrentUser(null);
       setUserRole(null);
+      setRequiresPasswordReset(false);
     }
   };
 
@@ -397,73 +402,77 @@ export default function App() {
     <ThemeProvider theme={darkTheme}>
       <CssBaseline />
       <BrowserRouter>
-        <Routes>
-          {/* Public / Login Route */}
-          <Route path="/login" element={
-            !currentUser || (userRole === 'staff' && !activeShiftId && !clockInMode) ? (
-              <Login
-                onLogin={handleLogin}
-                onStartShift={handleStartShift}
-                onClockIn={handleClockIn}
-                onCancelLogin={handleCancelLogin}
-              />
-            ) : (
-              <Navigate to={['superadmin', 'admin', 'owner'].includes(userRole) ? "/admin" : "/pos"} replace />
-            )
-          } />
+        {currentUser && requiresPasswordReset ? (
+          <ForcePasswordReset onComplete={() => setRequiresPasswordReset(false)} />
+        ) : (
+          <Routes>
+            {/* Public / Login Route */}
+            <Route path="/login" element={
+              !currentUser || (userRole === 'staff' && !activeShiftId && !clockInMode) ? (
+                <Login
+                  onLogin={handleLogin}
+                  onStartShift={handleStartShift}
+                  onClockIn={handleClockIn}
+                  onCancelLogin={handleCancelLogin}
+                />
+              ) : (
+                <Navigate to={['superadmin', 'admin', 'owner'].includes(userRole) ? "/admin" : "/pos"} replace />
+              )
+            } />
 
-          {/* Staff POS / Clock-In Route */}
-          <Route path="/pos" element={
-            currentUser && userRole === 'staff' ? (
-              clockInMode ? (
-                <ClockInDashboard
-                  user={currentUser}
-                  clockInLogId={clockInLogId}
-                  onClockOut={handleClockOut}
-                />
-              ) : activeShiftId ? (
-                <POS
-                  user={currentUser}
-                  userRole={userRole}
-                  activeShiftId={activeShiftId}
-                  shiftPeriod={activeShiftPeriod}
-                  shiftStartTime={shiftStartTime}
-                  appSettings={appSettings}
-                  staffDisplayName={staffDisplayName}
-                />
+            {/* Staff POS / Clock-In Route */}
+            <Route path="/pos" element={
+              currentUser && userRole === 'staff' ? (
+                clockInMode ? (
+                  <ClockInDashboard
+                    user={currentUser}
+                    clockInLogId={clockInLogId}
+                    onClockOut={handleClockOut}
+                  />
+                ) : activeShiftId ? (
+                  <POS
+                    user={currentUser}
+                    userRole={userRole}
+                    activeShiftId={activeShiftId}
+                    shiftPeriod={activeShiftPeriod}
+                    shiftStartTime={shiftStartTime}
+                    appSettings={appSettings}
+                    staffDisplayName={staffDisplayName}
+                  />
+                ) : (
+                  <Navigate to="/login" replace />
+                )
               ) : (
                 <Navigate to="/login" replace />
               )
-            ) : (
-              <Navigate to="/login" replace />
-            )
-          } />
+            } />
 
-          {/* Admin Routes */}
-          <Route path="/admin/*" element={
-            currentUser && ['superadmin', 'admin', 'owner'].includes(userRole) ? (
-              <Box sx={{ width: "100%", height: "100%", display: "flex" }}>
-                <AnalyticsProvider>
-                  <AdminDashboard user={currentUser} userRole={userRole} onLogout={handleAdminLogout} appSettings={appSettings} />
-                </AnalyticsProvider>
-              </Box>
-            ) : (
-              <Navigate to="/login" replace />
-            )
-          } />
+            {/* Admin Routes */}
+            <Route path="/admin/*" element={
+              currentUser && ['superadmin', 'admin', 'owner'].includes(userRole) ? (
+                <Box sx={{ width: "100%", height: "100%", display: "flex" }}>
+                  <AnalyticsProvider>
+                    <AdminDashboard user={currentUser} userRole={userRole} onLogout={handleAdminLogout} appSettings={appSettings} />
+                  </AnalyticsProvider>
+                </Box>
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            } />
 
-          {/* Root Redirect */}
-          <Route path="/" element={
-            currentUser ? (
-              <Navigate to={['superadmin', 'admin', 'owner'].includes(userRole) ? "/admin" : "/pos"} replace />
-            ) : (
-              <Navigate to="/login" replace />
-            )
-          } />
+            {/* Root Redirect */}
+            <Route path="/" element={
+              currentUser ? (
+                <Navigate to={['superadmin', 'admin', 'owner'].includes(userRole) ? "/admin" : "/pos"} replace />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            } />
 
-          {/* Catch all */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+            {/* Catch all */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        )}
       </BrowserRouter>
     </ThemeProvider>
   );

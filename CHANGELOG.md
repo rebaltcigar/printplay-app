@@ -13,21 +13,20 @@
 
 ---
 
+## [0.4.4] — 2026-03-07
+
+### Added
+- **Force Password Reset** — New admin and staff users created with a temporary password are now required to set a permanent password upon their very first login, maximizing platform security.
+
+### Changed
+- **Centralized Input Validation** — Built and deployed a universal `ValidatedInput` wrapper to standardize sanitization across the app, ensuring text is trimmed and phone/numeric inputs reject invalid characters. Successfully integrated into Customer Forms, Checkout Dialogs, and Inventory Restocking.
+- **User Management Drawers** — Transitioned the legacy 'Add User' and 'Edit User' popup dialogs into standard sliding `DetailDrawer` components, unifying the Admin interface layout.
+
 ## [0.4.3] — 2026-03-07
 
 ### Removed
 - **Legacy Debt Management** — Deleted obsolete `AdminDebtLookupDialog` and `DebtMigrationTool` components, and removed "New Debt" / "Paid Debt" creation flows from the POS. Historical grouping logic was preserved to ensure past shifts and P&L statements remain accurate.
  
-## [0.4.2] — 2026-03-07
-
-### Fixed
-- **Invoice "Write Off" Visibility** — Restored the "Write Off" button by correcting the role check and propagating `userRole` through the component tree from `App.jsx`. Access is now granted to `superadmin`, `admin`, and `owner`.
-- **Smooth Invoice Filtering** — Converted the Invoices management page to use client-side filtering. This eliminates the "glitchy" loading flicker when switching status filters and ensures Summary Cards remain stable.
-- **POS Component Stability** — Fixed a duplicate default export and a variable naming collision in `POS.jsx` that was causing build failures.
-
-### Changed
-- **Invoice Drawer UI** — Removed the redundant "Close" button from the drawer footer in favor of the header "X" icon as the primary interaction.
-
 ## [0.4.1] — 2026-03-07
  
 ### Fixed

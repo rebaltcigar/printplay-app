@@ -7,6 +7,7 @@ import {
 import PaymentsIcon from '@mui/icons-material/Payments';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import HistoryIcon from '@mui/icons-material/History';
+import ValidatedInput from './common/ValidatedInput';
 
 export default function CheckoutDialog({ open, onClose, total, onConfirm, customer, defaultDueDays = 7 }) {
     const [method, setMethod] = useState('Cash');
@@ -37,9 +38,10 @@ export default function CheckoutDialog({ open, onClose, total, onConfirm, custom
     const change = Math.max(0, tenderNum - total);
     const remaining = Math.max(0, total - tenderNum);
 
+    // Only need to handle method-specific logic now
     const isCashValid = tenderNum >= total;
-    const isGcashRefValid = /^\d{13}$/.test(gcashRef.trim());
-    const isGcashPhoneValid = /^\d{11}$/.test(gcashPhone.trim());
+    const isGcashRefValid = gcashRef.length === 13;
+    const isGcashPhoneValid = gcashPhone.length === 11;
     const isGcashValid = isGcashRefValid && isGcashPhoneValid;
 
     // Must have a valid customer ID (not walk-in/null) to allow Charge
@@ -127,12 +129,12 @@ export default function CheckoutDialog({ open, onClose, total, onConfirm, custom
 
                     {method === 'Cash' && (
                         <Box>
-                            <TextField
+                            <ValidatedInput
                                 inputRef={tenderedRef}
                                 label="Amount Tendered"
-                                type="number"
+                                rule="numeric"
                                 value={tendered}
-                                onChange={(e) => setTendered(e.target.value)}
+                                onChange={setTendered}
                                 fullWidth
                                 InputProps={{ sx: { fontSize: '1.5rem', height: '3.5rem' } }}
                                 error={tenderNum > 0 && tenderNum < total}
@@ -158,21 +160,19 @@ export default function CheckoutDialog({ open, onClose, total, onConfirm, custom
                     {method === 'GCash' && (
                         <Stack spacing={2}>
                             <Alert severity="info" sx={{ py: 0 }}>Please verify funds receipt.</Alert>
-                            <TextField
+                            <ValidatedInput
                                 label="Ref No. (13 Digits)"
+                                rule="gcash"
                                 value={gcashRef}
-                                onChange={(e) => setGcashRef(e.target.value.replace(/\D/g, '').slice(0, 13))}
+                                onChange={setGcashRef}
                                 fullWidth
-                                error={!!gcashRef && !isGcashRefValid}
-                                helperText={!!gcashRef && !isGcashRefValid ? "Must be 13 digits" : ""}
                             />
-                            <TextField
+                            <ValidatedInput
                                 label="Phone (11 Digits)"
+                                rule="phone"
                                 value={gcashPhone}
-                                onChange={(e) => setGcashPhone(e.target.value.replace(/\D/g, '').slice(0, 11))}
+                                onChange={setGcashPhone}
                                 fullWidth
-                                error={!!gcashPhone && !isGcashPhoneValid}
-                                helperText={!!gcashPhone && !isGcashPhoneValid ? "Must be 11 digits" : ""}
                             />
                         </Stack>
                     )}

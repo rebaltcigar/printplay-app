@@ -1,20 +1,21 @@
 import React from 'react';
-import { TextField, Stack } from '@mui/material';
-
+import { Stack } from '@mui/material';
+import ValidatedInput from './ValidatedInput';
 /**
  * A standardized set of form fields for customer data.
  * Used by both POS and Admin drawers to ensure consistency.
  */
 export default function CustomerForm({ formData, onChange, disabled = false, autoFocusName = false }) {
 
-    const handleChange = (field) => (e) => {
-        onChange({ ...formData, [field]: e.target.value });
+    const handleChange = (field) => (val) => {
+        onChange({ ...formData, [field]: val });
     };
 
     return (
         <Stack spacing={2.5}>
-            <TextField
+            <ValidatedInput
                 label="Full Name"
+                rule="text"
                 required
                 fullWidth
                 value={formData.fullName || ''}
@@ -23,30 +24,34 @@ export default function CustomerForm({ formData, onChange, disabled = false, aut
                 autoFocus={autoFocusName}
             />
             <Stack direction="row" spacing={2}>
-                <TextField
+                <ValidatedInput
                     label="Phone"
+                    rule="phone"
                     fullWidth
                     value={formData.phone || ''}
                     onChange={handleChange('phone')}
                     disabled={disabled}
                 />
-                <TextField
+                <ValidatedInput
                     label="Email"
+                    rule="email"
                     fullWidth
                     value={formData.email || ''}
                     onChange={handleChange('email')}
                     disabled={disabled}
                 />
             </Stack>
-            <TextField
+            <ValidatedInput
                 label="TIN"
+                rule="tin"
                 fullWidth
                 value={formData.tin || ''}
                 onChange={handleChange('tin')}
                 disabled={disabled}
             />
-            <TextField
+            <ValidatedInput
                 label="Address"
+                rule="text"
                 fullWidth
                 multiline
                 rows={3}

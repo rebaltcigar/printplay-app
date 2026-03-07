@@ -11,6 +11,7 @@
 
 | Version | Branch | Status |
 |---------|--------|--------|
+| v0.4.4 | `main` | Released |
 | v0.4.0 | `feature/basic-crm` | Merged |
 | v0.3.0 | `feature/invoice-management` | Merged |
 | v0.2.2 | `feature/rebrand` | Merged |
