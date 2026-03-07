@@ -25,7 +25,9 @@
       "WebSearch",
       "Bash(git checkout -b feature/catalog-foundation)",
       "Bash(sed -i 's/\"\"version\"\": \"\"0.2.1\"\"/\"\"version\"\": \"\"0.2.2\"\"/' package.json)",
-      "Bash(grep '\"\"version\"\"' package.json)"
+      "Bash(grep '\"\"version\"\"' package.json)",
+      "Bash(firebase --version)",
+      "Bash(firebase projects:list)"
     ]
   }
 }

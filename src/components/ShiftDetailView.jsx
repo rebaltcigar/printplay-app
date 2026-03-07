@@ -136,16 +136,18 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
   // Transactions onSnapshot
   useEffect(() => {
     if (!shift?.id) return;
-    const qTx = query(
+    const q = query(
       collection(db, "transactions"),
       where("shiftId", "==", shift.id),
-      where("isDeleted", "==", false),
-      orderBy("timestamp", "desc")
+      orderBy("timestamp", "asc")
     );
-    const unsubTx = onSnapshot(qTx, (snap) => {
-      setTransactions(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const docs = snapshot.docs
+        .map(doc => ({ ...doc.data(), id: doc.id }))
+        .filter(d => d.isDeleted !== true);
+      setTransactions(docs);
     });
-    return () => unsubTx();
+    return () => unsubscribe();
   }, [shift]);
 
   // Orders onSnapshot

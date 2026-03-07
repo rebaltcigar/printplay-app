@@ -12,6 +12,11 @@
 - No roadmap content — belongs in ROADMAP.md.
 
 ---
+
+## [0.4.3] — 2026-03-07
+
+### Removed
+- **Legacy Debt Management** — Deleted obsolete `AdminDebtLookupDialog` and `DebtMigrationTool` components, and removed "New Debt" / "Paid Debt" creation flows from the POS. Historical grouping logic was preserved to ensure past shifts and P&L statements remain accurate.
  
 ## [0.4.2] — 2026-03-07
 

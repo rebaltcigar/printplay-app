@@ -45,8 +45,6 @@ export function usePOSServices() {
             (i) =>
                 i.active &&
                 i.category !== 'Expense' &&
-                i.serviceName !== 'New Debt' &&
-                i.serviceName !== 'Paid Debt' &&
                 i.id !== expenseParentId &&
                 i.parentServiceId !== expenseParentId &&
                 i.adminOnly === false
@@ -92,8 +90,6 @@ export function usePOSServices() {
         allServices.filter(i =>
             i.active &&
             i.category !== 'Expense' &&
-            i.serviceName !== 'New Debt' &&
-            i.serviceName !== 'Paid Debt' &&
             i.id !== expenseParentId &&
             i.parentServiceId !== expenseParentId &&
             !i.parentServiceId &&

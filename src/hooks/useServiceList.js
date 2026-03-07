@@ -7,7 +7,7 @@
 //   allServices         - Raw array of all service docs (id + data)
 //   serviceMeta         - [{ name, category }] for aggregateShiftTransactions (Shifts.jsx)
 //   parentServices      - Parent service objects with id/serviceName/price (ShiftDetailView.jsx)
-//   parentServiceNames  - [string] parent names + "New Debt"/"Paid Debt" (Transactions.jsx edit dialog)
+//   parentServiceNames  - [string] parent names (Transactions.jsx edit dialog)
 //   expenseServiceNames - [string] expense sub-service names (ShiftDetailView, Transactions)
 //   variantChildren     - All items with a parentServiceId (non-expense). Used by admin dropdowns.
 //   loading             - true until first snapshot arrives
@@ -46,8 +46,8 @@ export function useServiceList() {
     // Parent service names + specials for Transactions/admin edit dialog item dropdown
     const parentServiceNames = useMemo(() => {
         const names = parentServices.map(s => s.serviceName).filter(Boolean);
-        return Array.from(new Set([...names, 'New Debt', 'Paid Debt']));
-    }, [parentServices]);
+        return Array.from(new Set([...names]));
+    }, [allServices]);
 
     // Expense sub-service name strings for expense type dropdowns
     const expenseServiceNames = useMemo(() => {

@@ -284,7 +284,7 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
 
   const currentOrder = orders[activeTab] || orders[0];
   const currentTotal = currentOrder?.items?.reduce((sum, i) => sum + (i.price * i.quantity), 0) || 0;
-  const isDebtItem = item === 'New Debt' || item === 'Paid Debt';
+  const isManualEntryItem = posItems.some(i => i.serviceName === item) || item === '';
   const isAdmin = userRole === 'superadmin';
 
   // =========================================================================
@@ -342,12 +342,13 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
     if (!activeShiftId) return;
     const qTx = query(
       collection(db, "transactions"),
-      where("shiftId", "==", activeShiftId),
-      where("isDeleted", "==", false)
+      where("shiftId", "==", activeShiftId)
       // orderBy("timestamp", "desc") // Client-side sort to avoid index requirements
     );
     const unsubscribe = onSnapshot(qTx, (snapshot) => {
-      const docs = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+      const docs = snapshot.docs
+        .map(doc => ({ ...doc.data(), id: doc.id }))
+        .filter(d => d.isDeleted !== true);
       docs.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
       setTransactions(docs);
     });
@@ -821,24 +822,25 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
     try {
       const q = query(
         collection(db, 'transactions'),
-        where('orderNumber', '==', order.orderNumber),
-        where('isDeleted', '==', false)
+        where('orderNumber', '==', order.orderNumber)
       );
       const snap = await getDocs(q);
-      const loadedItems = snap.docs.map(d => {
-        const data = d.data();
-        return {
-          id: Date.now() + Math.random(), // Temp UI ID
-          transactionId: d.id, // Real DB ID
-          name: data.item,
-          serviceName: data.item, // For backward compatibility in UI
-          price: Number(data.price),
-          quantity: Number(data.quantity),
-          subtotal: Number(data.total), // ADDED
-          total: Number(data.total), // ADDED
-          notes: data.notes || '',
-        };
-      });
+      const loadedItems = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(d => d.isDeleted !== true)
+        .map(data => {
+          return {
+            id: Date.now() + Math.random(), // Temp UI ID
+            transactionId: data.id, // Real DB ID
+            name: data.item,
+            serviceName: data.item, // For backward compatibility in UI
+            price: Number(data.price),
+            quantity: Number(data.quantity),
+            subtotal: Number(data.total), // ADDED
+            total: Number(data.total), // ADDED
+            notes: data.notes || '',
+          };
+        });
 
       const newTab = {
         id: 'ord-' + order.orderNumber,
@@ -1233,20 +1235,6 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
                   </Stack>
                 )}
 
-                {/* Contextual: Debt customer */}
-                {(item === 'New Debt' || item === 'Paid Debt') && (
-                  <Box sx={{ border: '1px dashed', borderColor: 'divider', p: 1, borderRadius: 1, mb: 1 }}>
-                    {selectedCustomer ? (
-                      <Box display="flex" justifyContent="space-between" alignItems="center">
-                        <Typography variant="body2" fontWeight="bold">{selectedCustomer.fullName}</Typography>
-                        <IconButton size="small" onClick={() => setSelectedCustomer(null)}><ClearIcon fontSize="small" /></IconButton>
-                      </Box>
-                    ) : (
-                      <Button fullWidth size="small" variant="outlined" onClick={() => setOpenCustomerDialog(true)}>Select Customer</Button>
-                    )}
-                  </Box>
-                )}
-
                 {/* Notes for expenses — shown above main row */}
                 {item === 'Expenses' && (
                   <TextField
@@ -1299,7 +1287,7 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
                     disabled={!item || !quantity || !price}
                     sx={{ height: 40, px: 2, whiteSpace: 'nowrap', flexShrink: 0 }}
                   >
-                    {item === 'Expenses' || isDebtItem ? 'Log' : 'Add'}
+                    {item === 'Expenses' ? 'Log' : 'Add'}
                   </Button>
                 </Stack>
               </Box>
@@ -1343,19 +1331,6 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
                         </FormControl>
                       )}
                     </Stack>
-                  )}
-
-                  {(item === 'New Debt' || item === 'Paid Debt') && (
-                    <Box sx={{ border: '1px dashed', borderColor: 'divider', p: 1, borderRadius: 1 }}>
-                      {selectedCustomer ? (
-                        <Box display="flex" justifyContent="space-between" alignItems="center">
-                          <Typography variant="body2" fontWeight="bold">{selectedCustomer.fullName}</Typography>
-                          <IconButton size="small" onClick={() => setSelectedCustomer(null)}><ClearIcon fontSize="small" /></IconButton>
-                        </Box>
-                      ) : (
-                        <Button fullWidth size="small" variant="outlined" onClick={() => setOpenCustomerDialog(true)}>Select Customer</Button>
-                      )}
-                    </Box>
                   )}
 
                   {/* MAIN MANUAL INPUT ROW */}
@@ -1403,7 +1378,7 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
                       sx={{ flex: 1.5, height: 40, whiteSpace: 'nowrap', minWidth: 'auto', px: 1 }}
                       disabled={!item || !quantity || !price}
                     >
-                      {item === 'Expenses' || isDebtItem ? "Log" : "Add"}
+                      {item === 'Expenses' ? "Log" : "Add"}
                     </Button>
                   </Stack>
                 </Box>
@@ -1615,19 +1590,6 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
         onClose={() => setOpenCustomerSelection(false)}
         currentCustomer={currentOrder?.customer}
         onSelectCustomer={(cust) => updateCurrentOrder({ customer: cust })}
-      />
-
-      {/* Customer Dialog (For Debt Log) */}
-      <CustomerDialog
-        open={openCustomerDialog}
-        onClose={() => setOpenCustomerDialog(false)}
-        user={user}
-        showSnackbar={showSnackbar}
-        onSelectCustomer={(c) => {
-          // Only used for Debt now
-          setSelectedCustomer(c);
-          setOpenCustomerDialog(false);
-        }}
       />
 
       <POSHistoryDrawer

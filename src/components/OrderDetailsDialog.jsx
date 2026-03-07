@@ -36,11 +36,12 @@ export default function OrderDetailsDialog({ open, onClose, order, onUpdate, onP
             setLoading(true);
             const q = query(
                 collection(db, 'transactions'),
-                where('orderNumber', '==', order.orderNumber),
-                where('isDeleted', '==', false) // Exclude soft deleted
+                where('orderNumber', '==', order.orderNumber)
             );
             getDocs(q).then(snap => {
-                const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                const docs = snap.docs
+                    .map(d => ({ id: d.id, ...d.data() }))
+                    .filter(d => d.isDeleted !== true);
                 setTransactions(docs);
                 setLoading(false);
             });
