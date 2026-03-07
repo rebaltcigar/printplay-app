@@ -44,12 +44,15 @@ service cloud.firestore {
       );
     }
 
-    /* ---------- Settings (FIXED) ---------- */
-    match /settings/{id} {
+    /* ---------- Settings ---------- */
+    match /settings/config {
       // Allow public read for general configuration (Logo, Store Name, etc.)
       // to prevent Dashboard/POS from failing if auth isn't fully synced yet.
       allow read: if true;
       allow write: if isAdmin();
+    }
+    match /settings/{id} {
+      allow read, write: if isAdmin();
     }
 
     /* ---------- Users ---------- */

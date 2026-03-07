@@ -1,0 +1,30 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    /* ---------- Helpers ---------- */
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isSignedIn() && 
+        firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role in ['superadmin', 'admin', 'owner'];
+    }
+
+    /* ---------- Logos ---------- */
+    match /logos/{allPaths=**} {
+      // Allow anyone to see the store logo
+      allow read: if true;
+      // Only admins can upload/delete logos
+      allow write: if isAdmin();
+    }
+
+    /* ---------- Other Files ---------- */
+    match /{allPaths=**} {
+      allow read, write: if isAdmin();
+    }
+  }
+}

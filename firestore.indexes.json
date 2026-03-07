@@ -163,6 +163,20 @@
           "order": "ASCENDING"
         },
         {
+          "fieldPath": "orderNumber",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "orders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "shiftId",
+          "order": "ASCENDING"
+        },
+        {
           "fieldPath": "timestamp",
           "order": "DESCENDING"
         }
