@@ -9,12 +9,9 @@ import {
   Tooltip,
   CartesianGrid,
 } from "recharts";
+import { fmtPesoWhole } from "../utils/formatters";
 
-const peso = (n) =>
-  `₱${Number(n || 0).toLocaleString("en-PH", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  })}`;
+const peso = fmtPesoWhole;
 
 export default function TrendChart({
   data = [],

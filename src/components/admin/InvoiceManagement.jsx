@@ -9,8 +9,8 @@ import SearchIcon from '@mui/icons-material/Search';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import PageHeader from '../common/PageHeader';
 import { useInvoices } from '../../hooks/useInvoices';
-import { displayStatus, isOverdue } from '../../utils/invoiceService';
-import { fmtCurrency } from '../../utils/formatters';
+import { displayStatus, isOverdue } from '../../services/invoiceService';
+import { fmtCurrency, fmtDate } from '../../utils/formatters';
 import InvoiceDetailDrawer from './InvoiceDetailDrawer';
 import SummaryCards from '../common/SummaryCards';
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
@@ -34,11 +34,7 @@ const STATUS_LABELS = {
   overdue: 'Overdue',
 };
 
-function toDateStr(val) {
-  if (!val) return '—';
-  const d = val?.toDate ? val.toDate() : new Date(val);
-  return isNaN(d) ? '—' : d.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
-}
+
 
 export default function InvoiceManagement({ user, userRole, showSnackbar }) {
   const [statusFilter, setStatusFilter] = useState(null); // null = all
@@ -192,9 +188,9 @@ export default function InvoiceManagement({ user, userRole, showSnackbar }) {
                       <Typography variant="body2" fontFamily="monospace">{inv.invoiceNumber || inv.id.slice(-6).toUpperCase()}</Typography>
                     </TableCell>
                     <TableCell>{inv.customerName || '—'}</TableCell>
-                    <TableCell>{toDateStr(inv.createdAt)}</TableCell>
+                    <TableCell>{fmtDate(inv.createdAt)}</TableCell>
                     <TableCell sx={{ color: isOverdue(inv) ? 'error.main' : 'text.primary' }}>
-                      {toDateStr(inv.dueDate)}
+                      {fmtDate(inv.dueDate)}
                     </TableCell>
                     <TableCell align="right">{fmtCurrency(inv.total)}</TableCell>
                     <TableCell align="right">{fmtCurrency(inv.amountPaid)}</TableCell>

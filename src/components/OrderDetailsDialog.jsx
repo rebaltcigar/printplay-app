@@ -17,7 +17,7 @@ import OrderCustomerDialog from './OrderCustomerDialog';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, doc, updateDoc, writeBatch, serverTimestamp, orderBy } from 'firebase/firestore';
 
-import { fmtCurrency } from '../utils/formatters';
+import { fmtCurrency, fmtDateTime } from '../utils/formatters';
 const currency = fmtCurrency;
 
 export default function OrderDetailsDialog({ open, onClose, order, onUpdate, onPrint, showSnackbar }) {
@@ -157,7 +157,7 @@ export default function OrderDetailsDialog({ open, onClose, order, onUpdate, onP
                 <Box display="flex" justifyContent="space-between" alignItems="center">
                     <Typography variant="h6">Order #{order?.orderNumber}</Typography>
                     <Typography variant="body2" color="text.secondary">
-                        {order?.timestamp?.seconds ? new Date(order.timestamp.seconds * 1000).toLocaleString() : ''}
+                        {order?.timestamp ? fmtDateTime(order.timestamp) : ''}
                     </Typography>
                 </Box>
             </DialogTitle>

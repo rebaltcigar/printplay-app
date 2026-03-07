@@ -9,8 +9,9 @@ import {
     collection, query, getDocs, updateDoc, writeBatch, doc, getDoc, setDoc, orderBy
 } from 'firebase/firestore'; import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../../firebase';
-import { registerFingerprint } from '../../utils/biometrics';
-import { generateDisplayId, generateBatchIds } from '../../utils/idGenerator';
+import { registerFingerprint } from '../../services/biometricService';
+import { generateDisplayId, generateBatchIds } from '../../services/orderService';
+import { convertLogoUrl } from '../../services/brandingService';
 import PageHeader from '../common/PageHeader';
 
 export default function StoreSettings({ section, showSnackbar, user }) {
@@ -270,24 +271,9 @@ export default function StoreSettings({ section, showSnackbar, user }) {
         }
     };
 
-    const convertGoogleDriveLink = (url) => {
-        if (!url) return '';
-        // Handle /file/d/ID/view
-        const fileDMatch = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
-        if (fileDMatch && fileDMatch[1]) {
-            return `https://drive.google.com/thumbnail?id=${fileDMatch[1]}&sz=w1000`;
-        }
-        // Handle /open?id=ID
-        const openIdMatch = url.match(/id=([a-zA-Z0-9_-]+)/);
-        if (url.includes('drive.google.com') && openIdMatch && openIdMatch[1]) {
-            return `https://drive.google.com/thumbnail?id=${openIdMatch[1]}&sz=w1000`;
-        }
-        return url;
-    };
-
     const handleVerifyLogo = () => {
         setPreviewError(false);
-        const converted = convertGoogleDriveLink(tempLogoUrl);
+        const converted = convertLogoUrl(tempLogoUrl);
         setSettings(prev => ({ ...prev, logoUrl: converted }));
         setTempLogoUrl(converted);
         if (converted && converted !== tempLogoUrl) {

@@ -17,7 +17,7 @@ import {
     Divider,
     Chip
 } from '@mui/material';
-import { fmtPeso } from '../utils/analytics';
+import { fmtPeso } from '../services/analyticsService';
 
 export default function ShiftAuditDebugger({ open, onClose, shift, transactions, serviceItems }) {
     const normalize = (s) => String(s ?? "").trim().toLowerCase();

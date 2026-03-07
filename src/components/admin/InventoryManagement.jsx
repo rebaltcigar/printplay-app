@@ -8,8 +8,8 @@ import AddIcon from '@mui/icons-material/Add';
 import HistoryIcon from '@mui/icons-material/History'; // For audits
 import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, addDoc } from 'firebase/firestore';
 import { db, auth } from '../../firebase';
-import { fmtPeso } from '../../utils/analytics';
-import { generateDisplayId } from '../../utils/idGenerator';
+import { fmtCurrency, fmtPesoWhole } from '../../utils/formatters';
+import { generateDisplayId } from '../../services/orderService';
 import ValidatedInput from '../common/ValidatedInput';
 import PageHeader from '../common/PageHeader';
 import SummaryCards from '../common/SummaryCards';
@@ -104,7 +104,7 @@ export default function InventoryManagement({ showSnackbar }) {
                 inventoryItemId: item.id
             });
 
-            showSnackbar?.(`Restocked ${item.serviceName}. New Cost: ${fmtPeso(newAverageCost)}`, 'success');
+            showSnackbar?.(`Restocked ${item.serviceName}. New Cost: ${fmtCurrency(newAverageCost)}`, 'success');
             setRestockDialog({ open: false, item: null });
         } catch (e) {
             console.error('Restock failed:', e);
@@ -138,14 +138,14 @@ export default function InventoryManagement({ showSnackbar }) {
         return [
             {
                 label: "Total Value (Cost)",
-                value: fmtPeso(totalValue),
+                value: fmtPesoWhole(totalValue),
                 icon: <TollIcon />,
                 color: "primary.main",
                 highlight: true
             },
             {
                 label: "Est. Retail Value",
-                value: fmtPeso(totalRetailValue),
+                value: fmtPesoWhole(totalRetailValue),
                 icon: <SellIcon />,
                 color: "success.main"
             },
@@ -211,12 +211,12 @@ export default function InventoryManagement({ showSnackbar }) {
                                             </Typography>
                                             {isLow && <Typography variant="caption" color="error">Low</Typography>}
                                         </TableCell>
-                                        <TableCell align="right">{fmtPeso(cost)}</TableCell>
-                                        <TableCell align="right">{fmtPeso(stock * cost)}</TableCell>
-                                        <TableCell align="right">{fmtPeso(price)}</TableCell>
+                                        <TableCell align="right">{fmtCurrency(cost)}</TableCell>
+                                        <TableCell align="right">{fmtPesoWhole(stock * cost)}</TableCell>
+                                        <TableCell align="right">{fmtCurrency(price)}</TableCell>
                                         <TableCell align="right">
                                             <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                                                <Typography variant="body2">{fmtPeso(margin)}</Typography>
+                                                <Typography variant="body2">{fmtCurrency(margin)}</Typography>
                                                 <Typography variant="caption" color={marginPct < 20 ? 'warning.main' : 'success.main'}>
                                                     {marginPct.toFixed(1)}%
                                                 </Typography>
@@ -265,7 +265,7 @@ export default function InventoryManagement({ showSnackbar }) {
                         </Stack>
                         <Stack direction="row" justifyContent="space-between">
                             <Typography variant="body2">Current Cost:</Typography>
-                            <Typography variant="body2" fontWeight="bold">{fmtPeso(restockDialog.item?.costPrice || 0)}</Typography>
+                            <Typography variant="body2" fontWeight="bold">{fmtCurrency(restockDialog.item?.costPrice || 0)}</Typography>
                         </Stack>
                     </Box>
 
@@ -311,7 +311,7 @@ export default function InventoryManagement({ showSnackbar }) {
                                 return (
                                     <Stack direction="row" justifyContent="space-between" alignItems="center">
                                         <Typography variant="h6" color="primary.main" fontWeight="bold">
-                                            {fmtPeso(newVal / newQ)}
+                                            {fmtCurrency(newVal / newQ)}
                                         </Typography>
                                         <Typography variant="caption" color="text.secondary">
                                             Per unit

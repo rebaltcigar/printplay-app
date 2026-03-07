@@ -7,9 +7,11 @@ import {
 import PaymentsIcon from '@mui/icons-material/Payments';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import { fmtCurrency } from '../utils/formatters';
-import { recordPayment } from '../utils/invoiceService';
+import { recordPayment } from '../services/invoiceService';
+import { useGlobalUI } from '../contexts/GlobalUIContext';
 
-export default function RecordPaymentDialog({ open, onClose, invoice, user, showSnackbar, activeShiftId, onSuccess }) {
+export default function RecordPaymentDialog({ open, onClose, invoice, user, activeShiftId, onSuccess }) {
+    const { showSnackbar } = useGlobalUI();
     const [amount, setAmount] = useState('');
     const [method, setMethod] = useState('cash');
     const [note, setNote] = useState('');

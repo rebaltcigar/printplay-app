@@ -7,7 +7,7 @@ import {
     collection, getDocs, query, orderBy, limit, startAfter, doc, setDoc, serverTimestamp, writeBatch
 } from 'firebase/firestore';
 import dayjs from 'dayjs';
-import { txAmount } from '../../utils/analytics';
+import { txAmount } from '../../services/analyticsService';
 import PageHeader from '../common/PageHeader';
 import CustomerMigrationTool from './CustomerMigrationTool';
 

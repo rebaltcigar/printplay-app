@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Box, Typography, Button } from '@mui/material';
 import { DataGrid } from '@mui/x-data-grid';
 import { useCustomers } from '../../hooks/useCustomers';
+import { fmtCurrency, fmtPesoWhole } from '../../utils/formatters';
 import SummaryCards from "../common/SummaryCards";
 import CustomerDetailDrawer from './CustomerDetailDrawer';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
@@ -19,7 +20,7 @@ export default function CustomerManagement() {
     const kpis = [
         { label: "Total Customers", value: totalCustomers, color: "blue" },
         { label: "Active This Month", value: activeThisMonth, color: "teal" },
-        { label: "Outstanding AR", value: `₱${totalOutstanding.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, color: "red" }
+        { label: "Outstanding AR", value: fmtCurrency(totalOutstanding), color: "red" }
     ];
 
     const columns = [
@@ -30,13 +31,13 @@ export default function CustomerManagement() {
             field: 'lifetimeValue',
             headerName: 'Lifetime Value',
             flex: 1,
-            valueFormatter: (val) => val ? `₱${val.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '₱0.00'
+            valueFormatter: (val) => fmtCurrency(val || 0)
         },
         {
             field: 'outstandingBalance',
             headerName: 'Outstanding Balance',
             flex: 1,
-            valueFormatter: (val) => val ? `₱${val.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '₱0.00'
+            valueFormatter: (val) => fmtCurrency(val || 0)
         }
     ];
 

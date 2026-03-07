@@ -39,7 +39,11 @@ import { useTheme } from "@mui/material/styles";
 import DeleteIcon from "@mui/icons-material/Delete";
 import AddIcon from "@mui/icons-material/Add";
 import EditIcon from "@mui/icons-material/Edit";
-import PlayArrowIcon from "@mui/icons-material/PlayArrow"; // Resume icon
+import PlayArrowIcon from "@mui/icons-material/PlayArrow";
+import SellIcon from "@mui/icons-material/Sell";
+import ReceiptIcon from "@mui/icons-material/Receipt";
+import AccountBalanceIcon from "@mui/icons-material/AccountBalance";
+import CompareArrowsIcon from "@mui/icons-material/CompareArrows";
 
 import AssignmentTurnedInIcon from "@mui/icons-material/AssignmentTurnedIn"; // Consolidation Icon
 import BuildIcon from "@mui/icons-material/Build"; // Fix Icon
@@ -64,58 +68,33 @@ import {
   setDoc,
   serverTimestamp,
 } from "firebase/firestore";
-import { generateDisplayId } from "../utils/idGenerator";
+import SummaryCards from "./common/SummaryCards";
+import {
+  calculateOnHand,
+  resumeShift,
+  createShift,
+  updateShift,
+  deleteShift,
+  toLocalInput
+} from "../services/shiftService";
+import { useShiftFilters } from "../hooks/useShiftFilters";
+import { generateDisplayId } from "../services/orderService";
+import { useGlobalUI } from "../contexts/GlobalUIContext";
 
-// shared peso formatter (commas, no decimals; UI-only)
-import { fmtPeso, normalize } from "../utils/analytics";
-import { aggregateShiftTransactions, sumDenominations, computeExpectedCash } from "../utils/shiftFinancials";
+// shared helpers
+import { fmtDate } from "../utils/formatters";
+import { fmtPeso, normalize } from "../services/analyticsService";
+import { aggregateShiftTransactions, computeExpectedCash } from "../utils/shiftFinancials";
 import { useStaffList } from "../hooks/useStaffList";
 import { useServiceList } from "../hooks/useServiceList";
 
 // Shift period options
 const SHIFT_PERIODS = ["Morning", "Afternoon", "Evening"];
 
-// Helper: calculate on-hand cash from denominations; returns `null` when
-// denominations are missing or empty to indicate "not counted".
-const calculateOnHand = (denoms) => {
-  if (!denoms || typeof denoms !== 'object') return null;
-  if (Object.keys(denoms).length === 0) return null;
-  try {
-    return sumDenominations(denoms);
-  } catch (e) {
-    return null;
-  }
-};
-
-// Returns { startStr, endStr } for the current month as "YYYY-MM-DD" strings
-const thisMonthDefaults = () => {
-  const now = new Date();
-  const startStr = new Date(now.getFullYear(), now.getMonth(), 1)
-    .toISOString().slice(0, 10);
-  const endStr = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-    .toISOString().slice(0, 10);
-  return { startStr, endStr };
-};
-
-// Converts Firestore Timestamp / seconds-object / Date → "YYYY-MM-DDTHH:MM" for datetime-local inputs
-const toLocalInput = (ts) => {
-  if (!ts) return '';
-  const d = ts?.toDate ? ts.toDate()
-    : ts?.seconds ? new Date(ts.seconds * 1000)
-    : ts instanceof Date ? ts : null;
-  if (!d || isNaN(d)) return '';
-  const pad = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
-
-// Converts "YYYY-MM-DDTHH:MM" datetime-local string → Firestore Timestamp; null for empty
-const toTimestamp = (str) => {
-  if (!str) return null;
-  return Timestamp.fromDate(new Date(str));
-};
 
 /* -------------------- component -------------------- */
-const Shifts = ({ showSnackbar }) => {
+const Shifts = ({ isActive = true }) => {
+  const { showSnackbar, showConfirm } = useGlobalUI();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
 
@@ -127,18 +106,7 @@ const Shifts = ({ showSnackbar }) => {
   const { staffOptions, userMap } = useStaffList();
   const { serviceMeta } = useServiceList();
 
-  const { startStr: defaultStart, endStr: defaultEnd } = thisMonthDefaults();
-  const [startDate, setStartDate] = useState(defaultStart);
-  const [endDate, setEndDate] = useState(defaultEnd);
-
-  // --- UPDATED: Filter State ---
-  const [filterStaff, setFilterStaff] = useState([]); // Array of emails
-  const [filterShiftPeriod, setFilterShiftPeriod] = useState([]); // Array of shift periods
-  const [filterShowShort, setFilterShowShort] = useState(true); // Show short by default
-  const [filterShowOverage, setFilterShowOverage] = useState(true); // Show overage by default
-
   const [view, setView] = useState("summary");
-
   const [addOpen, setAddOpen] = useState(false);
   const [newStaffEmail, setNewStaffEmail] = useState("");
   const [newShiftPeriod, setNewShiftPeriod] = useState(SHIFT_PERIODS[0]);
@@ -156,12 +124,8 @@ const Shifts = ({ showSnackbar }) => {
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [shiftToDelete, setShiftToDelete] = useState(null);
-
-
-
   const [deleteMode, setDeleteMode] = useState("unlink");
 
-  // Consolidation Dialog
   const [consolidationOpen, setConsolidationOpen] = useState(false);
   const [consolidationShift, setConsolidationShift] = useState(null);
   const [consolidationTx, setConsolidationTx] = useState([]);
@@ -173,64 +137,31 @@ const Shifts = ({ showSnackbar }) => {
   const isAnyShiftActive = !!(currentShift && currentShift.activeShiftId);
   const activeShiftId = currentShift?.activeShiftId || null;
 
+  const {
+    startDate, setStartDate,
+    endDate, setEndDate,
+    filterStaff, setFilterStaff,
+    filterShiftPeriod, setFilterShiftPeriod,
+    filterShowShort, setFilterShowShort,
+    filterShowOverage, setFilterShowOverage,
+    filteredShifts,
+    grand,
+    perServiceTotals,
+    serviceNames
+  } = useShiftFilters(shifts, txAggByShift, serviceMeta);
+
+
   useEffect(() => {
     const ref = doc(db, "app_status", "current_shift");
-    const unsub = onSnapshot(
-      ref,
+    const unsub = onSnapshot(ref,
       (snap) => setCurrentShift(snap.exists() ? { id: snap.id, ...snap.data() } : null),
       (e) => console.warn("current_shift listener failed", e)
     );
     return () => unsub();
   }, []);
 
-  // --- UPDATED: Memoized array for filtered shifts ---
-  const filteredShifts = useMemo(() => {
-    return shifts.filter((s) => {
-      if (filterStaff.length > 0 && !filterStaff.includes(s.staffEmail)) return false;
-      if (filterShiftPeriod.length > 0 && !filterShiftPeriod.includes(s.shiftPeriod)) return false;
-
-      const agg = txAggByShift[s.id] || {};
-      const onHand = Object.keys(s.denominations || {}).length === 0
-        ? null
-        : sumDenominations(s.denominations);
-
-      if (onHand === null) {
-        if (!filterShowShort || !filterShowOverage) return false;
-      } else {
-        const expectedCash = computeExpectedCash(s, agg);
-        const difference = onHand - expectedCash;
-        const isShort = difference < 0;
-        const isOverage = difference > 0;
-        if (!filterShowShort && isShort) return false;
-        if (!filterShowOverage && isOverage) return false;
-        if (!filterShowShort && !filterShowOverage && (isShort || isOverage)) return false;
-      }
-      return true;
-    });
-  }, [shifts, filterStaff, filterShiftPeriod, filterShowShort, filterShowOverage, txAggByShift]);
-
-  const lastTwoShiftIds = useMemo(() => filteredShifts.slice(0, 2).map((s) => s.id), [filteredShifts]);
-
-  const handleResumeShift = async (shift) => {
-    try {
-      if (isAnyShiftActive) return;
-      await setDoc(
-        doc(db, "app_status", "current_shift"),
-        {
-          activeShiftId: shift.id,
-          staffEmail: shift.staffEmail,
-          resumedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
-    } catch (e) {
-      console.error("Resume shift failed:", e);
-      showSnackbar?.(`Failed to resume shift: ${e.message || e.code || e}`, 'error');
-    }
-  };
-
   useEffect(() => {
-    setLoading(true); // Start loading
+    setLoading(true);
     let qRef = query(collection(db, "shifts"), orderBy("startTime", "desc"));
     if (startDate) qRef = query(qRef, where("startTime", ">=", Timestamp.fromDate(new Date(startDate))));
     if (endDate) {
@@ -238,31 +169,19 @@ const Shifts = ({ showSnackbar }) => {
       eod.setHours(23, 59, 59, 999);
       qRef = query(qRef, where("startTime", "<=", Timestamp.fromDate(eod)));
     }
-    const unsub = onSnapshot(
-      qRef,
+    const unsub = onSnapshot(qRef,
       (snap) => {
         setShifts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setLoading(false); // Done loading
+        setLoading(false);
       },
       (err) => {
         console.error("Error fetching shifts:", err);
-        setLoading(false); // Done (error)
-        if (err.code === "failed-precondition") {
-          showSnackbar?.("Firestore needs an index. Check console.", 'error');
-        }
+        setLoading(false);
+        if (err.code === "failed-precondition") showSnackbar("Firestore needs an index.", 'error');
       }
     );
     return () => unsub();
   }, [startDate, endDate]);
-
-  // Users listener removed (handled by useStaffList)
-  // Services listener removed (handled by useServiceList)
-
-  const serviceNames = useMemo(() =>
-    serviceMeta
-      .filter(s => normalize(s.category) !== 'credit')
-      .map((s) => s.name),
-    [serviceMeta]);
 
   useEffect(() => {
     const desired = new Set(shifts.map((s) => s.id));
@@ -275,142 +194,81 @@ const Shifts = ({ showSnackbar }) => {
 
     shifts.forEach((s) => {
       if (txUnsubsRef.current[s.id]) return;
-
       const q1 = query(collection(db, "transactions"), where("shiftId", "==", s.id));
-      const unsub = onSnapshot(
-        q1,
+      const unsub = onSnapshot(q1,
         (snap) => {
           const txs = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((t) => t && t.isDeleted !== true);
           const aggregated = aggregateShiftTransactions(txs, serviceMeta);
           setTxAggByShift((prev) => ({
             ...prev,
-            [s.id]: { ...aggregated, fullTransactions: txs } // Store full transactions for consolidation
+            [s.id]: { ...aggregated, fullTransactions: txs }
           }));
         },
         (e) => console.warn("transactions listener failed for shift", s.id, e)
       );
-
       txUnsubsRef.current[s.id] = unsub;
     });
 
     return () => {
-      for (const id of Object.keys(txUnsubsRef.current)) {
-        try { txUnsubsRef.current[id](); } catch { }
-      }
+      for (const id of Object.keys(txUnsubsRef.current)) try { txUnsubsRef.current[id](); } catch { }
       txUnsubsRef.current = {};
     };
   }, [shifts, serviceMeta]);
 
-  const perServiceTotals = useMemo(() => {
-    const totals = {};
-    serviceNames.forEach((n) => (totals[n] = 0));
-    for (const s of filteredShifts) {
-      const agg = txAggByShift[s.id];
-      if (!agg) continue;
-      for (const [svc, amt] of Object.entries(agg.serviceTotals || {})) {
-        totals[svc] = (totals[svc] || 0) + Number(amt || 0);
-      }
+  const lastTwoShiftIds = useMemo(() => filteredShifts.slice(0, 2).map((s) => s.id), [filteredShifts]);
+
+  const handleResumeShift = async (shift) => {
+    try {
+      if (isAnyShiftActive) return;
+      await resumeShift(shift.id, shift.staffEmail);
+    } catch (e) {
+      showSnackbar(`Failed to resume: ${e.message}`, 'error');
     }
-    return totals;
-  }, [filteredShifts, serviceNames, txAggByShift]);
-
-  const grand = useMemo(() => {
-    let pcRental = 0, sales = 0, expenses = 0, system = 0, onHand = 0;
-    let shiftsWithDenominations = 0;
-    let totalExpectedCash = 0;
-
-    for (const s of filteredShifts) {
-      const agg = txAggByShift[s.id];
-      const pc = Number(s?.pcRentalTotal || 0);
-      pcRental += pc;
-
-      const denomKeys = Object.keys(s.denominations || {});
-      const onHandVal = denomKeys.length === 0 ? null : sumDenominations(s.denominations);
-      if (onHandVal !== null) {
-        onHand += onHandVal;
-        shiftsWithDenominations++;
-        if (agg) {
-          totalExpectedCash += computeExpectedCash(s, agg);
-        }
-      }
-
-      if (agg) {
-        const _expenses = Number(agg.expenses || 0);
-        sales += Number(agg.sales || 0) + pc;
-        expenses += _expenses;
-        system += Number(agg.sales || 0) + pc - _expenses;
-      }
-    }
-
-    const difference = onHand - totalExpectedCash;
-    return { pcRental, sales, expenses, system, onHand, difference, shiftsWithDenominations };
-  }, [filteredShifts, txAggByShift]);
+  };
 
   const handleExportToCSV = () => {
-    let headers;
-    let rows;
-
+    let headers, rows;
     if (view === "summary") {
       headers = ["Date", "Staff", "Shift", "Sales", "Expenses", "Total", "On Hand", "Difference"];
       rows = filteredShifts.map((s) => {
         const agg = txAggByShift[s.id] || {};
         const onHand = calculateOnHand(s.denominations);
-
-        // Calculation Logic
         const pc = Number(s.pcRentalTotal || 0);
-        const serviceSales = Number(agg.sales || 0);
-        const expenses = Number(agg.expenses || 0);
-        const totalSales = serviceSales + pc;
-        const netTotal = totalSales - expenses;
-
-        const expectedCash = computeExpectedCash(s, agg);
-        const difference = onHand !== null ? onHand - expectedCash : null;
+        const totalSales = Number(agg.sales || 0) + pc;
+        const netTotal = totalSales - Number(agg.expenses || 0);
+        const difference = onHand !== null ? onHand - (totalSales - Number(agg.expenses || 0)) : null;
 
         return [
-          s.startTime ? new Date(s.startTime.seconds * 1000).toLocaleDateString() : "N/A",
+          s.startTime ? fmtDate(s.startTime) : "N/A",
           userMap[s.staffEmail] || s.staffEmail,
           s.shiftPeriod || "",
           totalSales.toFixed(2),
-          expenses.toFixed(2),
+          Number(agg.expenses || 0).toFixed(2),
           netTotal.toFixed(2),
           onHand !== null ? onHand.toFixed(2) : "N/A",
           difference !== null ? difference.toFixed(2) : "N/A",
         ].join(",");
       });
     } else {
-      headers = [
-        "Date",
-        "Staff",
-        "Shift",
-        "PC Rental",
-        ...serviceNames,
-        "Sales",
-        "Expenses",
-        "Total",
-      ];
+      headers = ["Date", "Staff", "Shift", "PC Rental", ...serviceNames, "Sales", "Expenses", "Total"];
       rows = filteredShifts.map((s) => {
         const agg = txAggByShift[s.id] || { serviceTotals: {} };
         const perSvc = serviceNames.map((n) => Number(agg.serviceTotals?.[n] || 0).toFixed(2));
-
         const pc = Number(s.pcRentalTotal || 0);
-        const serviceSales = Number(agg.sales || 0);
-        const expenses = Number(agg.expenses || 0);
-        const totalSales = serviceSales + pc;
-        const netTotal = totalSales - expenses;
-
+        const totalSales = Number(agg.sales || 0) + pc;
+        const netTotal = totalSales - Number(agg.expenses || 0);
         return [
-          s.startTime ? new Date(s.startTime.seconds * 1000).toLocaleDateString() : "N/A",
+          s.startTime ? fmtDate(s.startTime) : "N/A",
           userMap[s.staffEmail] || s.staffEmail,
           s.shiftPeriod || "",
           pc.toFixed(2),
           ...perSvc,
-          totalSales.toFixed(2), // Sales (Gross)
-          expenses.toFixed(2),
-          netTotal.toFixed(2),   // Total (Net)
+          totalSales.toFixed(2),
+          Number(agg.expenses || 0).toFixed(2),
+          netTotal.toFixed(2),
         ].join(",");
       });
     }
-
     const csv = [headers.join(","), ...rows].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -421,39 +279,26 @@ const Shifts = ({ showSnackbar }) => {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    URL.revokeObjectURL(url);
   };
-
-
 
   const handleAddShift = async () => {
     try {
       if (!newStaffEmail || !newStart) {
-        showSnackbar?.("Please select a staff and provide a start time.", 'warning');
+        showSnackbar("Staff and Start Time are required.", 'warning');
         return;
       }
-      const displayId = await generateDisplayId("shifts", "SHIFT");
-      const payload = {
-        displayId,
+      const newShift = await createShift({
         staffEmail: newStaffEmail.trim(),
         shiftPeriod: newShiftPeriod,
-        startTime: toTimestamp(newStart),
-        endTime: toTimestamp(newEnd),
-        pcRentalTotal: 0,
-        systemTotal: 0,
-      };
-      const docRef = await addDoc(collection(db, "shifts"), payload);
-      const newShiftForView = { id: docRef.id, ...payload };
+        startTime: newStart,
+        endTime: newEnd,
+      });
       setAddOpen(false);
-      setNewStaffEmail(staffOptions[0]?.email || "");
       setNewStart("");
       setNewEnd("");
-      setNewShiftPeriod(SHIFT_PERIODS[0]);
-      setViewingShift(newShiftForView);
-      setViewingShift(newShiftForView);
+      setViewingShift(newShift);
     } catch (e) {
-      console.error("Add shift failed:", e);
-      showSnackbar?.(`Failed to add shift: ${e.message || e.code || e}`, 'error');
+      showSnackbar(`Failed to add shift: ${e.message}`, 'error');
     }
   };
 
@@ -471,21 +316,18 @@ const Shifts = ({ showSnackbar }) => {
   const handleSaveEdit = async () => {
     if (!editShift) return;
     try {
-      const payload = {
+      await updateShift(editShift.id, {
         staffEmail: editStaffEmail.trim(),
         shiftPeriod: editShiftPeriod,
-        startTime: toTimestamp(editStart),
-        endTime: toTimestamp(editEnd),
-      };
-      if (editPcRental !== "") payload.pcRentalTotal = Number(editPcRental);
-      if (editSystemTotal !== "") payload.systemTotal = Number(editSystemTotal);
-      await updateDoc(doc(db, "shifts", editShift.id), payload);
+        startTime: editStart,
+        endTime: editEnd,
+        pcRentalTotal: editPcRental !== "" ? Number(editPcRental) : undefined,
+        systemTotal: editSystemTotal !== "" ? Number(editSystemTotal) : undefined,
+      });
       setEditOpen(false);
       setEditShift(null);
-      setEditShift(null);
     } catch (e) {
-      console.error("Edit shift failed:", e);
-      showSnackbar?.(`Failed to save changes: ${e.message || e.code || e}`, 'error');
+      showSnackbar(`Failed to save: ${e.message}`, 'error');
     }
   };
 
@@ -498,38 +340,18 @@ const Shifts = ({ showSnackbar }) => {
   const handleDeleteShift = async () => {
     if (!shiftToDelete) return;
     try {
-      const txSnap = await getDocs(query(collection(db, "transactions"), where("shiftId", "==", shiftToDelete.id)));
-      const txDocs = txSnap.docs;
-      const chunksArr = chunk(txDocs);
-
-      if (deleteMode === "unlink") {
-        for (const ck of chunksArr) {
-          const batch = writeBatch(db);
-          ck.forEach((d) => batch.update(d.ref, { shiftId: null, unlinkedFromShift: shiftToDelete.id }));
-          await batch.commit();
-        }
-      } else if (deleteMode === "purge") {
-        for (const ck of chunksArr) {
-          const batch = writeBatch(db);
-          ck.forEach((d) => batch.delete(d.ref));
-          await batch.commit();
-        }
-      }
-
-      await deleteDoc(doc(db, "shifts", shiftToDelete.id));
+      await deleteShift(shiftToDelete.id, deleteMode);
       setDeleteOpen(false);
       setShiftToDelete(null);
-      setShiftToDelete(null);
     } catch (e) {
-      console.error("Delete shift failed:", e);
-      showSnackbar?.(`Failed to delete shift: ${e.message || e.code || e}`, 'error');
+      showSnackbar(`Failed to delete: ${e.message}`, 'error');
     }
   };
 
   const openConsolidation = (shift) => {
     const agg = txAggByShift[shift.id];
     if (!agg) {
-      showSnackbar?.("Loading shift data...", "info");
+      showSnackbar("Loading shift data...", "info");
       return;
     }
     setConsolidationShift(shift);
@@ -541,9 +363,8 @@ const Shifts = ({ showSnackbar }) => {
     return <ShiftDetailView shift={viewingShift} userMap={userMap} onBack={() => setViewingShift(null)} showSnackbar={showSnackbar} />;
   }
 
-  if (loading) {
-    return <LoadingScreen message="Loading shifts..." />;
-  }
+  if (loading) return <LoadingScreen message="Loading shifts..." />;
+
 
   return (
     <Box sx={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", p: 3 }}>
@@ -707,6 +528,25 @@ const Shifts = ({ showSnackbar }) => {
         </Card>
       )}
 
+      {/* KPI Summary Cards */}
+      <SummaryCards
+        loading={loading}
+        sx={{ mb: 3 }}
+        cards={[
+          { label: "Total Sales", value: fmtPeso(grand.sales), icon: <SellIcon fontSize="small" />, color: "primary.main" },
+          { label: "Total Expenses", value: fmtPeso(grand.expenses), icon: <ReceiptIcon fontSize="small" />, color: "error.main" },
+          { label: "Net Total", value: fmtPeso(grand.system), icon: <AccountBalanceIcon fontSize="small" />, color: "success.main", highlight: true },
+          {
+            label: "Cash Difference",
+            value: grand.difference > 0 ? `+${fmtPeso(grand.difference)}` : fmtPeso(grand.difference),
+            sub: `${grand.shiftsWithDenominations} counted shifts`,
+            icon: <CompareArrowsIcon fontSize="small" />,
+            color: grand.difference === 0 ? "info.main" : grand.difference > 0 ? "warning.main" : "error.main"
+          }
+        ]}
+      />
+
+
       {view === "summary" && (
         <TableContainer component={Paper} sx={{ flex: 1, minHeight: 0, overflow: "auto", maxHeight: { xs: "66vh", md: "70vh" } }}>
           <Table size={isMobile ? "small" : "medium"} stickyHeader>
@@ -770,7 +610,7 @@ const Shifts = ({ showSnackbar }) => {
                           />
                         </Tooltip>
                       )}
-                      {s.startTime ? new Date(s.startTime.seconds * 1000).toLocaleDateString() : "N/A"}
+                      {s.startTime ? fmtDate(s.startTime) : "N/A"}
                       <Box sx={{ display: { xs: "block", sm: "none" } }}>
                         <Chip size="small" label={s.shiftPeriod || "—"} sx={{ mt: 0.5, fontSize: 10 }} variant="outlined" />
                       </Box>
@@ -941,7 +781,7 @@ const Shifts = ({ showSnackbar }) => {
                           />
                         </Tooltip>
                       )}
-                      {s.startTime ? new Date(s.startTime.seconds * 1000).toLocaleDateString() : "N/A"}
+                      {s.startTime ? fmtDate(s.startTime) : "N/A"}
                     </TableCell>
                     <TableCell sx={{ pl: { xs: 1, sm: 2 }, whiteSpace: "nowrap" }}>{s.shiftPeriod}</TableCell>
                     <TableCell sx={{ maxWidth: 220 }}><Typography noWrap>{userMap[s.staffEmail] || s.staffEmail}</Typography></TableCell>

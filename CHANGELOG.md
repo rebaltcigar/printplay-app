@@ -12,6 +12,18 @@
 - No roadmap content — belongs in ROADMAP.md.
 
 ---
+ 
+ ## [0.4.5] — 2026-03-08
+ 
+ ### Added
+ - **POS Component Architecture** — Successfully modularized the monolithic POS system into focused, maintainable sub-components (`POSHeader`, `POSCartPanel`), significantly improving code readability and long-term stability.
+ 
+ ### Changed
+ - **Performance & Code Splitting** — Implemented `React.lazy` and `Suspense` across all heavy POS modules, drastically reducing initial bundle load times and improving perceived performance.
+ - **Centralized Service Hardening** — Integrated centralized error handling and standardized transaction recording services across all POS workflows to ensure data integrity and user-friendly feedback.
+ - **Enhanced Notification UX** — Relocated global notification snackbars to the top-center of the screen for maximum visibility during high-speed operations.
+ 
+-
 
 ## [0.4.4] — 2026-03-07
 

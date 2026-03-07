@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import {
   Box, Typography, AppBar, Toolbar, TextField,
   Select, MenuItem, FormControl, InputLabel, Paper, IconButton, Stack,
@@ -41,44 +41,54 @@ import AppsIcon from '@mui/icons-material/Apps';
 
 // Components
 
-import CustomerDialog from './CustomerDialog';
-import CheckoutDialog from './CheckoutDialog';
-import ExpenseDialog from './ExpenseDialog';
-import POSInvoiceLookupDrawer from './pos/POSInvoiceLookupDrawer';
-import DrawerDialog from './DrawerDialog';
-import EndShiftDialog from './EndShiftDialog';
-import POSSidebar from './pos/POSSidebar';
-import EditTransactionDialog from './EditTransactionDialog';
-import DeleteTransactionDialog from './DeleteTransactionDialog'; // ADDED
-import ChangeDisplayDialog from './ChangeDisplayDialog'; // ADDED
 import { SimpleReceipt } from './SimpleReceipt';
-import POSHistoryDrawer from './pos/POSHistoryDrawer';
 import POSItemGrid from './pos/POSItemGrid';
 import { VariablePriceDialog } from './pos/POSHelperDialogs';
-import CustomerSelectionDrawer from './pos/CustomerSelectionDrawer';
+import { ServiceInvoice } from './ServiceInvoice';
+import LoadingScreen from './common/LoadingScreen';
+
+import POSHeader from './pos/POSHeader';
+import POSCartPanel from './pos/POSCartPanel';
+
+// Lazy load dialogs & drawers
+const CustomerDialog = lazy(() => import('./CustomerDialog'));
+const CheckoutDialog = lazy(() => import('./CheckoutDialog'));
+const ExpenseDrawer = lazy(() => import('./pos/ExpenseDrawer'));
+const POSInvoiceLookupDrawer = lazy(() => import('./pos/POSInvoiceLookupDrawer'));
+const DrawerDialog = lazy(() => import('./DrawerDialog'));
+const EndShiftDialog = lazy(() => import('./EndShiftDialog'));
+const POSSidebar = lazy(() => import('./pos/POSSidebar'));
+const EditTransactionDialog = lazy(() => import('./EditTransactionDialog'));
+const DeleteTransactionDialog = lazy(() => import('./DeleteTransactionDialog'));
+const ChangeDisplayDialog = lazy(() => import('./ChangeDisplayDialog'));
+const POSHistoryDrawer = lazy(() => import('./pos/POSHistoryDrawer'));
+const CustomerSelectionDrawer = lazy(() => import('./pos/CustomerSelectionDrawer'));
 
 
 // Firebase
 import { auth, db } from '../firebase';
 import {
-  collection, addDoc, query, onSnapshot, orderBy, doc, writeBatch,
-  updateDoc, where, serverTimestamp, getDocs, getDoc, increment
+  collection, query, onSnapshot, orderBy, doc,
+  where, serverTimestamp, getDocs
 } from 'firebase/firestore';
 
 // Helpers
-import { openDrawer } from '../utils/drawerService';
-import { generateOrderNumber, createOrderObject } from '../utils/orderService';
-import { createInvoice } from '../utils/invoiceService';
+import { openDrawer } from '../services/drawerService';
+import { generateOrderNumber, createOrderObject, deleteOrder } from '../services/orderService';
+import { createInvoice } from '../services/invoiceService';
 
-import { generateDisplayId, generateBatchIds } from '../utils/idGenerator';
-import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice } from '../utils/printHelper';
-import { ServiceInvoice } from './ServiceInvoice';
-import LoadingScreen from './common/LoadingScreen';
-import { fmtCurrency } from '../utils/formatters';
+import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice } from '../services/printService';
+import { fmtCurrency, fmtDate } from '../utils/formatters';
 import { usePOSServices } from '../hooks/usePOSServices';
 import { useStaffList } from '../hooks/useStaffList';
+import { usePOSCart } from '../hooks/usePOSCart';
+import { useShiftTimer } from '../hooks/useShiftTimer';
+import { saveCheckout, updateCheckout } from '../services/checkoutService';
+import { recordExpense, deleteTransactions, updateTransaction } from '../services/transactionService';
 
-import logo from '/icon.ico';
+import { useGlobalUI } from '../contexts/GlobalUIContext';
+import { canViewFinancials } from '../utils/permissions';
+import { getFriendlyErrorMessage } from '../services/errorService';
 
 // Helper for currency display — imported from shared formatters
 const currency = fmtCurrency;
@@ -86,11 +96,24 @@ const currency = fmtCurrency;
 
 
 export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime, appSettings, staffDisplayName: staffDisplayNameProp }) {
+  const { showSnackbar, showConfirm } = useGlobalUI();
   const theme = useTheme();
 
   // --- CORE POS STATE ---
-  const [activeTab, setActiveTab] = useState(0);
-  const [orders, setOrders] = useState([{ id: 1, items: [], customer: null }]);
+  const {
+    orders, setOrders, activeTab, setActiveTab, currentOrder, currentTotal,
+    updateCurrentOrder, addOrderTab, closeOrderTab: closeTabHook,
+    addItemToCart, removeItemFromCart, updateItemInCart, clearCart, loadOrder
+  } = usePOSCart();
+
+  // --- SETTINGS STATE (seeded from App-level fetch — no separate load needed) ---
+  const [systemSettings] = useState(() => ({
+    drawerHotkey: { altKey: true, code: 'Backquote' },
+    checkoutHotkey: { code: 'F10', key: 'F10', display: 'F10' },
+    logoUrl: null,
+    storeName: 'Kunek',
+    ...(appSettings || {}),
+  }));
 
   // Services and staff from shared hooks (replaces manual useEffect blocks)
   const { serviceList, expenseTypes: expenseServiceItems, posItems, variantMap } = usePOSServices();
@@ -110,17 +133,10 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
   const quantityInputRef = useRef(null);
   const priceInputRef = useRef(null);
 
-  // --- LEGACY SHIFT STATE ---
-  const [shiftStart, setShiftStart] = useState(shiftStartTime || null);
-  const [elapsed, setElapsed] = useState(() => {
-    if (!shiftStartTime) return '00:00:00';
-    const diffMs = Date.now() - shiftStartTime.getTime();
-    const pad = n => String(n).padStart(2, '0');
-    return `${pad(Math.floor(diffMs / 3600000))}:${pad(Math.floor((diffMs % 3600000) / 60000))}:${pad(Math.floor((diffMs % 60000) / 1000))}`;
-  });
-  const [elapsedMs, setElapsedMs] = useState(() =>
-    shiftStartTime ? Date.now() - shiftStartTime.getTime() : 0
-  );
+  // --- SHIFT TIMER ---
+  const {
+    elapsed, elapsedMs, shiftAlertState, minsRemaining
+  } = useShiftTimer(shiftStartTime, systemSettings);
 
   // --- SIDEBAR ---
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -214,10 +230,7 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
 
   // Removed OrderDetailsDialog state
 
-  // --- SNACKBAR STATE ---
-  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
-  const handleCloseSnackbar = () => setSnackbar(prev => ({ ...prev, open: false }));
-  const showSnackbar = (msg, sev = 'success') => setSnackbar({ open: true, message: msg, severity: sev });
+
 
   const togglePosView = () => {
     const next = posView === 'new' ? 'legacy' : 'new';
@@ -226,14 +239,8 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
     localStorage.setItem('kunek_posView', next);
   };
 
-  // --- SETTINGS STATE (seeded from App-level fetch — no separate load needed) ---
-  const [systemSettings] = useState(() => ({
-    drawerHotkey: { altKey: true, code: 'Backquote' },
-    checkoutHotkey: { code: 'F10', key: 'F10', display: 'F10' },
-    logoUrl: null,
-    storeName: 'Kunek',
-    ...(appSettings || {}),
-  }));
+
+  // Removed OrderDetailsDialog state
 
   // Hotkey for Drawer (Dynamic)
   useEffect(() => {
@@ -282,10 +289,8 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [systemSettings.checkoutHotkey, gridTab, orders, activeTab, openCheckout]);
 
-  const currentOrder = orders[activeTab] || orders[0];
-  const currentTotal = currentOrder?.items?.reduce((sum, i) => sum + (i.price * i.quantity), 0) || 0;
   const isManualEntryItem = posItems.some(i => i.serviceName === item) || item === '';
-  const isAdmin = userRole === 'superadmin';
+  const canViewFin = canViewFinancials(userRole);
 
   // =========================================================================
   // 1. DATA LOADING & INITIALIZATION
@@ -314,28 +319,9 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
 
   // Shift Timer — shiftStart seeded from prop (fetched by App.jsx during auth bootstrap)
 
-  useEffect(() => {
-    if (!shiftStart) return;
-    const id = setInterval(() => {
-      const diffMs = Date.now() - shiftStart.getTime();
-      setElapsedMs(diffMs);
-      const h = Math.floor(diffMs / 3600000);
-      const m = Math.floor((diffMs % 3600000) / 60000);
-      const s = Math.floor((diffMs % 60000) / 1000);
-      const pad = (n) => String(n).padStart(2, '0');
-      setElapsed(`${pad(h)}:${pad(m)}:${pad(s)}`);
-    }, 1000);
-    return () => clearInterval(id);
-  }, [shiftStart]);
+  // Shift Timer logic moved to useShiftTimer hook
 
-  // Shift alert state (soft enforce)
-  const shiftDurationMs = (systemSettings.shiftDurationHours || 12) * 3_600_000;
-  const alertThresholdMs = (systemSettings.shiftAlertMinutes || 30) * 60_000;
-  const shiftAlertState = elapsedMs === 0 ? 'normal'
-    : elapsedMs >= shiftDurationMs ? 'danger'
-      : elapsedMs >= shiftDurationMs - alertThresholdMs ? 'warning'
-        : 'normal';
-  const minsRemaining = Math.ceil((shiftDurationMs - elapsedMs) / 60_000);
+
 
   // Load Transactions Log
   useEffect(() => {
@@ -404,32 +390,6 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
     }
   };
 
-  const addItemToCart = (itemData, qty = 1, overridePrice = null) => {
-    const p = overridePrice !== null ? overridePrice : Number(itemData.price || 0);
-    const cartItem = {
-      id: Date.now() + Math.random(),
-      serviceId: itemData.id || null,
-      parentServiceId: itemData.parentServiceId || null,
-      variantGroup: itemData.variantGroup || null,
-      variantLabel: itemData.posLabel || null,
-      serviceName: itemData.serviceName || itemData.posLabel,
-      price: p,
-      costPrice: itemData.costPrice || 0,
-      trackStock: itemData.trackStock || false,
-      quantity: qty,
-    };
-
-    const newItems = [...currentOrder.items];
-    const existing = newItems.find(i => i.serviceName === cartItem.serviceName && i.price === cartItem.price);
-    if (existing) {
-      existing.quantity += qty;
-    } else {
-      newItems.push(cartItem);
-    }
-    updateCurrentOrder({ items: newItems });
-    // showSnackbar(`Added ${qty}x ${cartItem.serviceName}`); // Optional, can be noisy
-  };
-
   // Receives leaf items only — variant drill-down is handled inside POSItemGrid
   const handleGridItemClick = (item, qty = 1) => {
     if (item.priceType === 'variable') {
@@ -467,7 +427,7 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
       if (!expenseType) return showSnackbar("Select Expense Type.", "error");
 
       // Validation with Admin Override
-      if (expenseType !== 'Salary Advance' && !isAdmin && !notes) {
+      if (expenseType !== 'Salary Advance' && !canViewFin && !notes) {
         return showSnackbar("Notes required for expenses.", "error");
       }
 
@@ -475,30 +435,23 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
 
       setIsLoading(true); // START LOADING
       try {
-        const displayId = await generateDisplayId("expenses", "EXP");
-
-        await addDoc(collection(db, 'transactions'), {
-          displayId,
+        await recordExpense({
           item,
           expenseType,
-          expenseStaffId: expenseStaffId || null,
-          expenseStaffName: expenseStaffName || null,
+          expenseStaffId,
+          expenseStaffName,
           quantity: qtyNum,
           price: priceNum,
-          total: qtyNum * priceNum,
-          notes: notes || '',
-          timestamp: serverTimestamp(),
-          staffEmail: user.email,
-          shiftId: activeShiftId,
-          category: 'Expense',
-          isDeleted: false
+          notes,
+          userEmail: user.email,
+          activeShiftId
         });
         setItem(''); setQuantity(''); setPrice(''); setNotes('');
         setExpenseType('');
         showSnackbar(`${item} recorded successfully.`);
       } catch (e) {
         console.error(e);
-        showSnackbar("Failed to save action.", "error");
+        showSnackbar(getFriendlyErrorMessage(e), "error");
       } finally {
         setIsLoading(false); // STOP LOADING
       }
@@ -533,33 +486,9 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
   // 3. POS / MIDDLE PANEL LOGIC
   // =========================================================================
 
-  const addOrderTab = () => {
-    const newOrderIds = orders
-      .filter(o => !o.isExisting && typeof o.id === 'number')
-      .map(o => o.id);
-    const maxId = newOrderIds.length > 0 ? Math.max(...newOrderIds) : 0;
-    const newId = maxId + 1;
-    setOrders([...orders, { id: newId, items: [], customer: null }]);
-    setActiveTab(orders.length);
-  };
-
   const closeOrderTab = (e, index) => {
-    e.stopPropagation();
-    if (orders.length === 1) {
-      setOrders([{ id: 1, items: [], customer: null }]);
-      return;
-    }
-    const newOrders = orders.filter((_, i) => i !== index);
-    setOrders(newOrders);
-    if (activeTab >= index && activeTab > 0) setActiveTab(activeTab - 1);
-  };
-
-  const updateCurrentOrder = (updates) => {
-    setOrders(prev => {
-      const copy = [...prev];
-      copy[activeTab] = { ...copy[activeTab], ...updates };
-      return copy;
-    });
+    if (e?.stopPropagation) e.stopPropagation();
+    closeTabHook(index);
   };
 
   const removeFromCart = (index) => {
@@ -567,8 +496,7 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
     if (currentOrder.isExisting && item.transactionId) {
       setDeleteCartItemState({ tabIndex: activeTab, itemIndex: index });
     } else {
-      const items = currentOrder.items.filter((_, i) => i !== index);
-      updateCurrentOrder({ items });
+      removeItemFromCart(index);
     }
   };
 
@@ -579,112 +507,28 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
   };
 
   const saveLineItemEdit = () => {
-    if (editingLineItem.transactionId && !editingLineItem.editReason?.trim()) {
-      setEditItemError("Reason for edit is required.");
-      return;
-    }
-
-    const items = [...currentOrder.items];
     const idx = editingLineItem.index;
-    if (idx >= 0 && idx < items.length) {
-      items[idx] = {
-        ...items[idx],
+    if (idx >= 0) {
+      updateItemInCart(idx, {
         price: Number(editingLineItem.price),
         quantity: Number(editingLineItem.quantity),
         serviceName: editingLineItem.serviceName,
         editReason: editingLineItem.editReason
-      };
-      updateCurrentOrder({ items });
+      });
     }
     setEditItemDialog(false);
   };
 
   const handleCheckout = async (paymentData, shouldPrint = false) => {
-    setIsLoading(true); // START LOADING
+    setIsLoading(true);
     try {
-      let finalCustomer = currentOrder.customer;
-      if (finalCustomer && finalCustomer.isNew) {
-        const custRef = await addDoc(collection(db, 'customers'), {
-          fullName: finalCustomer.fullName,
-          createdAt: serverTimestamp(),
-          createdBy: user?.email || 'system_checkout',
-          lifetimeValue: 0,
-          outstandingBalance: 0,
-          totalOrders: 0
-        });
-        finalCustomer = { id: custRef.id, fullName: finalCustomer.fullName };
-      }
-
-      const isUnpaid = paymentData.paymentMethod === 'Charge' || paymentData.paymentMethod === 'Pay Later'; // Detect Debt
-      const orderNum = await generateOrderNumber();
-      const fullOrder = {
-        orderNumber: orderNum,
-        shiftId: activeShiftId,
-        invoiceStatus: isUnpaid ? 'UNPAID' : 'PAID',
-        isDeleted: false,
-        ...createOrderObject(
-          currentOrder.items,
-          currentTotal,
-          paymentData.paymentMethod,
-          paymentData.paymentDetails,
-          paymentData.amountTendered,
-          paymentData.change,
-          finalCustomer,
-          user
-        )
-      };
-
-      const orderRef = await addDoc(collection(db, 'orders'), fullOrder);
-
-      // Create AR invoice when payment method is Charge
-      if (paymentData.paymentMethod === 'Charge') {
-        await createInvoice(
-          { ...fullOrder, id: orderRef.id },
-          { staffEmail: user.email, shiftId: activeShiftId, dueDate: paymentData.dueDate || null }
-        );
-      }
-
-      // Generate Batch IDs for line items
-      const txIds = await generateBatchIds("transactions", "TX", currentOrder.items.length);
-
-      const batch = writeBatch(db);
-      currentOrder.items.forEach((item, index) => {
-        const txRef = doc(collection(db, 'transactions'));
-        batch.set(txRef, {
-          displayId: txIds[index],
-          item: item.serviceName,
-          serviceId: item.serviceId || null,
-          parentServiceId: item.parentServiceId || null,
-          variantGroup: item.variantGroup || null,
-          variantLabel: item.variantLabel || null,
-          price: Number(item.price),
-          unitCost: Number(item.costPrice || 0),
-          quantity: Number(item.quantity),
-          total: Number(item.price) * Number(item.quantity),
-          timestamp: serverTimestamp(),
-          staffEmail: user.email,
-          customerName: finalCustomer?.fullName || 'Walk-in',
-          customerId: finalCustomer?.id || null,
-          shiftId: activeShiftId,
-          orderNumber: orderNum,
-          category: 'Revenue',
-          financialCategory: 'Revenue',
-          paymentMethod: paymentData.paymentMethod,
-          paymentDetails: paymentData.paymentDetails || {},
-          invoiceStatus: isUnpaid ? 'UNPAID' : 'PAID',
-          isDeleted: false
-        });
-
-        // INVENTORY DEDUCTION
-        if (item.trackStock && item.serviceId) {
-          const svcRef = doc(db, 'services', item.serviceId);
-          batch.update(svcRef, {
-            stockCount: increment(-Number(item.quantity))
-          });
-        }
+      const fullOrder = await saveCheckout({
+        currentOrder,
+        paymentData,
+        user,
+        activeShiftId,
+        currentTotal
       });
-      await batch.commit();
-
 
       if (paymentData.paymentMethod === 'Cash' || paymentData.change > 0) {
         setLastChange(paymentData.change);
@@ -701,10 +545,9 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
       setOpenCheckout(false);
 
       if (shouldPrint) {
-        // Use shared normalizer for consistent receipt
         setPrintOrder(normalizeReceiptData(fullOrder, {
           staffName: staffDisplayName,
-          isReprint: false // Use current timestamp
+          isReprint: false
         }));
       }
 
@@ -716,9 +559,9 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
 
     } catch (err) {
       console.error(err);
-      showSnackbar("Transaction failed.", 'error');
+      showSnackbar(getFriendlyErrorMessage(err), 'error');
     } finally {
-      setIsLoading(false); // STOP LOADING
+      setIsLoading(false);
     }
   };
 
@@ -733,21 +576,12 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
 
   const handleConfirmDelete = async (reason) => {
     try {
-      const batch = writeBatch(db);
-      selectedTransactions.forEach(id => {
-        batch.update(doc(db, 'transactions', id), {
-          isDeleted: true,
-          deletedBy: user.email,
-          deleteReason: reason,
-          deletedAt: serverTimestamp()
-        });
-      });
-      await batch.commit();
+      await deleteTransactions(selectedTransactions, user.email, reason);
       setSelectedTransactions([]);
       showSnackbar("Transaction(s) successfully deleted.");
     } catch (e) {
       console.error("Error deleting transactions:", e);
-      showSnackbar("Failed to delete transactions", 'error');
+      showSnackbar(getFriendlyErrorMessage(e), 'error');
     }
   };
   // --- ORDER DELETION HANDLERS ---
@@ -758,46 +592,17 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
 
   const handleConfirmDeleteOrders = async (reason) => {
     try {
-      // Collect orderNumbers for the selected orders
-      const deletedOrderNums = selectedOrders
-        .map(id => shiftOrders.find(o => o.id === id)?.orderNumber)
-        .filter(Boolean);
-
-      const batch = writeBatch(db);
-
-      // Mark orders as deleted
-      selectedOrders.forEach(id => {
-        batch.update(doc(db, 'orders', id), {
-          isDeleted: true,
-          deletedBy: user.email,
-          deleteReason: reason,
-          deletedAt: serverTimestamp()
-        });
-      });
-
-      // Cascade: soft-delete all linked transactions
-      await Promise.all(deletedOrderNums.map(async (orderNum) => {
-        const txSnap = await getDocs(query(
-          collection(db, 'transactions'),
-          where('orderNumber', '==', orderNum),
-          where('shiftId', '==', activeShiftId)
-        ));
-        txSnap.forEach(d => {
-          batch.update(d.ref, {
-            isDeleted: true,
-            deletedBy: user.email,
-            deleteReason: reason,
-            deletedAt: serverTimestamp()
-          });
-        });
+      await Promise.all(selectedOrders.map(async (id) => {
+        const orderNum = shiftOrders.find(o => o.id === id)?.orderNumber;
+        if (orderNum) {
+          await deleteOrder(id, orderNum, activeShiftId, user.email, reason);
+        }
       }));
-
-      await batch.commit();
       setSelectedOrders([]);
       showSnackbar("Order(s) and linked transactions successfully deleted.");
     } catch (e) {
       console.error("Error deleting orders:", e);
-      showSnackbar("Failed to delete orders", 'error');
+      showSnackbar(getFriendlyErrorMessage(e), 'error');
     }
   };
 
@@ -808,13 +613,13 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
 
   const handleEditTx = async (id, updates) => {
     try {
-      await updateDoc(doc(db, 'transactions', id), updates);
+      await updateTransaction(id, updates);
       setEditTxDialog(false);
       setEditingTx(null);
       showSnackbar("Transaction successfully updated.");
     } catch (e) {
       console.error("Error editing transaction:", e);
-      showSnackbar("Failed to edit transaction", 'error');
+      showSnackbar(getFriendlyErrorMessage(e), 'error');
     }
   };
 
@@ -825,61 +630,11 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
         where('orderNumber', '==', order.orderNumber)
       );
       const snap = await getDocs(q);
-      const loadedItems = snap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .filter(d => d.isDeleted !== true)
-        .map(data => {
-          return {
-            id: Date.now() + Math.random(), // Temp UI ID
-            transactionId: data.id, // Real DB ID
-            name: data.item,
-            serviceName: data.item, // For backward compatibility in UI
-            price: Number(data.price),
-            quantity: Number(data.quantity),
-            subtotal: Number(data.total), // ADDED
-            total: Number(data.total), // ADDED
-            notes: data.notes || '',
-          };
-        });
-
-      const newTab = {
-        id: 'ord-' + order.orderNumber,
-        isExisting: true,
-        orderNumber: order.orderNumber,
-        originalId: order.id,
-        items: loadedItems,
-        deletedItems: [],
-        customer: {
-          fullName: order.customerName,
-          id: order.customerId,
-          email: '',
-          phone: order.customerPhone || '',
-          address: order.customerAddress || '',
-          tin: order.customerTin || '', // Ensure legacy orders work too
-        },
-        paymentMethod: order.paymentMethod,
-        paymentDetails: order.paymentDetails,
-        amountTendered: order.amountTendered,
-        change: order.change,
-        total: order.total
-      };
-
-      setOrders(prev => {
-        const exists = prev.findIndex(o => o.orderNumber === order.orderNumber);
-        if (exists >= 0) {
-          // Update existing tab with fresh data (e.g. if TIN was added)
-          const next = [...prev];
-          next[exists] = newTab;
-          setActiveTab(exists);
-          return next;
-        }
-        const next = [...prev, newTab];
-        setActiveTab(prev.length);
-        return next;
-      });
+      const transactions = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      loadOrder(order, transactions);
     } catch (e) {
       console.error("Error opening order:", e);
-      showSnackbar("Failed to open order.", 'error');
+      showSnackbar(getFriendlyErrorMessage(e), 'error');
     }
   };
 
@@ -892,113 +647,16 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
   const actuallyUpdateOrder = async (paymentData, shouldPrint = false) => {
     const order = currentOrder;
     if (!order.isExisting) return;
-    setIsLoading(true); // START LOADING
+    setIsLoading(true);
     try {
-      let finalCustomer = order.customer;
-      if (finalCustomer && finalCustomer.isNew) {
-        const custRef = await addDoc(collection(db, 'customers'), {
-          fullName: finalCustomer.fullName,
-          createdAt: serverTimestamp(),
-          createdBy: user?.email || 'system_checkout',
-          lifetimeValue: 0,
-          outstandingBalance: 0,
-          totalOrders: 0
-        });
-        finalCustomer = { id: custRef.id, fullName: finalCustomer.fullName };
-      }
+      const updatedOrder = await updateCheckout({
+        order,
+        paymentData,
+        user,
+        activeShiftId,
+        currentTotal
+      });
 
-      const batch = writeBatch(db);
-      const finalItems = [];
-
-      // 1. Pre-generate IDs for new items
-      const newItemsCount = order.items.filter(i => !i.transactionId).length;
-      let newIds = [];
-      if (newItemsCount > 0) {
-        newIds = await generateBatchIds("transactions", "TX", newItemsCount);
-      }
-      let newIdIndex = 0;
-
-      // 2. Process Items (Add & Update)
-      for (const item of order.items) {
-        const itemData = {
-          item: item.name || item.serviceName,
-          price: Number(item.price),
-          quantity: Number(item.quantity),
-          total: Number(item.price) * Number(item.quantity),
-          notes: item.notes || '',
-        };
-        if (item.editReason) itemData.editReason = item.editReason;
-
-        if (item.transactionId) {
-          const ref = doc(db, 'transactions', item.transactionId);
-          batch.update(ref, {
-            ...itemData,
-            paymentMethod: paymentData.paymentMethod,
-            paymentDetails: paymentData.paymentDetails || {} // ADDED
-          });
-        } else {
-          const ref = doc(collection(db, 'transactions'));
-          // Use pre-generated ID
-          const displayId = newIds[newIdIndex++] || `TEMP-${Date.now()}`;
-
-          batch.set(ref, {
-            ...itemData,
-            displayId, // Assigned here
-            timestamp: serverTimestamp(),
-            staffEmail: user.email,
-            customerName: finalCustomer?.fullName || 'Walk-in',
-            customerId: finalCustomer?.id || null,
-            shiftId: activeShiftId,
-            orderNumber: order.orderNumber,
-            category: 'Revenue',
-            financialCategory: 'Revenue', // Explicit
-            paymentMethod: paymentData.paymentMethod,
-            paymentDetails: paymentData.paymentDetails || {}, // ADDED
-            isDeleted: false
-          });
-        }
-        finalItems.push({
-          ...itemData,
-          name: itemData.item // Ensuring 'name' is saved in 'orders' items array too
-        });
-      }
-
-      // 2. Process Deletions
-      if (order.deletedItems) {
-        order.deletedItems.forEach(delItem => {
-          const ref = doc(db, 'transactions', delItem.transactionId);
-          batch.update(ref, {
-            isDeleted: true,
-            deletedBy: user.email,
-            deleteReason: delItem.deleteReason,
-            deletedAt: serverTimestamp()
-          });
-        });
-      }
-
-      // 3. Update Order Doc
-      const orderRef = doc(db, 'orders', order.originalId);
-      const updateObj = {
-        items: finalItems,
-        total: currentTotal,
-        subtotal: currentTotal,
-        paymentMethod: paymentData.paymentMethod,
-        paymentDetails: paymentData.paymentDetails || {},
-        amountTendered: Number(paymentData.amountTendered),
-        change: Number(paymentData.change),
-        customerId: finalCustomer?.id || 'walk-in',
-        customerName: finalCustomer?.fullName || 'Walk-in Customer',
-        customerPhone: finalCustomer?.phone || '',
-        customerAddress: finalCustomer?.address || '',
-        customerTin: finalCustomer?.tin || '',
-        updatedAt: serverTimestamp()
-      };
-
-      batch.update(orderRef, updateObj);
-
-      await batch.commit();
-
-      // TRIGGER DRAWER for Updates too
       openDrawer(user, 'transaction').then(success => {
         if (!success) {
           showSnackbar("Drawer not connected. Click 'Drawer' to connect.", "warning");
@@ -1014,13 +672,12 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
       if (shouldPrint) {
         handlePrintExistingOrder({
           ...order,
-          ...updateObj,
-          id: order.originalId,
+          ...updatedOrder,
           timestamp: new Date()
         });
       }
 
-      // Close Tab Logic (Manually remove from state)
+      // Close Tab Logic
       if (orders.length === 1) {
         setOrders([{ id: 1, items: [], customer: null }]);
         setActiveTab(0);
@@ -1031,12 +688,11 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
       }
       showSnackbar("Order has been updated successfully.", "success");
 
-
     } catch (e) {
       console.error("Update failed:", e);
-      showSnackbar("Update failed.", 'error');
+      showSnackbar(getFriendlyErrorMessage(e), 'error');
     } finally {
-      setIsLoading(false); // STOP LOADING
+      setIsLoading(false);
     }
   };
 
@@ -1090,66 +746,22 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
       <ServiceInvoice order={printInvoiceData} settings={systemSettings} />
 
       {/* --- HEADER --- */}
-      <AppBar position="static" color="default" elevation={1} sx={{ bgcolor: 'background.paper', borderBottom: 1, borderColor: 'divider' }}>
-        <Toolbar sx={{ gap: 1 }}>
-          {/* Hamburger → opens staff sidebar */}
-          <IconButton size="small" onClick={() => setSidebarOpen(true)} sx={{ mr: 0.5 }}>
-            <MenuIcon />
-          </IconButton>
-
-          {/* Branding */}
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            {systemSettings.logoUrl ? (
-              <img src={systemSettings.logoUrl} alt="logo" height={32} style={{ maxWidth: 120, objectFit: 'contain' }} />
-            ) : (
-              <img src={logo} alt="logo" width={24} height={24} />
-            )}
-            <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-              <Typography variant="subtitle2" sx={{ fontWeight: 'bold', lineHeight: 1.2, color: 'text.primary', letterSpacing: '0.02em' }}>
-                {systemSettings.storeName}
-              </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1, fontSize: '0.7rem', opacity: 0.8 }}>
-                {staffDisplayName} • {shiftPeriod}
-              </Typography>
-            </Box>
-          </Box>
-
-          <Box sx={{ flexGrow: 1 }} />
-
-          {/* Shift timer */}
-          {elapsed !== '00:00:00' && (
-            <Typography variant="caption" color="text.secondary" sx={{ display: { xs: 'none', sm: 'block' }, fontFamily: 'monospace', mr: 1 }}>
-              {elapsed}
-            </Typography>
-          )}
-
-          {/* Action Buttons */}
-          <Box sx={{ display: { xs: 'none', sm: 'flex' }, gap: 1, alignItems: 'center' }}>
-            <Tooltip title={posView === 'new' ? 'Switch to Classic POS' : 'Switch to New POS (Grid)'}>
-              <Chip
-                size="small"
-                icon={posView === 'new' ? <ViewListIcon sx={{ fontSize: '1rem !important' }} /> : <AppsIcon sx={{ fontSize: '1rem !important' }} />}
-                label={posView === 'new' ? 'Classic' : 'Grid'}
-                onClick={togglePosView}
-                variant="outlined"
-                sx={{ cursor: 'pointer', fontSize: '0.7rem' }}
-              />
-            </Tooltip>
-            <Button size="small" variant="outlined" color="primary" onClick={() => setOpenHistoryDrawer(true)} startIcon={<HistoryIcon />}>Logs</Button>
-            <Button size="small" variant="outlined" color="error" onClick={() => setOpenDrawerDialog(true)}>Drawer</Button>
-            <Button size="small" variant="outlined" color="error" onClick={() => setOpenExpense(true)}>+ Expense</Button>
-            <Button size="small" variant="contained" color="error" onClick={() => setOpenEndShiftDialog(true)}>End Shift</Button>
-          </Box>
-
-          {/* Mobile Menu */}
-          <MuiMenu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)}>
-            <MenuItem onClick={() => { setMenuAnchor(null); setOpenHistoryDrawer(true); }}>Logs</MenuItem>
-            <MenuItem onClick={() => { setMenuAnchor(null); setOpenExpense(true); }}>+ Expense</MenuItem>
-            <MenuItem onClick={() => { setMenuAnchor(null); setOpenInvoiceLookup(true); }}>Invoices / Receivables</MenuItem>
-            <MenuItem onClick={() => { setMenuAnchor(null); setOpenEndShiftDialog(true); }}>End Shift</MenuItem>
-          </MuiMenu>
-        </Toolbar>
-      </AppBar>
+      <POSHeader
+        systemSettings={systemSettings}
+        staffDisplayName={staffDisplayName}
+        shiftPeriod={shiftPeriod}
+        elapsed={elapsed}
+        posView={posView}
+        togglePosView={togglePosView}
+        setSidebarOpen={setSidebarOpen}
+        setOpenHistoryDrawer={setOpenHistoryDrawer}
+        setOpenDrawerDialog={setOpenDrawerDialog}
+        setOpenExpense={setOpenExpense}
+        setOpenEndShiftDialog={setOpenEndShiftDialog}
+        menuAnchor={menuAnchor}
+        setMenuAnchor={setMenuAnchor}
+        setOpenInvoiceLookup={setOpenInvoiceLookup}
+      />
 
       {/* Shift duration warning banners */}
       {shiftAlertState === 'warning' && (
@@ -1164,14 +776,16 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
       )}
 
       {/* Staff sidebar */}
-      <POSSidebar
-        open={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-        user={user}
-        onLogout={handleLogoutOnly}
-        showSnackbar={showSnackbar}
-        onOpenInvoices={() => setOpenInvoiceLookup(true)}
-      />
+      <Suspense fallback={null}>
+        <POSSidebar
+          open={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          user={user}
+          onLogout={handleLogoutOnly}
+
+          onOpenInvoices={() => setOpenInvoiceLookup(true)}
+        />
+      </Suspense>
 
       {/* --- REDESIGNED LAYOUT: GRID + CART --- */}
       <Box sx={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', alignItems: 'center', bgcolor: '#0e0e0e' }}>
@@ -1386,157 +1000,24 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
             </Box>}
 
             {/* CART (Flex Grow) */}
-            <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-              <Box p={1} bgcolor="background.default" display="flex" alignItems="center" borderBottom={1} borderColor="divider">
-                <ShoppingCartIcon sx={{ mr: 1, opacity: 0.6 }} />
-                <Typography variant="subtitle2" fontWeight="bold">Current Order</Typography>
-              </Box>
-
-              {/* Tabs */}
-              <Box sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: 'background.default', display: 'flex', alignItems: 'center' }}>
-                <Tabs
-                  value={activeTab}
-                  onChange={(e, v) => setActiveTab(v)}
-                  variant="scrollable"
-                  scrollButtons="auto"
-                  sx={{ minHeight: 40, flex: 1, '& .MuiTab-root': { minHeight: 40 } }}
-                >
-                  {orders.map((ord, idx) => (
-                    <Tab
-                      key={ord.id}
-                      label={
-                        <Box display="flex" alignItems="center" gap={1}>
-                          {ord.isExisting ? ord.orderNumber : `Order ${ord.id}`}
-                          {orders.length > 1 && (
-                            <CloseIcon
-                              fontSize="small"
-                              onClick={(e) => closeOrderTab(e, idx)}
-                              sx={{ opacity: 0.6, '&:hover': { opacity: 1 }, ml: 0.5 }}
-                            />
-                          )}
-                        </Box>
-                      }
-                    />
-                  ))}
-                </Tabs>
-                <IconButton onClick={addOrderTab} size="small" sx={{ mx: 1 }}><AddIcon fontSize="small" /></IconButton>
-              </Box>
-
-              {/* Customer Selection (Minimalist Drawer-First) */}
-              <Box sx={{ p: 1, borderBottom: 1, borderColor: 'divider', bgcolor: 'background.paper', display: 'flex', gap: 1, alignItems: 'center' }}>
-                <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Typography variant="body2" color="text.secondary">
-                    Customer:
-                  </Typography>
-                  <Typography variant="body2" fontWeight="bold">
-                    {currentOrder?.customer ? currentOrder.customer.fullName : 'Walk-in'}
-                  </Typography>
-                </Box>
-
-                <Tooltip title="Assign Customer">
-                  <IconButton size="small" onClick={() => setOpenCustomerSelection(true)}>
-                    <EditIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-
-                {currentOrder?.customer && (
-                  <Tooltip title="Remove Customer">
-                    <IconButton size="small" color="error" onClick={() => updateCurrentOrder({ customer: null })}>
-                      <CloseIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                )}
-              </Box>
-
-              {/* Order Total — prominent, above cart items */}
-              <Box sx={{
-                px: 2, py: 1.25, borderBottom: 1, borderColor: 'divider',
-                display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-                bgcolor: 'background.paper', flexShrink: 0,
-              }}>
-                <Typography variant="overline" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
-                  Order Total
-                </Typography>
-                <Typography variant="h4" fontWeight="bold" color="primary">
-                  {currency(currentTotal)}
-                </Typography>
-              </Box>
-
-              {/* Cart Items Table */}
-              <TableContainer sx={{ flex: 1, overflowY: 'auto' }}>
-                <Table stickyHeader size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell sx={{ bgcolor: 'background.paper', width: '40%' }}>Product</TableCell>
-                      <TableCell align="center" sx={{ bgcolor: 'background.paper', width: '15%' }}>Qty</TableCell>
-                      <TableCell align="right" sx={{ bgcolor: 'background.paper', width: '15%' }}>Price</TableCell>
-                      <TableCell align="right" sx={{ bgcolor: 'background.paper', width: '20%' }}>Total</TableCell>
-                      <TableCell align="center" sx={{ bgcolor: 'background.paper', width: '10%' }}><CloseIcon fontSize="small" sx={{ opacity: 0.5 }} /></TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {currentOrder.items.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={5} align="center" sx={{ py: 6, opacity: 0.5 }}>Cart is empty</TableCell>
-                      </TableRow>
-                    ) : (
-                      currentOrder.items.map((it, idx) => (
-                        <TableRow
-                          key={idx}
-                          hover
-                          sx={{ cursor: 'pointer' }}
-                          onClick={() => openLineItemEdit(it, idx)}
-                        >
-                          <TableCell sx={{ width: '40%' }}>
-                            <Typography variant="body2" fontWeight="bold">{it.serviceName}</Typography>
-                          </TableCell>
-                          <TableCell align="center" sx={{ width: '15%' }}>{it.quantity}</TableCell>
-                          <TableCell align="right" sx={{ width: '15%' }}>{currency(it.price)}</TableCell>
-                          <TableCell align="right" sx={{ width: '20%' }}>{currency(it.price * it.quantity)}</TableCell>
-                          <TableCell align="center" sx={{ width: '10%' }} onClick={(e) => e.stopPropagation()}>
-                            <IconButton size="small" color="error" onClick={() => removeFromCart(idx)}>
-                              <CloseIcon fontSize="small" />
-                            </IconButton>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-
-              {/* Footer */}
-              <Box p={2} borderTop={1} borderColor="divider" bgcolor="background.paper">
-                {currentOrder.isExisting ? (
-                  <Stack direction="row" spacing={1}>
-                    <Button fullWidth variant="contained" size="large" onClick={() => setOpenCheckout(true)} disabled={currentOrder.items.length === 0}>
-                      UPDATE
-                    </Button>
-                    <Button variant="outlined" size="large" startIcon={<PrintIcon />} onClick={() => handlePrintExistingOrder({ ...currentOrder, total: currentTotal })}>
-                      RECEIPT
-                    </Button>
-                    <Button variant="outlined" size="large" onClick={() => handlePrintExistingInvoice({ ...currentOrder, total: currentTotal })}>
-                      INVOICE
-                    </Button>
-                  </Stack>
-                ) : (
-                  <Button
-                    fullWidth
-                    variant="contained"
-                    size="large"
-                    onClick={() => setOpenCheckout(true)}
-                    disabled={currentOrder.items.length === 0}
-                  >
-                    CHECKOUT
-                    {systemSettings.checkoutHotkey?.display && (
-                      <Box component="span" sx={{ ml: 0.75, fontSize: '0.55rem', opacity: 0.55, fontWeight: 'normal', letterSpacing: 0 }}>
-                        [{systemSettings.checkoutHotkey.display}]
-                      </Box>
-                    )}
-                  </Button>
-                )}
-              </Box>
-            </Box>
+            <POSCartPanel
+              activeTab={activeTab}
+              setActiveTab={setActiveTab}
+              orders={orders}
+              closeOrderTab={closeOrderTab}
+              addOrderTab={addOrderTab}
+              currentOrder={currentOrder}
+              updateCurrentOrder={updateCurrentOrder}
+              currentTotal={currentTotal}
+              currency={currency}
+              openLineItemEdit={openLineItemEdit}
+              removeFromCart={removeFromCart}
+              setOpenCheckout={setOpenCheckout}
+              systemSettings={systemSettings}
+              handlePrintExistingOrder={handlePrintExistingOrder}
+              handlePrintExistingInvoice={handlePrintExistingInvoice}
+              setOpenCustomerSelection={setOpenCustomerSelection}
+            />
           </Box>}
         </Grid>
       </Box>
@@ -1549,63 +1030,65 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
       </Box>
 
       {/* --- DIALOGS --- */}
-      <DrawerDialog open={openDrawerDialog} onClose={() => setOpenDrawerDialog(false)} user={user} showSnackbar={showSnackbar} />
+      <Suspense fallback={null}>
+        <DrawerDialog open={openDrawerDialog} onClose={() => setOpenDrawerDialog(false)} user={user} />
 
-      {/* End Shift Dialog Component */}
-      <EndShiftDialog
-        open={openEndShiftDialog}
-        onClose={() => setOpenEndShiftDialog(false)}
-        activeShiftId={activeShiftId}
-        user={user}
-        transactions={transactions}
-        onShiftEnded={onShiftEnded}
-        showSnackbar={showSnackbar}
-        settings={systemSettings}
-      />
-      <EditTransactionDialog open={editTxDialog} onClose={() => setEditTxDialog(false)} transaction={editingTx} onSave={handleEditTx} />
-      <DeleteTransactionDialog
-        open={!!deleteCartItemState}
-        onClose={() => setDeleteCartItemState(null)}
-        onConfirm={handleConfirmDeleteCartItem}
-      />
+        {/* End Shift Dialog Component */}
+        <EndShiftDialog
+          open={openEndShiftDialog}
+          onClose={() => setOpenEndShiftDialog(false)}
+          activeShiftId={activeShiftId}
+          user={user}
+          transactions={transactions}
+          onShiftEnded={onShiftEnded}
 
-      <CheckoutDialog
-        open={openCheckout}
-        onClose={() => setOpenCheckout(false)}
-        total={currentTotal}
-        onConfirm={currentOrder.isExisting ? actuallyUpdateOrder : handleCheckout}
-        customer={currentOrder.customer}
-        defaultDueDays={systemSettings.invoiceDueDays || 7}
-      />
-      <POSInvoiceLookupDrawer
-        open={openInvoiceLookup}
-        onClose={() => setOpenInvoiceLookup(false)}
-        user={user}
-        showSnackbar={showSnackbar}
-        activeShiftId={activeShiftId}
-      />
+          settings={systemSettings}
+        />
+        <EditTransactionDialog open={editTxDialog} onClose={() => setEditTxDialog(false)} transaction={editingTx} onSave={handleEditTx} />
+        <DeleteTransactionDialog
+          open={!!deleteCartItemState}
+          onClose={() => setDeleteCartItemState(null)}
+          onConfirm={handleConfirmDeleteCartItem}
+        />
 
-      <CustomerSelectionDrawer
-        open={openCustomerSelection}
-        onClose={() => setOpenCustomerSelection(false)}
-        currentCustomer={currentOrder?.customer}
-        onSelectCustomer={(cust) => updateCurrentOrder({ customer: cust })}
-      />
+        <CheckoutDialog
+          open={openCheckout}
+          onClose={() => setOpenCheckout(false)}
+          total={currentTotal}
+          onConfirm={currentOrder.isExisting ? actuallyUpdateOrder : handleCheckout}
+          customer={currentOrder.customer}
+          defaultDueDays={systemSettings.invoiceDueDays || 7}
+        />
+        <POSInvoiceLookupDrawer
+          open={openInvoiceLookup}
+          onClose={() => setOpenInvoiceLookup(false)}
+          user={user}
 
-      <POSHistoryDrawer
-        open={openHistoryDrawer}
-        onClose={() => setOpenHistoryDrawer(false)}
-        transactions={transactions}
-        shiftOrders={shiftOrders}
-        selectedTransactions={selectedTransactions}
-        setSelectedTransactions={setSelectedTransactions}
-        selectedOrders={selectedOrders}
-        setSelectedOrders={setSelectedOrders}
-        handleOpenEditTx={handleOpenEditTx}
-        handleDeleteLogs={handleDeleteLogs}
-        handleDeleteOrders={handleDeleteOrders}
-        handleOpenOrderAsTab={handleOpenOrderAsTab}
-      />
+          activeShiftId={activeShiftId}
+        />
+
+        <CustomerSelectionDrawer
+          open={openCustomerSelection}
+          onClose={() => setOpenCustomerSelection(false)}
+          currentCustomer={currentOrder?.customer}
+          onSelectCustomer={(cust) => updateCurrentOrder({ customer: cust })}
+        />
+
+        <POSHistoryDrawer
+          open={openHistoryDrawer}
+          onClose={() => setOpenHistoryDrawer(false)}
+          transactions={transactions}
+          shiftOrders={shiftOrders}
+          selectedTransactions={selectedTransactions}
+          setSelectedTransactions={setSelectedTransactions}
+          selectedOrders={selectedOrders}
+          setSelectedOrders={setSelectedOrders}
+          handleOpenEditTx={handleOpenEditTx}
+          handleDeleteLogs={handleDeleteLogs}
+          handleDeleteOrders={handleDeleteOrders}
+          handleOpenOrderAsTab={handleOpenOrderAsTab}
+        />
+      </Suspense>
 
       <VariablePriceDialog
         open={Boolean(variablePriceItem)}
@@ -1650,16 +1133,16 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
         </DialogActions>
       </Dialog>
 
-      <ExpenseDialog
-        open={openExpense}
-        onClose={() => setOpenExpense(false)}
-        user={user}
-        userRole={userRole}
-        activeShiftId={activeShiftId}
-        expenseTypes={expenseServiceItems} // Re-using fetched types
-        staffOptions={staffOptions}
-        showSnackbar={showSnackbar}
-      />
+      <Suspense fallback={null}>
+        <ExpenseDrawer
+          open={openExpense}
+          onClose={() => setOpenExpense(false)}
+          user={user}
+          activeShiftId={activeShiftId}
+          expenseTypes={expenseServiceItems}
+          staffOptions={staffOptions}
+        />
+      </Suspense>
 
       {/* End Receipt */}
       {/* End Receipt */}
@@ -1680,7 +1163,7 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
               <Box mb={2}>
                 <Typography variant="body2" fontWeight="bold">{staffDisplayName}</Typography>
                 <Typography variant="caption" color="gray">
-                  {shiftPeriod} Shift — {new Date().toLocaleDateString()}
+                  {shiftPeriod} Shift — {fmtDate(new Date())}
                 </Typography>
               </Box>
               <Typography variant="caption" color="text.primary" display="block" flexShrink={0} fontWeight="bold">SALES</Typography>
@@ -1776,7 +1259,7 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
             <Box>
               <Typography variant="body2" fontWeight="bold">{staffDisplayName}</Typography>
               <Typography variant="caption" color="gray">
-                {shiftPeriod} Shift — {new Date().toLocaleDateString()}
+                {shiftPeriod} Shift — {fmtDate(new Date())}
               </Typography>
             </Box>
           </Box>
@@ -1933,12 +1416,7 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
         onClose={() => setChangeDialogOpen(false)}
         change={lastChange}
       />
-      {/* GLOBAL SNACKBAR */}
-      <Snackbar open={snackbar.open} autoHideDuration={3000} onClose={handleCloseSnackbar} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
-        <Alert onClose={handleCloseSnackbar} severity={snackbar.severity} sx={{ width: '100%' }} variant="filled">
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
+
 
 
 

@@ -1,17 +1,19 @@
-import { doc, runTransaction, getDoc } from "firebase/firestore";
+// src/services/orderService.js
+import {
+    doc, runTransaction, getDoc, serverTimestamp,
+    writeBatch, collection, where, query, getDocs
+} from "firebase/firestore";
 import { db } from "../firebase";
+
+// ---------------------------------------------------------------------------
+// 1. ID Generation Logic (Consolidated from idGenerator.js)
+// ---------------------------------------------------------------------------
 
 /**
  * Generates a sequential ID (e.g., "SHIFT-000005").
  * Uses a 'counters' collection in Firestore to maintain atomicity.
- * 
- * @param {string} counterName The name of the counter doc (e.g. 'shifts', 'payroll', 'expenses')
- * @param {string} defaultPrefix The prefix for the ID if not found in settings
- * @param {number} padding Number of digits (default 6)
- * @returns {Promise<string>} The formatted ID
  */
 export const generateDisplayId = async (counterName, defaultPrefix = "ID", padding = 6) => {
-    // 1. Resolve Prefix from Settings
     let prefix = defaultPrefix;
     try {
         const configRef = doc(db, 'settings', 'config');
@@ -46,7 +48,6 @@ export const generateDisplayId = async (counterName, defaultPrefix = "ID", paddi
         return `${prefix}-${String(newId).padStart(padding, "0")}`;
     } catch (error) {
         console.error(`Error generating ID for ${counterName}:`, error);
-        // Fallback: use timestamp + random suffix if transaction fails (rare, prevents crash)
         const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
         return `${prefix}-ERR-${Date.now()}-${rand}`;
     }
@@ -54,18 +55,10 @@ export const generateDisplayId = async (counterName, defaultPrefix = "ID", paddi
 
 /**
  * Reserves a block of IDs for batch processing.
- * Much more efficient for migration scripts.
- * 
- * @param {string} counterName 
- * @param {string} defaultPrefix 
- * @param {number} count Number of IDs to reserve
- * @param {number} padding 
- * @returns {Promise<string[]>} Array of generated IDs
  */
 export const generateBatchIds = async (counterName, defaultPrefix, count, padding = 6) => {
     if (count <= 0) return [];
 
-    // 1. Resolve Prefix from Settings
     let prefix = defaultPrefix;
     try {
         const configRef = doc(db, 'settings', 'config');
@@ -94,9 +87,6 @@ export const generateBatchIds = async (counterName, defaultPrefix, count, paddin
 
             const nextSequence = currentSequence + count;
             transaction.set(counterRef, { currentSequence: nextSequence }, { merge: true });
-            // Return the *first* new ID in this batch
-            // e.g. current=5. count=3. new=8. IDs are 6, 7, 8.
-            // We return currentSequence + 1.
             return currentSequence + 1;
         });
 
@@ -105,9 +95,92 @@ export const generateBatchIds = async (counterName, defaultPrefix, count, paddin
             ids.push(`${prefix}-${String(startSeq + i).padStart(padding, "0")}`);
         }
         return ids;
-
     } catch (error) {
         console.error(`Error generating batch IDs for ${counterName}:`, error);
         return [];
     }
+};
+
+/**
+ * Specifically for legacy order number generation (counter: orders, prefix: ORD).
+ */
+export const generateOrderNumber = () => generateDisplayId('orders', 'ORD');
+
+// ---------------------------------------------------------------------------
+// 2. Order Factory Logic
+// ---------------------------------------------------------------------------
+
+/**
+ * Creates a normalized order object for Firestore 'orders' collection.
+ */
+export const createOrderObject = (
+    items, total, paymentMethod, paymentDetails, amountTendered, change, customer, user
+) => {
+    return {
+        items: items.map(i => ({
+            itemId: i.id,
+            name: i.serviceName || i.name,
+            price: i.price,
+            costPrice: i.costPrice || 0,
+            quantity: i.quantity || 1,
+            subtotal: (i.price || 0) * (i.quantity || 1),
+        })),
+        subtotal: total,
+        total: total,
+        paymentMethod: paymentMethod,
+        paymentDetails: paymentDetails || {},
+        amountTendered: Number(amountTendered),
+        change: Number(change),
+        customerId: customer?.id || 'walk-in',
+        customerName: customer?.fullName || 'Walk-in Customer',
+        customerPhone: customer?.phone || '',
+        customerAddress: customer?.address || '',
+        customerTin: customer?.tin || '',
+        staffId: user?.uid || 'unknown',
+        staffEmail: user?.email || 'unknown',
+        staffName: user?.displayName || user?.email || 'Staff',
+        timestamp: serverTimestamp(),
+        status: 'completed',
+        isDeleted: false
+    };
+};
+
+/**
+ * Soft-deletes an order and its linked transactions in a single batch.
+ * 
+ * @param {string} orderId The document ID of the order to delete
+ * @param {string} orderNumber The display number of the order
+ * @param {string} shiftId The active shift ID
+ * @param {string} userEmail Email of the user performing deletion
+ * @param {string} reason Reason for deletion
+ * @returns {Promise<void>}
+ */
+export const deleteOrder = async (orderId, orderNumber, shiftId, userEmail, reason) => {
+    const batch = writeBatch(db);
+
+    // 1. Mark order as deleted
+    batch.update(doc(db, 'orders', orderId), {
+        isDeleted: true,
+        deletedBy: userEmail,
+        deleteReason: reason,
+        deletedAt: serverTimestamp()
+    });
+
+    // 2. Cascade: soft-delete all linked transactions
+    const txSnap = await getDocs(query(
+        collection(db, 'transactions'),
+        where('orderNumber', '==', orderNumber),
+        where('shiftId', '==', shiftId)
+    ));
+
+    txSnap.forEach(d => {
+        batch.update(d.ref, {
+            isDeleted: true,
+            deletedBy: userEmail,
+            deleteReason: reason,
+            deletedAt: serverTimestamp()
+        });
+    });
+
+    await batch.commit();
 };

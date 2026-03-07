@@ -14,6 +14,9 @@ import {
 } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useStaffList } from '../../hooks/useStaffList';
+import { fmtShortDate, fmtDayOfWeek, fmtDate } from '../../utils/formatters';
+import { getFriendlyErrorMessage } from '../../services/errorService';
+import { ROLES } from '../../utils/permissions';
 import PageHeader from '../common/PageHeader';
 import SummaryCards from '../common/SummaryCards';
 import DetailDrawer from '../common/DetailDrawer';
@@ -56,35 +59,34 @@ function getWeekDates(ws) {
   return Array.from({ length: 7 }, (_, i) => addDays(ws, i));
 }
 function fmtShort(dateStr) {
-  return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return fmtShortDate(dateStr + 'T00:00:00');
 }
 function fmtDay(dateStr) {
-  return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' });
+  return fmtDayOfWeek(dateStr + 'T00:00:00');
 }
 function fmtRange(s, e) {
   const sd = new Date(s + 'T00:00:00');
   const ed = new Date(e + 'T00:00:00');
-  const eOpts = sd.getMonth() === ed.getMonth() ? { day: 'numeric' } : { month: 'short', day: 'numeric' };
-  return `${sd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${ed.toLocaleDateString('en-US', eOpts)}, ${ed.getFullYear()}`;
+  return `${fmtDate(sd)} – ${fmtDate(ed)}`;
 }
 
 // ---------- Constants ----------
 const STATUS_CFG = {
-  scheduled:     { label: 'Scheduled', color: 'primary' },
-  'in-progress': { label: 'On Shift',  color: 'success' },
-  completed:     { label: 'Done',      color: 'default' },
-  absent:        { label: 'Absent',    color: 'error' },
-  covered:       { label: 'Covered',   color: 'warning' },
+  scheduled: { label: 'Scheduled', color: 'primary' },
+  'in-progress': { label: 'On Shift', color: 'success' },
+  completed: { label: 'Done', color: 'default' },
+  absent: { label: 'Absent', color: 'error' },
+  covered: { label: 'Covered', color: 'warning' },
 };
 
 const TEMPLATE_SEEDS = [
-  { name: 'Morning',   startTime: '08:00', endTime: '14:00' },
+  { name: 'Morning', startTime: '08:00', endTime: '14:00' },
   { name: 'Afternoon', startTime: '14:00', endTime: '20:00' },
-  { name: 'Evening',   startTime: '20:00', endTime: '02:00' },
+  { name: 'Evening', startTime: '20:00', endTime: '02:00' },
 ];
 
 const BLANK_ENTRY = { staffEmail: '', date: '', shiftLabel: '', startTime: '', endTime: '', notes: '', status: 'scheduled' };
-const BLANK_TPL   = { name: '', startTime: '', endTime: '' };
+const BLANK_TPL = { name: '', startTime: '', endTime: '' };
 
 // ---------- Staff chip (calendar cell — shows staff name, shift is the row label) ----------
 function StaffChip({ entry, onEdit, onDelete, onAbsent, onCoverage }) {
@@ -94,8 +96,8 @@ function StaffChip({ entry, onEdit, onDelete, onAbsent, onCoverage }) {
       sx={{
         mb: 0.5, p: '4px 6px', borderRadius: 1,
         bgcolor: entry.status === 'absent' ? 'rgba(211,47,47,.08)'
-               : entry.status === 'covered' ? 'rgba(237,108,2,.08)'
-               : 'action.hover',
+          : entry.status === 'covered' ? 'rgba(237,108,2,.08)'
+            : 'action.hover',
         '&:hover .ea': { display: 'flex' }, position: 'relative',
       }}
     >
@@ -135,7 +137,7 @@ function StaffChip({ entry, onEdit, onDelete, onAbsent, onCoverage }) {
 // ---------- Main component ----------
 export default function Schedule({ showSnackbar }) {
   const { staffOptions, loading: staffLoading } = useStaffList();
-  const staffOnly = useMemo(() => staffOptions.filter(s => s.role === 'staff'), [staffOptions]);
+  const staffOnly = useMemo(() => staffOptions.filter(s => s.role === ROLES.STAFF), [staffOptions]);
 
   const [tab, setTab] = useState(0);
   const [weekStart, setWeekStart] = useState(() => getWeekStart(todayPHT()));
@@ -145,23 +147,23 @@ export default function Schedule({ showSnackbar }) {
   const [loadingEntries, setLoadingEntries] = useState(true);
 
   // Drawers & dialogs
-  const [entryDrawer, setEntryDrawer]     = useState({ open: false, mode: 'create', entry: null });
+  const [entryDrawer, setEntryDrawer] = useState({ open: false, mode: 'create', entry: null });
   const [tplDrawerOpen, setTplDrawerOpen] = useState(false);
-  const [coverDlg, setCoverDlg]           = useState({ open: false, entry: null });
+  const [coverDlg, setCoverDlg] = useState({ open: false, entry: null });
 
   // Forms
   const [entryForm, setEntryForm] = useState(BLANK_ENTRY);
-  const [saving, setSaving]       = useState(false);
-  const [formErr, setFormErr]     = useState('');
-  const [tplForm, setTplForm]       = useState(BLANK_TPL);
+  const [saving, setSaving] = useState(false);
+  const [formErr, setFormErr] = useState('');
+  const [tplForm, setTplForm] = useState(BLANK_TPL);
   const [editingTpl, setEditingTpl] = useState(null);
-  const [savingTpl, setSavingTpl]   = useState(false);
+  const [savingTpl, setSavingTpl] = useState(false);
   const [coverStaff, setCoverStaff] = useState('');
   const [savingCover, setSavingCover] = useState(false);
 
-  const weekEnd   = addDays(weekStart, 6);
+  const weekEnd = addDays(weekStart, 6);
   const weekDates = useMemo(() => getWeekDates(weekStart), [weekStart]);
-  const today     = todayPHT();
+  const today = todayPHT();
 
   // Subscribe entries for current week
   useEffect(() => {
@@ -225,16 +227,16 @@ export default function Schedule({ showSnackbar }) {
   );
 
   const summaryCards = useMemo(() => ([
-    { label: 'Scheduled',  value: String(entries.filter(e => e.status === 'scheduled').length),    color: 'primary.main' },
-    { label: 'On Shift',   value: String(entries.filter(e => e.status === 'in-progress').length),  color: 'success.main' },
-    { label: 'Absent',     value: String(entries.filter(e => e.status === 'absent').length),       color: 'error.main' },
-    { label: 'Covered',    value: String(entries.filter(e => e.status === 'covered').length),      color: 'warning.main' },
+    { label: 'Scheduled', value: String(entries.filter(e => e.status === 'scheduled').length), color: 'primary.main' },
+    { label: 'On Shift', value: String(entries.filter(e => e.status === 'in-progress').length), color: 'success.main' },
+    { label: 'Absent', value: String(entries.filter(e => e.status === 'absent').length), color: 'error.main' },
+    { label: 'Covered', value: String(entries.filter(e => e.status === 'covered').length), color: 'warning.main' },
   ]), [entries]);
 
   // --- Navigation ---
   const prevWeek = () => setWeekStart(ws => addDays(ws, -7));
   const nextWeek = () => setWeekStart(ws => addDays(ws, 7));
-  const goToday  = () => setWeekStart(getWeekStart(todayPHT()));
+  const goToday = () => setWeekStart(getWeekStart(todayPHT()));
 
   // --- Open entry drawer ---
   const openCreate = useCallback((staffEmail = '', date = '', shiftLabel = '') => {
@@ -246,7 +248,7 @@ export default function Schedule({ showSnackbar }) {
       date: date || todayPHT(),
       shiftLabel: shiftLabel || '',
       startTime: tpl?.startTime || '',
-      endTime:   tpl?.endTime   || '',
+      endTime: tpl?.endTime || '',
     });
     setEntryDrawer({ open: true, mode: 'create', entry: null });
   }, [templates]);
@@ -255,12 +257,12 @@ export default function Schedule({ showSnackbar }) {
     setFormErr('');
     setEntryForm({
       staffEmail: entry.staffEmail || '',
-      date:       entry.date       || '',
+      date: entry.date || '',
       shiftLabel: entry.shiftLabel || '',
-      startTime:  entry.startTime  || '',
-      endTime:    entry.endTime    || '',
-      notes:      entry.notes      || '',
-      status:     entry.status     || 'scheduled',
+      startTime: entry.startTime || '',
+      endTime: entry.endTime || '',
+      notes: entry.notes || '',
+      status: entry.status || 'scheduled',
     });
     setEntryDrawer({ open: true, mode: 'edit', entry });
   }, []);
@@ -273,22 +275,22 @@ export default function Schedule({ showSnackbar }) {
   // --- CRUD entry ---
   const handleSaveEntry = async () => {
     if (!entryForm.staffEmail) { setFormErr('Select a staff member.'); return; }
-    if (!entryForm.date)       { setFormErr('Select a date.'); return; }
+    if (!entryForm.date) { setFormErr('Select a date.'); return; }
     if (!entryForm.shiftLabel) { setFormErr('Select a shift template.'); return; }
     setSaving(true); setFormErr('');
     try {
       const staff = staffOnly.find(s => s.email === entryForm.staffEmail);
       const data = {
-        staffUid:   staff?.uid    || '',
+        staffUid: staff?.uid || '',
         staffEmail: entryForm.staffEmail,
-        staffName:  staff ? (staff.fullName || staff.email) : entryForm.staffEmail,
-        date:       entryForm.date,
+        staffName: staff ? (staff.fullName || staff.email) : entryForm.staffEmail,
+        date: entryForm.date,
         shiftLabel: entryForm.shiftLabel,
-        startTime:  entryForm.startTime,
-        endTime:    entryForm.endTime,
-        status:     entryForm.status || 'scheduled',
-        notes:      entryForm.notes || '',
-        updatedAt:  serverTimestamp(),
+        startTime: entryForm.startTime,
+        endTime: entryForm.endTime,
+        status: entryForm.status || 'scheduled',
+        notes: entryForm.notes || '',
+        updatedAt: serverTimestamp(),
       };
       if (entryDrawer.mode === 'create') {
         await addDoc(collection(db, 'schedules'), { ...data, createdAt: serverTimestamp() });
@@ -299,7 +301,7 @@ export default function Schedule({ showSnackbar }) {
       }
       setEntryDrawer(p => ({ ...p, open: false }));
     } catch (err) {
-      setFormErr('Save failed. Try again.');
+      setFormErr(getFriendlyErrorMessage(err));
       console.error(err);
     } finally { setSaving(false); }
   };
@@ -309,14 +311,14 @@ export default function Schedule({ showSnackbar }) {
     try {
       await deleteDoc(doc(db, 'schedules', entry.id));
       showSnackbar?.('Entry deleted.', 'success');
-    } catch { showSnackbar?.('Delete failed.', 'error'); }
+    } catch (err) { showSnackbar?.(getFriendlyErrorMessage(err), 'error'); }
   };
 
   const handleMarkAbsent = async (entry) => {
     try {
       await updateDoc(doc(db, 'schedules', entry.id), { status: 'absent', updatedAt: serverTimestamp() });
       showSnackbar?.(`${entry.staffName || entry.staffEmail} marked absent.`, 'warning');
-    } catch { showSnackbar?.('Failed.', 'error'); }
+    } catch (err) { showSnackbar?.(getFriendlyErrorMessage(err), 'error'); }
   };
 
   const handleAssignCoverage = async () => {
@@ -325,15 +327,15 @@ export default function Schedule({ showSnackbar }) {
     try {
       const s = staffOnly.find(x => x.email === coverStaff);
       await updateDoc(doc(db, 'schedules', coverDlg.entry.id), {
-        status:         'covered',
-        coveredByUid:   s?.uid || '',
+        status: 'covered',
+        coveredByUid: s?.uid || '',
         coveredByEmail: coverStaff,
-        coveredByName:  s ? (s.fullName || coverStaff) : coverStaff,
-        updatedAt:      serverTimestamp(),
+        coveredByName: s ? (s.fullName || coverStaff) : coverStaff,
+        updatedAt: serverTimestamp(),
       });
       showSnackbar?.('Coverage assigned.', 'success');
       setCoverDlg({ open: false, entry: null }); setCoverStaff('');
-    } catch { showSnackbar?.('Failed.', 'error'); }
+    } catch (err) { showSnackbar?.(getFriendlyErrorMessage(err), 'error'); }
     finally { setSavingCover(false); }
   };
 
@@ -360,7 +362,7 @@ export default function Schedule({ showSnackbar }) {
         });
       }));
       showSnackbar?.(`Copied ${snap.docs.length} entries to this week.`, 'success');
-    } catch (err) { showSnackbar?.('Copy failed.', 'error'); console.error(err); }
+    } catch (err) { showSnackbar?.(getFriendlyErrorMessage(err), 'error'); console.error(err); }
   };
 
   // --- Template CRUD ---
@@ -376,7 +378,7 @@ export default function Schedule({ showSnackbar }) {
       }
       setEditingTpl(null); setTplForm(BLANK_TPL);
       showSnackbar?.('Template saved.', 'success');
-    } catch { showSnackbar?.('Failed.', 'error'); }
+    } catch (err) { showSnackbar?.(getFriendlyErrorMessage(err), 'error'); }
     finally { setSavingTpl(false); }
   };
 
@@ -389,7 +391,7 @@ export default function Schedule({ showSnackbar }) {
     try {
       await updateDoc(doc(db, 'shiftTemplates', tpl.id), { disabled: willDisable });
       showSnackbar?.(willDisable ? `"${tpl.name}" disabled.` : `"${tpl.name}" enabled.`, 'success');
-    } catch { showSnackbar?.('Failed to update template.', 'error'); }
+    } catch (err) { showSnackbar?.(getFriendlyErrorMessage(err), 'error'); }
   };
 
   const handleDeleteTpl = async (tpl) => {
@@ -408,7 +410,7 @@ export default function Schedule({ showSnackbar }) {
     try {
       await deleteDoc(doc(db, 'shiftTemplates', tpl.id));
       showSnackbar?.('Template deleted.', 'success');
-    } catch { showSnackbar?.('Delete failed.', 'error'); }
+    } catch (err) { showSnackbar?.(getFriendlyErrorMessage(err), 'error'); }
   };
 
   const entryActions = {

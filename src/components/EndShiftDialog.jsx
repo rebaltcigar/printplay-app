@@ -5,9 +5,10 @@ import {
 } from '@mui/material';
 import { updateDoc, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
+import { useGlobalUI } from '../contexts/GlobalUIContext';
 import ErrorIcon from '@mui/icons-material/Error'; // ADDED
 
-import { fmtCurrency } from '../utils/formatters';
+import { fmtCurrency, fmtDate } from '../utils/formatters';
 const currency = fmtCurrency;
 
 import { computeShiftFinancials } from '../utils/shiftFinancials';
@@ -19,9 +20,9 @@ export default function EndShiftDialog({
     user,
     transactions = [],
     onShiftEnded,
-    showSnackbar,
     settings = {},
 }) {
+    const { showSnackbar } = useGlobalUI();
     const pcRentalEnabled = settings.pcRentalEnabled !== false; // default true for back-compat
     const pcRentalMode = settings.pcRentalMode || 'external';
     const needsManualInput = pcRentalEnabled && pcRentalMode === 'external';
@@ -146,7 +147,7 @@ export default function EndShiftDialog({
                     <Box sx={{ p: 2, pb: 1, borderBottom: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
                         <Typography variant="body2" fontWeight="bold">{user?.displayName || user?.email}</Typography>
                         <Typography variant="caption" color="text.secondary">
-                            {shiftPeriod} Shift — {new Date().toLocaleDateString()}
+                            {shiftPeriod} Shift — {fmtDate(new Date())}
                         </Typography>
                     </Box>
 

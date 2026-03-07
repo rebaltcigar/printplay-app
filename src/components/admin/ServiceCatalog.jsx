@@ -24,6 +24,7 @@ import { db } from '../../firebase';
 import ConfirmationReasonDialog from '../ConfirmationReasonDialog';
 import PageHeader from '../common/PageHeader';
 import SummaryCards from '../common/SummaryCards';
+import { fmtCurrency, fmtDate } from '../../utils/formatters';
 import { POS_ICON_OPTIONS } from '../../utils/posIcons.jsx';
 
 const BLANK_FORM = {
@@ -78,7 +79,7 @@ export default function ServiceCatalog({ showSnackbar }) {
   const variantChildren = useMemo(() =>
     editing
       ? items.filter(i => i.parentServiceId === editing.id)
-             .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+        .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
       : [],
     [items, editing]
   );
@@ -665,8 +666,8 @@ export default function ServiceCatalog({ showSnackbar }) {
             {allGroups.length === 0
               ? <Typography variant="caption" color="text.disabled">No groups defined yet</Typography>
               : allGroups.map(g => (
-                  <Chip key={g} label={g} size="small" onDelete={() => removeGroup(g)} variant="outlined" color="primary" />
-                ))
+                <Chip key={g} label={g} size="small" onDelete={() => removeGroup(g)} variant="outlined" color="primary" />
+              ))
             }
           </Box>
           <Stack direction="row" spacing={1}>
@@ -776,7 +777,7 @@ export default function ServiceCatalog({ showSnackbar }) {
                         )}
                       </Box>
                       <Typography variant="caption" color="text.secondary" sx={{ mx: 1.5, whiteSpace: 'nowrap' }}>
-                        {child.priceType === 'variable' ? 'variable' : `₱${Number(child.price || 0).toFixed(2)}`}
+                        {child.priceType === 'variable' ? 'variable' : fmtCurrency(child.price)}
                       </Typography>
                       <Typography variant="caption" sx={{ mr: 0.5, color: child.active ? 'success.main' : 'text.disabled' }}>
                         {child.active ? 'Active' : 'Off'}
@@ -860,13 +861,13 @@ export default function ServiceCatalog({ showSnackbar }) {
   // ── Dialog title ──
   const dialogTitle = editing
     ? (isEditingChild
-        ? `Edit Variant — ${itemMap.get(editing.parentServiceId)?.serviceName ?? ''}`
-        : `Edit: ${editing.serviceName}`)
+      ? `Edit Variant — ${itemMap.get(editing.parentServiceId)?.serviceName ?? ''}`
+      : `Edit: ${editing.serviceName}`)
     : 'Add New Catalog Item';
   const dialogSubtitle = editing
     ? (isEditingChild
-        ? `Variant of: ${itemMap.get(editing.parentServiceId)?.serviceName ?? '—'}`
-        : isTwoPane ? 'Item settings on the left · Groups and variants on the right' : 'Service or retail product')
+      ? `Variant of: ${itemMap.get(editing.parentServiceId)?.serviceName ?? '—'}`
+      : isTwoPane ? 'Item settings on the left · Groups and variants on the right' : 'Service or retail product')
     : 'Configure a new service or retail product';
 
   return (
@@ -960,7 +961,7 @@ export default function ServiceCatalog({ showSnackbar }) {
                                   ? <span style={{ opacity: 0.4, fontSize: '0.75rem' }}>varies</span>
                                   : item.priceType === 'variable' || (!item.priceType && item.price === 0)
                                     ? <span style={{ opacity: 0.6, fontSize: '0.75rem' }}>variable</span>
-                                    : item.price > 0 ? Number(item.price).toFixed(2) : '—'
+                                    : item.price > 0 ? fmtCurrency(item.price) : '—'
                                 }
                               </TableCell>
                               <TableCell>

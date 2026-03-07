@@ -7,7 +7,7 @@ import {
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { useInvoices } from '../../hooks/useInvoices';
 import { useOutstandingReceivables } from '../../hooks/useInvoices';
-import { fmtCurrency } from '../../utils/formatters';
+import { fmtCurrency, fmtDate } from '../../utils/formatters';
 import PageHeader from '../common/PageHeader';
 import SummaryCards from '../common/SummaryCards';
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
@@ -84,11 +84,7 @@ export default function ReceivablesReport({ showSnackbar }) {
         ];
     }, [groupedByCustomer, outstandingTotal]);
 
-    const toDateStr = (val) => {
-        if (!val) return '—';
-        const d = val?.toDate ? val.toDate() : new Date(val);
-        return isNaN(d) ? '—' : d.toLocaleDateString();
-    };
+
 
 
 
@@ -138,8 +134,8 @@ export default function ReceivablesReport({ showSnackbar }) {
                                                     <TableCell sx={{ fontFamily: 'monospace' }}>
                                                         {inv.invoiceNumber || inv.id.slice(-6).toUpperCase()}
                                                     </TableCell>
-                                                    <TableCell>{toDateStr(inv.createdAt)}</TableCell>
-                                                    <TableCell>{toDateStr(inv.dueDate)}</TableCell>
+                                                    <TableCell>{fmtDate(inv.createdAt)}</TableCell>
+                                                    <TableCell>{fmtDate(inv.dueDate)}</TableCell>
                                                     <TableCell align="right">{fmtCurrency(inv.total)}</TableCell>
                                                     <TableCell align="right">{fmtCurrency(inv.amountPaid)}</TableCell>
                                                     <TableCell align="right" sx={{ fontWeight: 'bold' }}>

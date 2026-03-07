@@ -2,7 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom';
 import { Box, Typography, Divider, Table, TableHead, TableBody, TableRow, TableCell } from '@mui/material';
 
-import { fmtCurrency } from '../utils/formatters';
+import { fmtCurrency, fmtDate } from '../utils/formatters';
 
 // currency alias — consistent with the rest of the app
 const currency = fmtCurrency;
@@ -21,11 +21,11 @@ export const ServiceInvoice = ({ order, settings }) => {
 
     // Derived Data
     const orderId = order.orderNumber || order.id || "---";
-    const dateStr = order.timestamp?.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    const dateStr = fmtDate(order.timestamp);
 
     // AR Mode (Unpaid / Partial)
     const isAR = order.invoiceStatus === 'UNPAID' || order.invoiceStatus === 'PARTIAL' || order.isAR;
-    const dueDateStr = order.dueDate ? new Date(order.dueDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '---';
+    const dueDateStr = order.dueDate ? fmtDate(order.dueDate) : '---';
 
     // Customer
     const custName = order.customerName || '';

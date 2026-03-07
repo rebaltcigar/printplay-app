@@ -10,7 +10,7 @@ import {
   TableCell,
   TableBody,
 } from "@mui/material";
-import { fmtPeso } from "../../utils/analytics";
+import { fmtPeso } from "../../services/analyticsService";
 
 export default function StaffLeaderboardPanel({ fixedHeight = 340, rows = [] }) {
   return (

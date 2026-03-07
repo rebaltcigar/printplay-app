@@ -29,7 +29,9 @@ import {
 import { initializeApp, getApps } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { db, auth, firebaseConfig } from "../firebase";
-import { registerFingerprint } from "../utils/biometrics";
+import { registerFingerprint } from "../services/biometricService";
+import { getFriendlyErrorMessage } from "../services/errorService";
+import { ROLES } from "../utils/permissions";
 
 // ---------------------------------------------------------------------------
 // Secondary Firebase app — used for user creation so the admin session is
@@ -44,7 +46,7 @@ const secondaryAuth = getAuth(secondaryApp);
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-const ROLE_LABELS = { staff: "Staff", superadmin: "Super Admin" };
+const ROLE_LABELS = { [ROLES.STAFF]: "Staff", [ROLES.SUPERADMIN]: "Super Admin", [ROLES.OWNER]: "Owner", [ROLES.ADMIN]: "Admin" };
 
 const StatusChip = ({ suspended }) =>
   suspended ? (
@@ -66,7 +68,7 @@ function AddUserDrawer({ open, onClose, onSave }) {
 
   useEffect(() => {
     if (open) {
-      setFullName(""); setEmail(""); setPassword(""); setRole("staff");
+      setFullName(""); setEmail(""); setPassword(""); setRole(ROLES.STAFF);
       setSaving(false); setError("");
     }
   }, [open]);
@@ -81,7 +83,7 @@ function AddUserDrawer({ open, onClose, onSave }) {
       await onSave({ fullName: fullName.trim(), email: email.trim(), password, role });
       onClose();
     } catch (err) {
-      setError(err.message || "Failed to create user.");
+      setError(getFriendlyErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -120,8 +122,10 @@ function AddUserDrawer({ open, onClose, onSave }) {
         <FormControl fullWidth>
           <InputLabel>Role</InputLabel>
           <Select value={role} label="Role" onChange={(e) => setRole(e.target.value)}>
-            <MenuItem value="staff">Staff</MenuItem>
-            <MenuItem value="superadmin">Super Admin</MenuItem>
+            <MenuItem value={ROLES.STAFF}>Staff</MenuItem>
+            <MenuItem value={ROLES.SUPERADMIN}>Super Admin</MenuItem>
+            <MenuItem value={ROLES.OWNER}>Owner</MenuItem>
+            <MenuItem value={ROLES.ADMIN}>Admin</MenuItem>
           </Select>
         </FormControl>
       </Stack>
@@ -140,7 +144,7 @@ function EditUserDrawer({ open, onClose, user, onSave }) {
   useEffect(() => {
     if (open && user) {
       setFullName(user.fullName || "");
-      setRole(user.role || "staff");
+      setRole(user.role || ROLES.STAFF);
       setSaving(false);
     }
   }, [open, user]);
@@ -183,8 +187,10 @@ function EditUserDrawer({ open, onClose, user, onSave }) {
         <FormControl fullWidth>
           <InputLabel>Role</InputLabel>
           <Select value={role} label="Role" onChange={(e) => setRole(e.target.value)}>
-            <MenuItem value="staff">Staff</MenuItem>
-            <MenuItem value="superadmin">Super Admin</MenuItem>
+            <MenuItem value={ROLES.STAFF}>Staff</MenuItem>
+            <MenuItem value={ROLES.SUPERADMIN}>Super Admin</MenuItem>
+            <MenuItem value={ROLES.OWNER}>Owner</MenuItem>
+            <MenuItem value={ROLES.ADMIN}>Admin</MenuItem>
           </Select>
         </FormControl>
       </Stack>
@@ -249,7 +255,7 @@ export default function UserManagement({ showSnackbar }) {
       setLoading(false);
     }, (err) => {
       console.warn("Failed to load users:", err);
-      showSnackbar?.("Failed to load users.", "error");
+      showSnackbar?.(getFriendlyErrorMessage(err), "error");
       setLoading(false);
     });
     return () => unsub();
@@ -295,7 +301,7 @@ export default function UserManagement({ showSnackbar }) {
       await sendPasswordResetEmail(auth, u.email);
       showSnackbar?.(`Password reset email sent to ${u.email}.`, "success");
     } catch (err) {
-      showSnackbar?.(`Failed: ${err.message}`, "error");
+      showSnackbar?.(getFriendlyErrorMessage(err), "error");
     }
   };
 
@@ -326,7 +332,7 @@ export default function UserManagement({ showSnackbar }) {
         showSnackbar?.(`Fingerprint registered for ${targetUser.fullName || targetUser.email}`, "success");
       }
     } catch (err) {
-      showSnackbar?.(`Failed: ${err.message}`, "error");
+      showSnackbar?.(getFriendlyErrorMessage(err), "error");
     } finally {
       setRegisteringUid(null);
     }
@@ -388,8 +394,10 @@ export default function UserManagement({ showSnackbar }) {
           onChange={(_, v) => { if (v) setRoleFilter(v); }}
         >
           <ToggleButton value="all">All</ToggleButton>
-          <ToggleButton value="staff">Staff</ToggleButton>
-          <ToggleButton value="superadmin">Super Admin</ToggleButton>
+          <ToggleButton value={ROLES.STAFF}>Staff</ToggleButton>
+          <ToggleButton value={ROLES.SUPERADMIN}>Super Admin</ToggleButton>
+          <ToggleButton value={ROLES.OWNER}>Owner</ToggleButton>
+          <ToggleButton value={ROLES.ADMIN}>Admin</ToggleButton>
         </ToggleButtonGroup>
         <Box sx={{ flexGrow: 1 }} />
         <Button

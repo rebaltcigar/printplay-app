@@ -54,14 +54,14 @@ import {
   startAfter,
   getDocs,
 } from "firebase/firestore";
-import { generateDisplayId, generateBatchIds } from "../utils/idGenerator";
+import { generateDisplayId, generateBatchIds } from "../services/orderService";
 import { db, auth } from "../firebase";
 import { SimpleReceipt } from "./SimpleReceipt";
 import { ServiceInvoice } from "./ServiceInvoice";
-import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice } from "../utils/printHelper";
+import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice } from "../services/printService";
 import LoadingScreen from './common/LoadingScreen';
-import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 import PageHeader from "./common/PageHeader";
+import { useGlobalUI } from "../contexts/GlobalUIContext";
 import DetailDrawer from "./common/DetailDrawer";
 import SummaryCards from "./common/SummaryCards";
 import { useStaffList } from "../hooks/useStaffList";
@@ -78,6 +78,7 @@ import {
   endOfMonth,
   downloadCSV,
 } from "../utils/formatters";
+import { getFriendlyErrorMessage } from "../services/errorService";
 
 // toTimeInput is not in formatters.js — kept here
 const toTimeInput = (d) => {
@@ -91,7 +92,8 @@ const toTimeInput = (d) => {
 const currency = fmtCurrency;
 
 /* ---------- component ---------- */
-const Transactions = ({ showSnackbar }) => {
+const Transactions = ({ isActive = true }) => {
+  const { showSnackbar, showConfirm } = useGlobalUI();
   // Filters
   const [loading, setLoading] = useState(false);
   const [start, setStart] = useState(toDateInput(startOfMonth()));
@@ -152,15 +154,7 @@ const Transactions = ({ showSnackbar }) => {
   const [printInvoiceData, setPrintInvoiceData] = useState(null);
 
   // Confirmation Dialog State
-  const [confirmDialog, setConfirmDialog] = useState({
-    open: false,
-    title: '',
-    message: '',
-    requireReason: true,
-    onConfirm: () => { },
-    confirmText: 'Confirm',
-    confirmColor: 'error'
-  });
+
 
   // Detail Drawer state
   const [detailOpen, setDetailOpen] = useState(false);
@@ -256,7 +250,7 @@ const Transactions = ({ showSnackbar }) => {
 
     } catch (err) {
       console.error("Pagination error", err);
-      showSnackbar?.("Failed to load more.", "error");
+      showSnackbar(getFriendlyErrorMessage(err), 'error');
     } finally {
       setLoadingMore(false);
     }
@@ -292,10 +286,10 @@ const Transactions = ({ showSnackbar }) => {
       setLastDoc(null);
       setHasMore(false);
 
-      showSnackbar?.(`Loaded ${newRows.length} transactions.`, 'success');
+      showSnackbar(`Loaded ${newRows.length} transactions.`, 'success');
     } catch (err) {
       console.error("Fetch All error", err);
-      showSnackbar?.("Failed to load all transactions.", "error");
+      showSnackbar("Failed to load all transactions.", "error");
     } finally {
       setLoadingMore(false);
       setInitLoading(false);
@@ -426,7 +420,7 @@ const Transactions = ({ showSnackbar }) => {
         if (snap.exists()) {
           rawOrder = { id: snap.id, ...snap.data() };
         } else {
-          showSnackbar?.("Order record not found (deleted?).", 'error');
+          showSnackbar("Order record not found (deleted?).", 'error');
           return;
         }
       } else {
@@ -459,7 +453,7 @@ const Transactions = ({ showSnackbar }) => {
 
     } catch (e) {
       console.error("Reprint error:", e);
-      showSnackbar?.("Failed to load order for printing.", 'error');
+      showSnackbar("Failed to load order for printing.", 'error');
     }
   };
 
@@ -488,7 +482,7 @@ const Transactions = ({ showSnackbar }) => {
         if (snap.exists()) {
           rawOrder = { id: snap.id, ...snap.data() };
         } else {
-          showSnackbar?.("Order record not found.", 'error');
+          showSnackbar("Order record not found.", 'error');
           return;
         }
       } else {
@@ -521,7 +515,7 @@ const Transactions = ({ showSnackbar }) => {
 
     } catch (e) {
       console.error("Invoice Print error:", e);
-      showSnackbar?.("Failed to load invoice data.", 'error');
+      showSnackbar("Failed to load invoice data.", 'error');
     }
   };
 
@@ -542,12 +536,11 @@ const Transactions = ({ showSnackbar }) => {
 
   /* ---- Delete (soft, single) ---- */
   const softDelete = (row) => {
-    setConfirmDialog({
-      open: true,
+    showConfirm({
       title: "Delete Transaction",
       message: `Are you sure you want to delete this transaction for ${currency(row.total)}?`,
       requireReason: true,
-      confirmText: "Delete",
+      confirmLabel: "Delete",
       confirmColor: "error",
       onConfirm: async (reason) => {
         try {
@@ -558,10 +551,10 @@ const Transactions = ({ showSnackbar }) => {
             deleteReason: reason,
           });
           setSelectedIds((prev) => prev.filter((id) => id !== row.id));
-          showSnackbar?.("Transaction deleted.", 'success');
+          showSnackbar("Transaction deleted.", 'success');
         } catch (e) {
           console.error(e);
-          showSnackbar?.("Failed to delete transaction.", 'error');
+          showSnackbar(getFriendlyErrorMessage(e), 'error');
         }
       }
     });
@@ -569,21 +562,20 @@ const Transactions = ({ showSnackbar }) => {
 
   /* ---- HARD DELETE (single) ---- */
   const hardDelete = (row) => {
-    setConfirmDialog({
-      open: true,
+    showConfirm({
       title: "PERMANENT Delete",
       message: "This will PERMANENTLY delete this transaction from the database. This cannot be undone.",
       requireReason: false,
-      confirmText: "Permanently Delete",
+      confirmLabel: "Permanently Delete",
       confirmColor: "error",
       onConfirm: async () => {
         try {
           await deleteDoc(doc(db, "transactions", row.id));
           setSelectedIds((prev) => prev.filter((id) => id !== row.id));
-          showSnackbar?.("Transaction permanently deleted.", 'success');
+          showSnackbar("Transaction permanently deleted.", 'success');
         } catch (e) {
           console.error(e);
-          showSnackbar?.("Hard delete failed. Permission issue?", 'error');
+          showSnackbar("Hard delete failed. Permission issue?", 'error');
         }
       }
     });
@@ -640,10 +632,10 @@ const Transactions = ({ showSnackbar }) => {
           await batch.commit();
           setBulkOpen(false);
           clearSelection();
-          showSnackbar?.(`${selectedIds.length} transaction(s) updated.`, 'success');
+          showSnackbar(`${selectedIds.length} transaction(s) updated.`, 'success');
         } catch (e) {
           console.error(e);
-          showSnackbar?.("Failed to update dates.", 'error');
+          showSnackbar(getFriendlyErrorMessage(e), 'error');
         }
       }
     });
@@ -673,10 +665,10 @@ const Transactions = ({ showSnackbar }) => {
           });
           await batch.commit();
           setSelectedIds([]);
-          showSnackbar?.(`${selectedIds.length} transaction(s) deleted.`, 'success');
+          showSnackbar(`${selectedIds.length} transaction(s) deleted.`, 'success');
         } catch (e) {
           console.error(e);
-          showSnackbar?.("Failed to delete selected transactions.", 'error');
+          showSnackbar(getFriendlyErrorMessage(e), 'error');
         }
       }
     });
@@ -699,10 +691,10 @@ const Transactions = ({ showSnackbar }) => {
           selectedIds.forEach((id) => batch.delete(doc(db, "transactions", id)));
           await batch.commit();
           setSelectedIds([]);
-          showSnackbar?.(`${selectedIds.length} transaction(s) permanently deleted.`, 'success');
+          showSnackbar(`${selectedIds.length} transaction(s) permanently deleted.`, 'success');
         } catch (e) {
           console.error(e);
-          showSnackbar?.("Hard delete failed. Permission issue?", 'error');
+          showSnackbar("Hard delete failed. Permission issue?", 'error');
         }
       }
     });
@@ -735,7 +727,7 @@ const Transactions = ({ showSnackbar }) => {
     if (!editing) return;
     if (editItem === "Expenses") {
       if (!editExpenseType) {
-        showSnackbar?.("Select an expense type.", 'warning');
+        showSnackbar("Select an expense type.", 'warning');
         return;
       }
       if (
@@ -743,7 +735,7 @@ const Transactions = ({ showSnackbar }) => {
         !editExpenseStaffId &&
         !editExpenseStaffName
       ) {
-        showSnackbar?.("Choose a staff for Salary or Salary Advance.", 'warning');
+        showSnackbar("Choose a staff for Salary or Salary Advance.", 'warning');
         return;
       }
     }
@@ -787,16 +779,16 @@ const Transactions = ({ showSnackbar }) => {
           try {
             await updateDoc(doc(db, "transactions", editing.id), update);
             closeEdit();
-            showSnackbar?.("Transaction updated.", 'success');
+            showSnackbar("Transaction updated.", 'success');
           } catch (e) {
             console.error(e);
-            showSnackbar?.("Failed to save edit.", 'error');
+            showSnackbar(getFriendlyErrorMessage(e), 'error');
           }
         }
       });
     } catch (e) {
       console.error(e);
-      showSnackbar?.("Failed to initiate edit.", 'error');
+      showSnackbar(getFriendlyErrorMessage(e), 'error');
     }
   }
 
@@ -1049,15 +1041,15 @@ const Transactions = ({ showSnackbar }) => {
                       <Chip
                         label={
                           r.item === 'Expenses' ? 'Expense'
-                          : r.item === 'New Debt' ? 'Debt'
-                          : r.item === 'Paid Debt' ? 'Paid Debt'
-                          : 'Sale'
+                            : r.item === 'New Debt' ? 'Debt'
+                              : r.item === 'Paid Debt' ? 'Paid Debt'
+                                : 'Sale'
                         }
                         size="small"
                         color={
                           r.item === 'Expenses' ? 'warning'
-                          : r.item?.includes('Debt') ? 'secondary'
-                          : 'success'
+                            : r.item?.includes('Debt') ? 'secondary'
+                              : 'success'
                         }
                         variant="outlined"
                       />
@@ -1468,17 +1460,7 @@ const Transactions = ({ showSnackbar }) => {
         </DialogActions>
       </Dialog>
 
-      {/* Confirmation / Reason Dialog */}
-      <ConfirmationReasonDialog
-        open={confirmDialog.open}
-        onClose={() => setConfirmDialog(prev => ({ ...prev, open: false }))}
-        onConfirm={confirmDialog.onConfirm}
-        title={confirmDialog.title}
-        message={confirmDialog.message}
-        requireReason={confirmDialog.requireReason}
-        confirmText={confirmDialog.confirmText}
-        confirmColor={confirmDialog.confirmColor}
-      />
+
     </Box>
   );
 };

@@ -70,14 +70,62 @@ export const toDatetimeLocal = (d) => {
 export const fromDatetimeLocal = (s) => new Date(s);
 
 /**
- * Formats a Firestore Timestamp or JS Date to a locale string.
- * Returns "" for null/undefined values.
+ * Ensures a valid Date object from Firestore Timestamp, Date, or string.
  */
-export const fmtDateTime = (ts) => {
-    if (!ts) return '';
-    if (ts.seconds) return new Date(ts.seconds * 1000).toLocaleString();
-    if (ts instanceof Date) return ts.toLocaleString();
-    return '';
+function toDateObj(raw) {
+    if (!raw) return null;
+    if (raw.toDate) return raw.toDate(); // Firestore Timestamp
+    if (raw instanceof Date) return raw;
+    const parsed = new Date(raw);
+    return isNaN(parsed) ? null : parsed;
+}
+
+/**
+ * Formats a date to purely the date portion (e.g., "Jan 1, 2024").
+ */
+export const fmtDate = (rawDate) => {
+    const d = toDateObj(rawDate);
+    if (!d) return "";
+    return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+};
+
+/**
+ * Formats a date to include time (e.g., "Jan 1, 2024, 2:30 PM").
+ */
+export const fmtDateTime = (rawDate) => {
+    const d = toDateObj(rawDate);
+    if (!d) return "";
+    return d.toLocaleString("en-US", {
+        year: "numeric", month: "short", day: "numeric",
+        hour: "numeric", minute: "2-digit"
+    });
+};
+
+/**
+ * Formats just the time (e.g., "2:30 PM").
+ */
+export const fmtTime = (rawDate) => {
+    const d = toDateObj(rawDate);
+    if (!d) return "";
+    return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+};
+
+/**
+ * Formats a date to a short version (e.g., "Jan 1").
+ */
+export const fmtShortDate = (rawDate) => {
+    const d = toDateObj(rawDate);
+    if (!d) return "";
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+};
+
+/**
+ * Formats a date to the weekday name (e.g., "Mon").
+ */
+export const fmtDayOfWeek = (rawDate) => {
+    const d = toDateObj(rawDate);
+    if (!d) return "";
+    return d.toLocaleDateString("en-US", { weekday: "short" });
 };
 
 // ---------------------------------------------------------------------------

@@ -11,6 +11,8 @@ import ReceiptIcon from '@mui/icons-material/Receipt';
 import { doc, updateDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../firebase';
 import { sumDenominations, computeShiftFinancials } from '../utils/shiftFinancials';
+import { fmtCurrency, fmtTime } from '../utils/formatters';
+import { useGlobalUI } from '../contexts/GlobalUIContext';
 
 const BILL_DENOMS = [1000, 500, 200, 100, 50, 20];
 const COIN_DENOMS = [20, 10, 5, 1];
@@ -27,8 +29,9 @@ const TabPanel = (props) => {
 };
 
 export default function ShiftConsolidationDialog({
-    open, onClose, shift, transactions, showSnackbar
+    open, onClose, shift, transactions
 }) {
+    const { showSnackbar } = useGlobalUI();
     const [tab, setTab] = useState(0);
 
     // --- CASE 1: Cash ---
@@ -127,11 +130,11 @@ export default function ShiftConsolidationDialog({
             });
 
             await batch.commit();
-            showSnackbar?.("Consolidation saved.", 'success');
+            showSnackbar("Consolidation saved.", 'success');
             onClose();
         } catch (e) {
             console.error(e);
-            showSnackbar?.("Failed to save consolidation.", 'error');
+            showSnackbar("Failed to save consolidation.", 'error');
         }
     };
 
@@ -188,25 +191,25 @@ export default function ShiftConsolidationDialog({
                             <Stack spacing={1}>
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                                     <Typography variant="body2">Expected Cash Sales</Typography>
-                                    <Typography variant="body2">₱{cashSalesTotal.toLocaleString()}</Typography>
+                                    <Typography variant="body2">{fmtCurrency(cashSalesTotal)}</Typography>
                                 </Box>
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                                     <Typography variant="body2">PC Rental (Cash)</Typography>
-                                    <Typography variant="body2">₱{pcRentalCash.toLocaleString()}</Typography>
+                                    <Typography variant="body2">{fmtCurrency(pcRentalCash)}</Typography>
                                 </Box>
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', color: 'error.main' }}>
                                     <Typography variant="body2">Expenses (Cash)</Typography>
-                                    <Typography variant="body2">-₱{expensesTotal.toLocaleString()}</Typography>
+                                    <Typography variant="body2">-{fmtCurrency(expensesTotal)}</Typography>
                                 </Box>
                                 <Divider />
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold' }}>
                                     <Typography>Expected Cash in Drawer</Typography>
-                                    <Typography>₱{expectedCash.toLocaleString()}</Typography>
+                                    <Typography>{fmtCurrency(expectedCash)}</Typography>
                                 </Box>
 
                                 <Box sx={{ mt: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <Typography variant="subtitle1">Actual Count</Typography>
-                                    <Typography variant="h5" color="primary">₱{cashOnHand.toLocaleString()}</Typography>
+                                    <Typography variant="h5" color="primary">{fmtCurrency(cashOnHand)}</Typography>
                                 </Box>
 
                                 <Box sx={{
@@ -217,7 +220,7 @@ export default function ShiftConsolidationDialog({
                                     <Typography>Difference</Typography>
                                     <Typography fontWeight="bold">
                                         {(cashOnHand - expectedCash) > 0 ? '+' : ''}
-                                        ₱{(cashOnHand - expectedCash).toLocaleString()}
+                                        {fmtCurrency(cashOnHand - expectedCash)}
                                     </Typography>
                                 </Box>
                             </Stack>
@@ -229,9 +232,9 @@ export default function ShiftConsolidationDialog({
                 <TabPanel value={tab} index={1}>
                     <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <Typography variant="subtitle1">
-                            Total Expected: ₱{gcashSalesTotal.toLocaleString()}
+                            Total Expected: {fmtCurrency(gcashSalesTotal)}
                         </Typography>
-                        <ChipLabel label={`Verified: ₱${verifiedGcashTotal.toLocaleString()}`} color="primary" />
+                        <ChipLabel label={`Verified: ${fmtCurrency(verifiedGcashTotal)}`} color="primary" />
                     </Box>
 
                     <TableContainer sx={{ maxHeight: 400 }}>
@@ -258,7 +261,7 @@ export default function ShiftConsolidationDialog({
                                                 {tx.paymentDetails?.phone}
                                             </Typography>
                                         </TableCell>
-                                        <TableCell>₱{Number(tx.total).toLocaleString()}</TableCell>
+                                        <TableCell>{fmtCurrency(tx.total)}</TableCell>
                                         <TableCell>{tx.customerName || 'Walk-in'}</TableCell>
                                         <TableCell>
                                             <Select
@@ -288,7 +291,7 @@ export default function ShiftConsolidationDialog({
                     </Alert>
 
                     <Typography variant="subtitle1" sx={{ mb: 1 }}>
-                        Total Receivables: ₱{arTotal.toLocaleString()}
+                        Total Receivables: {fmtCurrency(arTotal)}
                     </Typography>
 
                     <TableContainer sx={{ maxHeight: 400 }}>
@@ -308,10 +311,10 @@ export default function ShiftConsolidationDialog({
                                 {arTransactions.map((tx, idx) => (
                                     <TableRow key={tx.id || idx}>
                                         <TableCell>{tx.customerName}</TableCell>
-                                        <TableCell>₱{Number(tx.total).toLocaleString()}</TableCell>
+                                        <TableCell>{fmtCurrency(tx.total)}</TableCell>
                                         <TableCell>{tx.item}</TableCell>
                                         <TableCell>
-                                            {tx.timestamp?.seconds ? new Date(tx.timestamp.seconds * 1000).toLocaleTimeString() : ''}
+                                            {tx.timestamp ? fmtTime(tx.timestamp) : ''}
                                         </TableCell>
                                     </TableRow>
                                 ))}

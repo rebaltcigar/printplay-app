@@ -48,17 +48,16 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import {
-  cap,
-  peso,
   toHours,
-  toLocaleDateStringPHT,
 } from "../../utils/payrollHelpers";
+import { fmtDate, fmtCurrency } from "../../utils/formatters";
 import ConfirmationReasonDialog from "../ConfirmationReasonDialog";
 import DetailDrawer from "../common/DetailDrawer";
-import SummaryCards from "../common/SummaryCards";
+import { useGlobalUI } from "../../contexts/GlobalUIContext";
 import PaystubDialog from "../Paystub";
 
-export default function AllRuns({ showSnackbar, onEditRun }) {
+export default function AllRuns({ onEditRun }) {
+  const { showSnackbar } = useGlobalUI();
   const [runs, setRuns] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -121,6 +120,7 @@ export default function AllRuns({ showSnackbar, onEditRun }) {
         value: String(filtered.length),
         sub: "in current filter",
         icon: <ScheduleIcon fontSize="small" />,
+        color: "info.main",
       },
       {
         label: "Posted",
@@ -137,13 +137,14 @@ export default function AllRuns({ showSnackbar, onEditRun }) {
       },
       {
         label: "Total Net Paid",
-        value: peso(totalNet),
+        value: fmtCurrency(totalNet),
         sub: "posted runs only",
         color: "primary.main",
         icon: <AttachMoneyIcon fontSize="small" />,
         highlight: true,
       },
     ];
+
   }, [filtered]);
 
   // open run in DetailDrawer and load its lines
@@ -158,7 +159,7 @@ export default function AllRuns({ showSnackbar, onEditRun }) {
     } catch (err) {
       console.error(err);
       setRunDrawer((prev) => ({ ...prev, loading: false }));
-      showSnackbar?.("Failed to load run details.", "error");
+      showSnackbar("Failed to load run details.", "error");
     }
   };
 
@@ -190,7 +191,7 @@ export default function AllRuns({ showSnackbar, onEditRun }) {
             updatedAt: serverTimestamp(),
           });
           await batch.commit();
-          showSnackbar?.("Run voided.", "success");
+          showSnackbar("Run voided.", "success");
         },
       });
     } else {
@@ -216,7 +217,7 @@ export default function AllRuns({ showSnackbar, onEditRun }) {
           );
           stubsSnap.forEach((s) => deleteDoc(s.ref));
           await deleteDoc(doc(db, "payrollRuns", r.id));
-          showSnackbar?.("Run deleted.", "success");
+          showSnackbar("Run deleted.", "success");
           if (runDrawer.run?.id === r.id) closeRunDrawer();
         },
       });
@@ -241,13 +242,13 @@ export default function AllRuns({ showSnackbar, onEditRun }) {
     return [
       { label: "Staff", value: String(t.staffCount || 0) },
       { label: "Hours", value: toHours(t.minutes || 0) },
-      { label: "Gross", value: peso(t.gross || 0) },
+      { label: "Gross", value: fmtCurrency(t.gross || 0) },
       ...(Number(t.additions || 0) > 0
-        ? [{ label: "Additions", value: peso(t.additions || 0), color: "success.main" }]
+        ? [{ label: "Additions", value: fmtCurrency(t.additions || 0), color: "success.main" }]
         : []),
-      { label: "Advances", value: peso(t.advances || 0) },
-      { label: "Shortages", value: peso(t.shortages || 0) },
-      { label: "NET", value: peso(t.net || 0), color: "primary.main", highlight: true },
+      { label: "Advances", value: fmtCurrency(t.advances || 0) },
+      { label: "Shortages", value: fmtCurrency(t.shortages || 0) },
+      { label: "NET", value: fmtCurrency(t.net || 0), color: "primary.main", highlight: true },
     ];
   }, [drawerRun]);
 
@@ -320,8 +321,8 @@ export default function AllRuns({ showSnackbar, onEditRun }) {
                 {filtered.map((r) => (
                   <TableRow key={r.id}>
                     <TableCell>
-                      {toLocaleDateStringPHT(r.periodStart)} –{" "}
-                      {toLocaleDateStringPHT(r.periodEnd)}
+                      {fmtDate(r.periodStart)} –{" "}
+                      {fmtDate(r.periodEnd)}
                     </TableCell>
                     <TableCell>
                       <Chip
@@ -338,16 +339,16 @@ export default function AllRuns({ showSnackbar, onEditRun }) {
                       {toHours(r.totals?.minutes || 0)}
                     </TableCell>
                     <TableCell align="right">
-                      {peso(r.totals?.gross || 0)}
+                      {fmtCurrency(r.totals?.gross || 0)}
                     </TableCell>
                     <TableCell align="right">
-                      {peso(r.totals?.advances || 0)}
+                      {fmtCurrency(r.totals?.advances || 0)}
                     </TableCell>
                     <TableCell align="right">
-                      {peso(r.totals?.shortages || 0)}
+                      {fmtCurrency(r.totals?.shortages || 0)}
                     </TableCell>
                     <TableCell align="right">
-                      <b>{peso(r.totals?.net || 0)}</b>
+                      <b>{fmtCurrency(r.totals?.net || 0)}</b>
                     </TableCell>
                     <TableCell align="right">
                       {(r.status === "draft" || r.status === "approved") && onEditRun && (
@@ -410,7 +411,7 @@ export default function AllRuns({ showSnackbar, onEditRun }) {
         title="Payroll Run Details"
         subtitle={
           drawerRun
-            ? `${toLocaleDateStringPHT(drawerRun.periodStart)} – ${toLocaleDateStringPHT(drawerRun.periodEnd)}`
+            ? `${fmtDate(drawerRun.periodStart)} – ${fmtDate(drawerRun.periodEnd)}`
             : ""
         }
         width={600}
@@ -458,7 +459,7 @@ export default function AllRuns({ showSnackbar, onEditRun }) {
               <Typography variant="body2" color="text.secondary">
                 Pay Date:{" "}
                 <Typography component="span" variant="body2" color="text.primary">
-                  {toLocaleDateStringPHT(drawerRun.payDate)}
+                  {fmtDate(drawerRun.payDate)}
                 </Typography>
               </Typography>
               <Typography variant="body2" color="text.secondary">
@@ -519,9 +520,9 @@ export default function AllRuns({ showSnackbar, onEditRun }) {
                               </Typography>
                             </TableCell>
                             <TableCell align="right">{toHours(minutes)}</TableCell>
-                            <TableCell align="right">{peso(rate)}</TableCell>
-                            <TableCell align="right">{peso(gross)}</TableCell>
-                            <TableCell align="right"><b>{peso(net)}</b></TableCell>
+                            <TableCell align="right">{fmtCurrency(rate)}</TableCell>
+                            <TableCell align="right">{fmtCurrency(gross)}</TableCell>
+                            <TableCell align="right"><b>{fmtCurrency(net)}</b></TableCell>
                           </TableRow>
                         );
                       })}

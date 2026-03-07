@@ -18,7 +18,7 @@ import {
 } from '@mui/material';
 import { db } from '../../firebase';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
-import { getRange, fmtPeso } from '../../utils/analytics';
+import { getRange, fmtPeso } from '../../services/analyticsService';
 import dayjs from 'dayjs';
 import PageHeader from '../common/PageHeader';
 

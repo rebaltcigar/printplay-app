@@ -9,11 +9,12 @@ import { collectionGroup, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase';
 import DetailDrawer from '../common/DetailDrawer';
 import { Paystub } from '../Paystub';
+import { fmtDate } from '../../utils/formatters';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 
 export default function MyPaystubsDrawer({ open, onClose, userEmail }) {
-  const [stubs, setStubs]     = useState([]);
-  const [active, setActive]   = useState(null);
+  const [stubs, setStubs] = useState([]);
+  const [active, setActive] = useState(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -39,12 +40,7 @@ export default function MyPaystubsDrawer({ open, onClose, userEmail }) {
 
   const activeStub = useMemo(() => stubs.find(s => s.id === active) || null, [stubs, active]);
 
-  const fmtPayDate = (stub) => {
-    if (!stub?.payDate?.seconds) return 'Unknown date';
-    return new Date(stub.payDate.seconds * 1000).toLocaleDateString('en-US', {
-      month: 'long', day: 'numeric', year: 'numeric',
-    });
-  };
+
 
   return (
     <DetailDrawer
@@ -78,7 +74,7 @@ export default function MyPaystubsDrawer({ open, onClose, userEmail }) {
                 onClick={() => setActive(s.id)}
                 sx={{ justifyContent: 'flex-start', textAlign: 'left' }}
               >
-                {fmtPayDate(s)}
+                {fmtDate(s.payDate) || 'Unknown date'}
               </Button>
             ))}
           </Stack>

@@ -41,11 +41,11 @@ import {
     buildServiceMap,
     generateMonthlyKeys,
     saleMatchesService,
-    fmtPeso
-} from '../../utils/analytics';
+    fmtPeso,
+} from '../../services/analyticsService';
 import dayjs from 'dayjs';
 import { useAnalytics } from '../../contexts/AnalyticsContext';
-import { safePrint } from '../../utils/printHelper';
+import { safePrint } from '../../services/printService';
 import PageHeader from '../common/PageHeader';
 
 export default function FinancialPnL() {

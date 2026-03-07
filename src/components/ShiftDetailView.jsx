@@ -57,14 +57,14 @@ import {
   writeBatch,
   FieldValue,
 } from "firebase/firestore";
-import { generateDisplayId } from "../utils/idGenerator";
-import { fmtCurrency, toDatetimeLocal, fromDatetimeLocal, identifierText, downloadCSV } from "../utils/formatters";
+import { generateDisplayId } from "../services/orderService";
+import { useGlobalUI } from "../contexts/GlobalUIContext";
+import { fmtCurrency, toDatetimeLocal, fromDatetimeLocal, identifierText, downloadCSV, fmtDateTime, fmtDate, fmtTime } from "../utils/formatters";
 import { computeShiftFinancials } from "../utils/shiftFinancials";
 import { useStaffList } from "../hooks/useStaffList";
 import { useServiceList } from "../hooks/useServiceList";
 
 import CustomerDialog from "./CustomerDialog";
-import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 import ShiftConsolidationDialog from "./ShiftConsolidationDialog";
 import ShiftAuditDebugger from "./ShiftAuditDebugger";
 import DetailDrawer from "./common/DetailDrawer";
@@ -75,7 +75,8 @@ const fmtPeso = fmtCurrency;
 
 const normalize = (s) => String(s ?? "").trim().toLowerCase();
 
-export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }) {
+export default function ShiftDetailView({ shift, userMap, onBack }) {
+  const { showSnackbar, showConfirm } = useGlobalUI();
   // ----- form state -----
   const [item, setItem] = useState("");
   const [quantity, setQuantity] = useState("");
@@ -113,15 +114,7 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
   const isDebtItem = item === "New Debt" || item === "Paid Debt";
 
   // Confirmation Dialog State
-  const [confirmDialog, setConfirmDialog] = useState({
-    open: false,
-    title: '',
-    message: '',
-    requireReason: true,
-    onConfirm: () => { },
-    confirmText: 'Confirm',
-    confirmColor: 'error'
-  });
+
 
   // Consolidation Dialog State
   const [consolidationOpen, setConsolidationOpen] = useState(false);
@@ -247,23 +240,23 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
     e?.preventDefault?.();
 
     if (!quantity || price === "") {
-      showSnackbar?.("Please enter both a quantity and a price.", 'warning');
+      showSnackbar("Please enter both a quantity and a price.", 'warning');
       return;
     }
     if (Number(quantity) <= 0) {
-      showSnackbar?.("Quantity must be a positive number.", 'warning');
+      showSnackbar("Quantity must be a positive number.", 'warning');
       return;
     }
     if (item === "Expenses") {
       if (!expenseType) {
-        showSnackbar?.("Please select an expense type.", 'warning');
+        showSnackbar("Please select an expense type.", 'warning');
         return;
       }
       if (
         (expenseType === "Salary" || expenseType === "Salary Advance") &&
         !expenseStaffId
       ) {
-        showSnackbar?.("Please select a staff for Salary or Salary Advance.", 'warning');
+        showSnackbar("Please select a staff for Salary or Salary Advance.", 'warning');
         return;
       }
     }
@@ -272,7 +265,7 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
       !selectedCustomer &&
       !currentlyEditing
     ) {
-      showSnackbar?.("Please select a customer for this transaction.", 'warning');
+      showSnackbar("Please select a customer for this transaction.", 'warning');
       return;
     }
 
@@ -292,12 +285,11 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
 
     try {
       if (currentlyEditing) {
-        setConfirmDialog({
-          open: true,
+        showConfirm({
           title: "Edit Transaction",
           message: "Please provide a reason for this edit.",
           requireReason: true,
-          confirmText: "Save Changes",
+          confirmLabel: "Save Changes",
           confirmColor: "primary",
           onConfirm: async (reason) => {
             try {
@@ -308,12 +300,12 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
                 editReason: reason,
                 lastUpdatedAt: serverTimestamp(),
               });
-              showSnackbar?.("Transaction updated.", 'success');
+              showSnackbar("Transaction updated.", 'success');
               clearForm();
               setTxDrawerOpen(false);
             } catch (err) {
               console.error(err);
-              showSnackbar?.("Failed to save transaction.", 'error');
+              showSnackbar("Failed to save transaction.", 'error');
             }
           }
         });
@@ -341,13 +333,13 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
           isEdited: false,
           timestamp: tsDate,
         });
-        showSnackbar?.("Transaction added.", 'success');
+        showSnackbar("Transaction added.", 'success');
       }
       clearForm();
       setTxDrawerOpen(false);
     } catch (err) {
       console.error(err);
-      showSnackbar?.("Failed to save transaction.", 'error');
+      showSnackbar("Failed to save transaction.", 'error');
     }
   };
 
@@ -358,12 +350,11 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
   };
 
   const handleRowDelete = async (tx) => {
-    setConfirmDialog({
-      open: true,
+    showConfirm({
       title: "Delete Entry",
       message: `Are you sure you want to delete this entry for ${fmtPeso(tx.total)}?`,
       requireReason: true,
-      confirmText: "Delete",
+      confirmLabel: "Delete",
       confirmColor: "error",
       onConfirm: async (reason) => {
         try {
@@ -373,22 +364,21 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
             deletedBy: auth.currentUser?.email || "admin",
             deleteReason: reason,
           });
-          showSnackbar?.("Entry deleted.", 'success');
+          showSnackbar("Entry deleted.", 'success');
         } catch (e) {
           console.error(e);
-          showSnackbar?.("Failed to delete entry.", 'error');
+          showSnackbar("Failed to delete entry.", 'error');
         }
       }
     });
   };
 
   const handleUnlink = async (tx) => {
-    setConfirmDialog({
-      open: true,
+    showConfirm({
       title: "Unlink Transaction",
       message: "Are you sure? This will remove the transaction from this shift but keep the record in the database.",
       requireReason: true,
-      confirmText: "Unlink",
+      confirmLabel: "Unlink",
       confirmColor: "warning",
       onConfirm: async (reason) => {
         try {
@@ -399,10 +389,10 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
             editReason: `Unlinked from shift: ${reason}`,
             lastUpdatedAt: serverTimestamp(),
           });
-          showSnackbar?.("Transaction unlinked.", 'success');
+          showSnackbar("Transaction unlinked.", 'success');
         } catch (e) {
           console.error(e);
-          showSnackbar?.("Failed to unlink transaction.", 'error');
+          showSnackbar("Failed to unlink transaction.", 'error');
         }
       }
     });
@@ -411,12 +401,11 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
   const handleBulkDelete = async () => {
     if (!selectedTransactions.length) return;
 
-    setConfirmDialog({
-      open: true,
+    showConfirm({
       title: "Bulk Delete",
       message: `Are you sure you want to delete ${selectedTransactions.length} entries?`,
       requireReason: true,
-      confirmText: "Delete All",
+      confirmLabel: "Delete All",
       confirmColor: "error",
       onConfirm: async (reason) => {
         try {
@@ -431,10 +420,10 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
           });
           await batch.commit();
           setSelectedTransactions([]);
-          showSnackbar?.(`${selectedTransactions.length} entries deleted.`, 'success');
+          showSnackbar(`${selectedTransactions.length} entries deleted.`, 'success');
         } catch (e) {
           console.error(e);
-          showSnackbar?.("Failed to bulk delete.", 'error');
+          showSnackbar("Failed to bulk delete.", 'error');
         }
       }
     });
@@ -460,12 +449,11 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
     if (!selectedTransactions.length) return;
     const when = fromDatetimeLocal(bulkDateTime);
 
-    setConfirmDialog({
-      open: true,
+    showConfirm({
       title: "Bulk Date Edit",
-      message: `Are you sure you want to change the date/time for ${selectedTransactions.length} entries to ${when.toLocaleString()}?`,
+      message: `Are you sure you want to change the date/time for ${selectedTransactions.length} entries to ${fmtDateTime(when)}?`,
       requireReason: true,
-      confirmText: "Update Dates",
+      confirmLabel: "Update Dates",
       confirmColor: "primary",
       onConfirm: async (reason) => {
         try {
@@ -482,10 +470,10 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
           await batch.commit();
           setBulkOpen(false);
           setSelectedTransactions([]);
-          showSnackbar?.(`${selectedTransactions.length} entries updated.`, 'success');
+          showSnackbar(`${selectedTransactions.length} entries updated.`, 'success');
         } catch (e) {
           console.error(e);
-          showSnackbar?.("Failed to update dates.", 'error');
+          showSnackbar("Failed to update dates.", 'error');
         }
       }
     });
@@ -494,12 +482,11 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
   const quickSetShiftStart = async () => {
     if (!selectedTransactions.length) return;
 
-    setConfirmDialog({
-      open: true,
+    showConfirm({
       title: "Bulk Date Reset",
-      message: `Set ${selectedTransactions.length} entries to shift start time (${shiftStart.toLocaleString()})?`,
+      message: `Set ${selectedTransactions.length} entries to shift start time (${fmtDateTime(shiftStart)})?`,
       requireReason: true,
-      confirmText: "Reset Dates",
+      confirmLabel: "Reset Dates",
       confirmColor: "primary",
       onConfirm: async (reason) => {
         try {
@@ -516,10 +503,10 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
           });
           await batch.commit();
           setSelectedTransactions([]);
-          showSnackbar?.(`${selectedTransactions.length} entries reset to shift start.`, 'success');
+          showSnackbar(`${selectedTransactions.length} entries reset to shift start.`, 'success');
         } catch (e) {
           console.error(e);
-          showSnackbar?.("Failed to set dates to shift start.", 'error');
+          showSnackbar("Failed to set dates to shift start.", 'error');
         }
       }
     });
@@ -544,10 +531,10 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
 
     const rows = transactions.map((tx) => {
       const date = tx.timestamp?.seconds
-        ? new Date(tx.timestamp.seconds * 1000).toLocaleDateString()
+        ? fmtDate(tx.timestamp.seconds * 1000)
         : "";
       const time = tx.timestamp?.seconds
-        ? new Date(tx.timestamp.seconds * 1000).toLocaleTimeString()
+        ? fmtTime(tx.timestamp.seconds * 1000)
         : "";
 
       const type = tx.item === "Expenses" ? "Expense" : "Service";
@@ -618,9 +605,9 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
 
   const formatTime = (ts) =>
     ts?.seconds
-      ? new Date(ts.seconds * 1000).toLocaleTimeString()
+      ? fmtTime(ts.seconds * 1000)
       : ts instanceof Date
-        ? ts.toLocaleTimeString()
+        ? fmtTime(ts)
         : "—";
 
   return (
@@ -643,7 +630,7 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
           <Typography variant="body2" color="text.secondary">
             {userMap[shift.staffEmail] || shift.staffEmail} ·{' '}
             {shift.startTime?.seconds
-              ? new Date(shift.startTime.seconds * 1000).toLocaleString()
+              ? fmtDateTime(shift.startTime.seconds * 1000)
               : ''}
           </Typography>
         </Box>
@@ -968,9 +955,7 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
                           {o.orderNumber || o.id.slice(-6)}
                         </TableCell>
                         <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                          {o.timestamp?.seconds
-                            ? new Date(o.timestamp.seconds * 1000).toLocaleString()
-                            : ''}
+                          {o.timestamp ? fmtDateTime(o.timestamp) : ''}
                         </TableCell>
                         <TableCell>{o.customerName || 'Walk-in'}</TableCell>
                         <TableCell sx={{ color: 'text.secondary', fontSize: '0.8rem' }}>
@@ -1167,16 +1152,10 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
         user={{ email: shift.staffEmail }}
       />
 
-      {/* Confirmation Dialog */}
-      <ConfirmationReasonDialog
-        open={confirmDialog.open}
-        onClose={() => setConfirmDialog((p) => ({ ...p, open: false }))}
-        onConfirm={confirmDialog.onConfirm}
-        title={confirmDialog.title}
-        message={confirmDialog.message}
-        requireReason={confirmDialog.requireReason}
-        confirmText={confirmDialog.confirmText}
-        confirmColor={confirmDialog.confirmColor}
+      <CustomerDialog
+        open={openCustomerDialog}
+        onClose={() => setOpenCustomerDialog(false)}
+        onSelect={handleSelectCustomer}
       />
 
       {/* Consolidation Dialog */}
@@ -1186,7 +1165,6 @@ export default function ShiftDetailView({ shift, userMap, onBack, showSnackbar }
           onClose={() => setConsolidationOpen(false)}
           shift={shift}
           transactions={transactions}
-          showSnackbar={showSnackbar}
         />
       )}
 

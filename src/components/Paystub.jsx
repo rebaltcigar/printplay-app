@@ -20,35 +20,19 @@ import DownloadIcon from "@mui/icons-material/Download";
 import { db } from "../firebase";
 import { collection, getDocs, doc, getDoc } from "firebase/firestore";
 import html2canvas from "html2canvas";
+import { fmtCurrency, fmtDate, fmtTime } from "../utils/formatters";
 
 // ====== CONFIG ======
 const PAYSLIP_WIDTH = "720px"; // change to "80mm" or "600px" if you like
 
-const formatCurrency = (n) =>
-  `₱${Number(n || 0).toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+const formatCurrency = fmtCurrency;
 
 
 const formatTimeRange = (start, end) => {
-  if (!start?.seconds) return "—";
-  const s = new Date(start.seconds * 1000);
-  const startTime = s.toLocaleTimeString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: "Asia/Manila",
-  });
-  if (!end?.seconds) return `${startTime} - (Ongoing)`;
-  const e = new Date(end.seconds * 1000);
-  const endTime = e.toLocaleTimeString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: "Asia/Manila",
-  });
-  return `${startTime} - ${endTime} `;
+  if (!start) return "—";
+  const startTime = fmtTime(start);
+  if (!end) return `${startTime} - (Ongoing)`;
+  return `${startTime} - ${fmtTime(end)} `;
 };
 
 // ---------- Single Paystub ----------
@@ -58,7 +42,7 @@ export function Paystub({ stub }) {
   useEffect(() => {
     getDoc(doc(db, 'settings', 'config')).then(snap => {
       if (snap.exists() && snap.data().storeName) setStoreName(snap.data().storeName);
-    }).catch(() => {});
+    }).catch(() => { });
   }, []);
 
   if (!stub) {
@@ -156,28 +140,13 @@ export function Paystub({ stub }) {
           </Typography>
           <Typography variant="body1">
             <strong>Pay Date:</strong>{" "}
-            {stub.payDate?.seconds
-              ? new Date(stub.payDate.seconds * 1000).toLocaleDateString(
-                "en-US",
-                {
-                  month: "2-digit",
-                  day: "2-digit",
-                  year: "numeric",
-                }
-              )
-              : "N/A"}
+            {stub.payDate ? fmtDate(stub.payDate) : "N/A"}
           </Typography>
           {/* optional: period */}
           {stub.periodStart?.seconds && stub.periodEnd?.seconds && (
             <Typography variant="body1">
               <strong>Period:</strong>{" "}
-              {new Date(
-                stub.periodStart.seconds * 1000
-              ).toLocaleDateString("en-US")}{" "}
-              –{" "}
-              {new Date(
-                stub.periodEnd.seconds * 1000
-              ).toLocaleDateString("en-US")}
+              {fmtDate(stub.periodStart)} – {fmtDate(stub.periodEnd)}
             </Typography>
           )}
         </Box>

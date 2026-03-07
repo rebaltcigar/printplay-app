@@ -2,7 +2,7 @@
 import React, { useMemo } from "react";
 import { Card, Typography, Box, Stack, Divider } from "@mui/material";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
-import { fmtPeso, txAmount } from "../../utils/analytics";
+import { fmtPeso, txAmount } from "../../services/analyticsService";
 
 const COLORS = ["#D32F2F", "#E64A19", "#F57C00", "#FFA000", "#FBC02D", "#388E3C", "#1976D2", "#7B1FA2"];
 

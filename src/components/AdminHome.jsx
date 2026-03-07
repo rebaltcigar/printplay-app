@@ -7,28 +7,30 @@ import { db } from "../firebase";
 import { doc, updateDoc, deleteDoc, serverTimestamp, query, collection, where, onSnapshot } from "firebase/firestore";
 import { useAnalytics } from "../contexts/AnalyticsContext"; // Context hook
 import { useOutstandingReceivables } from "../hooks/useInvoices";
+import { useGlobalUI } from "../contexts/GlobalUIContext";
+import { fmtCurrency } from "../utils/formatters";
+import { getFriendlyErrorMessage } from "../services/errorService";
+import { ROLES } from "../utils/permissions";
 
 import {
   buildServiceMap,
+  getRange,
   txAmount,
   classifyTx,
   buildTrendSeries,
-  fmtPeso,
   normalize,
-} from "../utils/analytics";
+} from "../services/analyticsService";
 
 import TrendSection from "./dashboard/TrendSection";
 import ActiveShiftPanel from "./dashboard/ActiveShiftPanel";
 import StaffLeaderboardPanel from "./dashboard/StaffLeaderboardPanel";
 import SalesBreakdownPanel from "./dashboard/SalesBreakdownPanel";
 import ExpenseBreakdownPanel from "./dashboard/ExpenseBreakdownPanel";
-import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 import LoadingScreen from "./common/LoadingScreen";
 import PageHeader from "./common/PageHeader";
 
 
-/* small helper */
-const currency = (n) => fmtPeso(n);
+
 
 async function clearShiftLockIfMatches(shiftId, endedByEmail) {
   // ... (keep helper)
@@ -38,13 +40,14 @@ async function clearShiftLockIfMatches(shiftId, endedByEmail) {
   if (data?.activeShiftId === shiftId) {
     await (await import("firebase/firestore")).setDoc(
       statusRef,
-      { activeShiftId: null, endedBy: endedByEmail || "admin", endedAt: serverTimestamp() },
+      { activeShiftId: null, endedBy: endedByEmail || ROLES.ADMIN, endedAt: serverTimestamp() },
       { merge: true }
     );
   }
 }
 
-export default function AdminHome({ user, showSnackbar, isActive = true }) {
+export default function AdminHome({ user, isActive = true }) {
+  const { showSnackbar, showConfirm } = useGlobalUI();
   const theme = useTheme();
 
   // --- CONTEXT CONSUMPTION ---
@@ -71,9 +74,7 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
   const [includeCapitalInExpenses, setIncludeCapitalInExpenses] = useState(true);
   const [allTimeMode, setAllTimeMode] = useState("monthly");
 
-  const [confirmDialog, setConfirmDialog] = useState({
-    open: false, title: "", message: "", onConfirm: null, requireReason: false,
-  });
+
 
 
   useEffect(() => {
@@ -241,13 +242,12 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
   const handleForceEndShift = (shift) => {
     const sid = shift?.id;
     if (!sid) return;
-    setConfirmDialog({
-      open: true,
+    showConfirm({
       title: "Force End Shift?",
       message:
         "This will end the current active shift immediately. The system will calculate totals based on current data.",
       requireReason: true,
-      confirmText: "End Shift",
+      confirmLabel: "End Shift",
       confirmColor: "error",
       onConfirm: async (reason) => {
         await updateDoc(doc(db, "shifts", sid), {
@@ -263,12 +263,11 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
 
   const handleSoftDeleteTx = async (tx) => {
     if (!tx?.id) return;
-    setConfirmDialog({
-      open: true,
+    showConfirm({
       title: "Delete Transaction? (Soft)",
-      message: `Are you sure you want to delete ${tx.item} (${currency(txAmount(tx))})? This will preserve the record for audit but exclude it from totals.`,
+      message: `Are you sure you want to delete ${tx.item} (${fmtCurrency(txAmount(tx))})? This will preserve the record for audit but exclude it from totals.`,
       requireReason: true,
-      confirmText: "Delete",
+      confirmLabel: "Delete",
       confirmColor: "error",
       onConfirm: async (reason) => {
         try {
@@ -282,7 +281,7 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
           showSnackbar("Transaction deleted (soft)", "success");
         } catch (err) {
           console.error(err);
-          showSnackbar("Failed to delete", "error");
+          showSnackbar(getFriendlyErrorMessage(err), "error");
         }
       }
     });
@@ -290,12 +289,11 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
 
   const handleHardDeleteTx = async (tx) => {
     if (!tx?.id) return;
-    setConfirmDialog({
-      open: true,
+    showConfirm({
       title: "PERMANENT Delete?",
-      message: `DANGER: Permanently delete ${tx.item} (${currency(txAmount(tx))})? This CANNOT be undone and will be removed from all logs.`,
+      message: `DANGER: Permanently delete ${tx.item} (${fmtCurrency(txAmount(tx))})? This CANNOT be undone and will be removed from all logs.`,
       requireReason: true,
-      confirmText: "Hard Delete",
+      confirmLabel: "Hard Delete",
       confirmColor: "error",
       onConfirm: async (reason) => {
         try {
@@ -304,7 +302,7 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
           showSnackbar("Transaction permanently deleted", "success");
         } catch (err) {
           console.error(err);
-          showSnackbar("Failed to hard delete", "error");
+          showSnackbar(getFriendlyErrorMessage(err), "error");
         }
       }
     });
@@ -375,7 +373,7 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
                 my: 1,
               }}
             >
-              {currency(kpi.profit)}
+              {fmtCurrency(kpi.profit)}
             </Typography>
             <Typography variant="caption" color="text.secondary">
               Sales - Expenses
@@ -391,7 +389,7 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
               variant="h4"
               sx={{ color: "primary.main", fontWeight: "bold", my: 1 }}
             >
-              {currency(kpi.sales)}
+              {fmtCurrency(kpi.sales)}
             </Typography>
             <Typography variant="caption" color="text.secondary">
               {filteredTxValid.filter(t => {
@@ -420,7 +418,7 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
               variant="h4"
               sx={{ color: "error.main", fontWeight: "bold", my: 1 }}
             >
-              {receivablesLoading ? "—" : currency(outstandingReceivables)}
+              {receivablesLoading ? "—" : fmtCurrency(outstandingReceivables)}
             </Typography>
             <Typography variant="caption" color="text.secondary">
               Unpaid Customer Accounts
@@ -456,7 +454,7 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
               shiftsLoading={false}
               activeShifts={theActiveShift ? [theActiveShift] : []}
               activeShiftTx={activeShiftTx}
-              currency={currency}
+              currency={fmtCurrency}
               forceEndShift={handleForceEndShift}
               softDeleteTx={handleSoftDeleteTx}
               hardDeleteTx={handleHardDeleteTx}
@@ -483,16 +481,7 @@ export default function AdminHome({ user, showSnackbar, isActive = true }) {
       </Box>
 
       {/* Confirms */}
-      <ConfirmationReasonDialog
-        open={confirmDialog.open}
-        onClose={() => setConfirmDialog((p) => ({ ...p, open: false }))}
-        title={confirmDialog.title}
-        message={confirmDialog.message}
-        requireReason={confirmDialog.requireReason}
-        onConfirm={confirmDialog.onConfirm}
-        confirmText={confirmDialog.confirmText}
-        confirmColor={confirmDialog.confirmColor}
-      />
+
     </Box>
 
 

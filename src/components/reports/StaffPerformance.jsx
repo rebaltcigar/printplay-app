@@ -27,7 +27,7 @@ import {
 } from 'recharts';
 import { db } from '../../firebase';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
-import { getRange, txAmount, fmtPeso } from '../../utils/analytics';
+import { getRange, txAmount, fmtPeso } from '../../services/analyticsService';
 import PageHeader from '../common/PageHeader';
 
 export default function StaffPerformance() {

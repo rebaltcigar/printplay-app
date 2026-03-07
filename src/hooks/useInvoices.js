@@ -5,7 +5,7 @@
 import { useState, useEffect } from 'react';
 import { collection, query, where, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
-import { isOverdue } from '../utils/invoiceService';
+import { isOverdue } from '../services/invoiceService';
 
 /**
  * @param {Object} filters

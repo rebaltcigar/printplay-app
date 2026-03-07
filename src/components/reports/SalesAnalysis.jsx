@@ -33,7 +33,7 @@ import {
     txAmount,
     buildServiceMap,
     fmtPeso
-} from '../../utils/analytics';
+} from '../../services/analyticsService';
 import { useAnalytics } from '../../contexts/AnalyticsContext';
 import PageHeader from '../common/PageHeader';
 

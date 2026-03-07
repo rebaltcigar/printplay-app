@@ -3,7 +3,7 @@ import React from 'react';
 import ReactDOM from 'react-dom'; // ADDED for Portal
 import { Box, Typography, Divider, Table, TableBody, TableRow, TableCell } from '@mui/material';
 
-import { fmtCurrency } from '../utils/formatters';
+import { fmtCurrency, fmtDateTime } from '../utils/formatters';
 
 // currency alias for use throughout this file
 const currency = fmtCurrency;
@@ -21,7 +21,7 @@ export const SimpleReceipt = ({ order, shiftData, staffName, settings }) => {
 
   // --- SHIFT SUMMARY MODE ---
   if (shiftData) {
-    const dateStr = new Date().toLocaleString();
+    const dateStr = fmtDateTime(new Date());
     const period = shiftData.shiftPeriod || "---";
     const user = staffName || shiftData.staffEmail || "Staff";
 
@@ -127,9 +127,9 @@ export const SimpleReceipt = ({ order, shiftData, staffName, settings }) => {
   }] : []);
 
   const orderId = order.orderNumber || order.id || "---";
-  const dateStr = order.timestamp?.seconds
-    ? new Date(order.timestamp.seconds * 1000).toLocaleString()
-    : new Date().toLocaleString();
+  const dateStr = order.timestamp
+    ? fmtDateTime(order.timestamp)
+    : fmtDateTime(new Date());
 
   // Use the passed staffName prop (live Dashboard state) or fallback to order data
   const cashierDisplay = staffName || order.staffName || 'Staff';

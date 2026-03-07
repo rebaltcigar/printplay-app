@@ -15,6 +15,7 @@ import EmailIcon from "@mui/icons-material/Email";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
 import LoginIcon from "@mui/icons-material/Login";
 import AccessTimeIcon from "@mui/icons-material/AccessTime";
+import { convertLogoUrl } from "../services/brandingService";
 
 const SHIFT_OPTIONS = ["Morning", "Afternoon", "Evening"];
 
@@ -45,21 +46,21 @@ function formatTime(timeStr) {
 
 function humanizeAuthError(err) {
   const code = (err?.code || "").toLowerCase();
-  const msg  = (err?.message || "").toLowerCase();
+  const msg = (err?.message || "").toLowerCase();
 
   if (code === "auth/account-suspended" || msg.includes("suspended"))
     return "This account has been suspended. Please contact your administrator.";
 
   const table = {
-    "auth/invalid-email":          "That email doesn't look right.",
-    "auth/missing-email":          "Please enter your email.",
-    "auth/missing-password":       "Please enter your password.",
-    "auth/user-not-found":         "No account found with that email.",
-    "auth/invalid-credential":     "Email or password is incorrect.",
-    "auth/wrong-password":         "Email or password is incorrect.",
-    "auth/too-many-requests":      "Too many attempts. Wait a moment and try again.",
+    "auth/invalid-email": "That email doesn't look right.",
+    "auth/missing-email": "Please enter your email.",
+    "auth/missing-password": "Please enter your password.",
+    "auth/user-not-found": "No account found with that email.",
+    "auth/invalid-credential": "Email or password is incorrect.",
+    "auth/wrong-password": "Email or password is incorrect.",
+    "auth/too-many-requests": "Too many attempts. Wait a moment and try again.",
     "auth/network-request-failed": "Network error. Check your connection.",
-    "auth/user-disabled":          "This account has been disabled.",
+    "auth/user-disabled": "This account has been disabled.",
   };
   if (table[code]) return table[code];
   if (msg.includes("wrong-password") || msg.includes("password")) return "Email or password is incorrect.";
@@ -76,7 +77,7 @@ function ParticleCanvas() {
     if (!canvas || !ctx) return;
 
     const setSize = () => {
-      canvas.width  = window.innerWidth;
+      canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
     };
     setSize();
@@ -166,15 +167,15 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
     return () => clearInterval(id);
   }, []);
 
-  const [email,          setEmail]          = useState("");
-  const [password,       setPassword]       = useState("");
-  const [showPassword,   setShowPassword]   = useState(false);
-  const [loginResult,    setLoginResult]    = useState(null);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [loginResult, setLoginResult] = useState(null);
   const [fallbackPeriod, setFallbackPeriod] = useState(guessShiftPHT);
-  const [fallbackNote,   setFallbackNote]   = useState("");
+  const [fallbackNote, setFallbackNote] = useState("");
 
   const [loading, setLoading] = useState(false);
-  const [err,     setErr]     = useState("");
+  const [err, setErr] = useState("");
   const [branding, setBranding] = useState({ storeName: "Kunek", logoUrl: "/logo.png" });
 
   useEffect(() => {
@@ -183,9 +184,12 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
         const snap = await getDoc(doc(db, "settings", "config"));
         if (snap.exists()) {
           const d = snap.data();
-          setBranding({ storeName: d.storeName || "Kunek", logoUrl: d.logoUrl || "/logo.png" });
+          setBranding({
+            storeName: d.storeName || "Kunek",
+            logoUrl: convertLogoUrl(d.logoUrl) || "/logo.png"
+          });
         }
-      } catch {}
+      } catch { }
     })();
   }, []);
 
@@ -197,9 +201,9 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
       const result = await onLogin(email, password);
       if (result?.type !== "admin") {
         setLoginResult(result);
-        if (result.type === "fallback")     setPhase("fallback");
+        if (result.type === "fallback") setPhase("fallback");
         else if (result.type === "clockin") setPhase("clockin");
-        else                                setPhase("confirm");
+        else setPhase("confirm");
       }
     } catch (error) {
       setErr(humanizeAuthError(error));
@@ -230,7 +234,7 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
 
   const handleBack = async () => {
     setLoading(true);
-    try { await onCancelLogin?.(); } catch {}
+    try { await onCancelLogin?.(); } catch { }
     setPhase("credentials");
     setLoginResult(null);
     setErr("");
@@ -238,8 +242,8 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
     setLoading(false);
   };
 
-  const clearErr      = (setter) => (e) => { setter(e.target.value); if (err) setErr(""); };
-  const credDisabled  = loading || !email || !password;
+  const clearErr = (setter) => (e) => { setter(e.target.value); if (err) setErr(""); };
+  const credDisabled = loading || !email || !password;
   const shiftDisabled = loading || (phase === "fallback" && !fallbackPeriod);
 
   // ── Card content per phase ──
@@ -294,7 +298,7 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
                   >
                     {showPassword
                       ? <VisibilityOff sx={{ fontSize: 17 }} />
-                      : <Visibility   sx={{ fontSize: 17 }} />}
+                      : <Visibility sx={{ fontSize: 17 }} />}
                   </IconButton>
                 </InputAdornment>
               ),
@@ -346,12 +350,12 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
 
     // ── confirm ──
     if (phase === "confirm") {
-      const entry      = loginResult?.scheduleEntry;
-      const type       = loginResult?.type;
-      const isRelogin  = type === "relogin";
-      const isCovered  = type === "covered";
+      const entry = loginResult?.scheduleEntry;
+      const type = loginResult?.type;
+      const isRelogin = type === "relogin";
+      const isCovered = type === "covered";
       const shiftLabel = entry?.shiftLabel || loginResult?.shiftPeriod || "";
-      const timeRange  = entry?.startTime
+      const timeRange = entry?.startTime
         ? `${formatTime(entry.startTime)} – ${formatTime(entry.endTime)}`
         : "";
       return (
@@ -591,8 +595,8 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
           <CircularProgress size={32} sx={{ color: "primary.main" }} />
           <Typography variant="caption" sx={{ color: "rgba(255,255,255,0.65)" }}>
             {phase === "credentials" ? "Signing in…"
-              : phase === "clockin"  ? "Clocking in…"
-              : "Starting shift…"}
+              : phase === "clockin" ? "Clocking in…"
+                : "Starting shift…"}
           </Typography>
         </Box>
       )}

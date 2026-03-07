@@ -7,14 +7,16 @@ import FingerprintIcon from '@mui/icons-material/Fingerprint';
 
 // Firebase
 import { auth, db } from '../firebase';
-import { reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
+import { EmailAuthProvider } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
+import { useGlobalUI } from '../contexts/GlobalUIContext';
 
 // Helpers
-import { openDrawer } from '../utils/drawerService';
-import { verifyFingerprint } from '../utils/biometrics';
+import { openDrawer } from '../services/drawerService';
+import { verifyFingerprint } from '../services/biometricService';
 
-export default function DrawerDialog({ open, onClose, user, showSnackbar }) {
+export default function DrawerDialog({ open, onClose, user }) {
+    const { showSnackbar } = useGlobalUI();
     const [password, setPassword] = useState("");
     const [loading, setLoading] = useState(false);
     const [internalError, setInternalError] = useState("");

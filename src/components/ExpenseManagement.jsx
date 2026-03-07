@@ -47,15 +47,15 @@ import {
   limit,
   startAfter,
 } from "firebase/firestore";
-import { generateDisplayId } from "../utils/idGenerator";
 import { db } from "../firebase";
-import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
+import { useGlobalUI } from "../contexts/GlobalUIContext";
 import LoadingScreen from "./common/LoadingScreen";
 import PageHeader from "./common/PageHeader";
 import DetailDrawer from "./common/DetailDrawer";
 import SummaryCards from "./common/SummaryCards";
-import { fmtCurrency, toDateInput, downloadCSV } from "../utils/formatters";
+import { fmtCurrency, toDateInput, downloadCSV, fmtDateTime } from "../utils/formatters";
 import { useStaffList } from "../hooks/useStaffList";
+import { generateDisplayId } from "../services/orderService";
 
 const EXPENSE_TYPES_ALL = [
   "Supplies",
@@ -71,22 +71,14 @@ const EXPENSE_TYPES_ALL = [
 const toDateOnlyString = toDateInput;
 
 function toDateTimeString(d) {
-  if (!d) return "";
-  const dt = new Date(d);
-  return dt.toLocaleString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
+  return fmtDateTime(d);
 }
 
 // toCurrency is now fmtCurrency from formatters.js
 const toCurrency = fmtCurrency;
 
-export default function ExpenseManagement({ user, showSnackbar }) {
+export default function ExpenseManagement({ user }) {
+  const { showSnackbar, showConfirm } = useGlobalUI();
   /** ===================== FORM STATE ===================== */
   const [formDate, setFormDate] = useState(toDateOnlyString(new Date()));
   const [formType, setFormType] = useState("");
@@ -127,29 +119,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
   const [busy, setBusy] = useState(false);
   const [busyMsg, setBusyMsg] = useState("");
 
-  // reason dialogs
-  const [editReasonDialog, setEditReasonDialog] = useState({
-    open: false,
-    reason: "",
-    row: null,
-  });
-  const [deleteReasonDialog, setDeleteReasonDialog] = useState({
-    open: false,
-    reason: "",
-    row: null,
-  });
-  const [permDeleteDialog, setPermDeleteDialog] = useState({
-    open: false,
-    row: null,
-  });
 
-  const [confirmDialog, setConfirmDialog] = useState({
-    open: false,
-    title: "",
-    message: "",
-    onConfirm: null,
-    requireReason: false,
-  });
 
   /** ===================== LOAD EXPENSE SERVICES ===================== */
   useEffect(() => {
@@ -239,7 +209,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
 
     } catch (err) {
       console.error("Pagination error", err);
-      if (showSnackbar) showSnackbar("Failed to load more expenses.", "error");
+      showSnackbar("Failed to load more expenses.", "error");
     } finally {
       setLoadingMore(false);
       setLoading(false);
@@ -324,10 +294,10 @@ export default function ExpenseManagement({ user, showSnackbar }) {
       setHasMore(false);
       setIsArchiveMode(forceAllTime ? true : false);
 
-      if (showSnackbar) showSnackbar(`Loaded ${newRows.length} expenses.`, 'success');
+      showSnackbar(`Loaded ${newRows.length} expenses.`, 'success');
     } catch (err) {
       console.error("Fetch All error", err);
-      if (showSnackbar) showSnackbar("Failed to load all expenses.", "error");
+      showSnackbar("Failed to load all expenses.", "error");
     } finally {
       setLoadingMore(false);
       setLoading(false);
@@ -510,7 +480,7 @@ export default function ExpenseManagement({ user, showSnackbar }) {
       showSnackbar?.("Expense has been added.", 'success');
     } catch (err) {
       console.error("Failed to add expense", err);
-      showSnackbar?.(`Failed to add expense: ${err.message}`, 'error');
+      showSnackbar(`Failed to add expense: ${err.message}`, 'error');
     } finally {
       stopBusy();
     }
@@ -546,110 +516,86 @@ export default function ExpenseManagement({ user, showSnackbar }) {
 
   /** ===================== CRUD: EDIT (SAVE) ===================== */
   const handleSaveEdit = async (e) => {
-    e.preventDefault();
-    if (!currentlyEditing) return;
+    e?.preventDefault();
+    const row = currentlyEditing;
+    if (!row) return;
 
     if (!formType) {
-      showSnackbar?.("Please select an expense type.", "warning");
+      showSnackbar("Please select an expense type.", "warning");
       return;
     }
     if ((formType === "Salary" || formType === "Salary Advance") && !formStaffId) {
-      showSnackbar?.("Please select a staff for Salary or Salary Advance.", "warning");
+      showSnackbar("Please select a staff for Salary or Salary Advance.", "warning");
       return;
     }
 
-    // open dialog to get reason
-    setEditReasonDialog({
-      open: true,
-      reason: "",
-      row: {
-        ...currentlyEditing,
-        _formData: {
-          formDate,
-          formType,
-          financialCategory,
-          formStaffId,
-          formQuantity,
-          formPrice,
-          formNotes,
-        },
-      },
+    showConfirm({
+      title: "Confirm Edit",
+      message: "Please provide a reason for this edit.",
+      requireReason: true,
+      confirmLabel: "Update Expense",
+      confirmColor: "primary",
+      onConfirm: async (reason) => {
+        try {
+          startBusy("Updating expense...");
+          const qty = Number(formQuantity || 0);
+          const price = Number(formPrice || 0);
+          const total = qty * price;
+
+          const transactionDate = new Date(formDate);
+          const now = new Date();
+          transactionDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds());
+
+          const selectedStaff = staffOptions.find((s) => s.id === formStaffId) || null;
+
+          const updateData = {
+            item: "Expenses",
+            expenseType: formType,
+            financialCategory,
+            expenseStaffId: selectedStaff ? selectedStaff.id : null,
+            expenseStaffName: selectedStaff ? selectedStaff.fullName : null,
+            expenseStaffEmail: selectedStaff ? selectedStaff.email : null,
+            quantity: qty,
+            price,
+            total,
+            notes: formNotes || "",
+            timestamp: transactionDate,
+            isEdited: true,
+            adminEdited: true,
+            editedBy: user?.email || "admin",
+            editReason: reason,
+            lastUpdatedAt: serverTimestamp(),
+          };
+
+          if (formType === "Salary") {
+            updateData.payrollRunId = row.payrollRunId || "admin_manual_edit";
+            updateData.voided = typeof row.voided === 'boolean' ? row.voided : false;
+          }
+          if (formType === "Salary Advance") {
+            updateData.shiftId = row.shiftId || null;
+          }
+
+          await updateDoc(doc(db, "transactions", row.id), updateData);
+          showSnackbar("Expense has been updated.", 'success');
+          cancelEdit();
+          setFormDrawerOpen(false);
+        } catch (err) {
+          console.error("Failed to update expense", err);
+          showSnackbar(`Failed to update expense: ${err.message}`, 'error');
+        } finally {
+          stopBusy();
+        }
+      }
     });
-  };
-
-  const actuallySaveEdit = async () => {
-    const dlg = editReasonDialog;
-    const row = dlg.row;
-    const reason = dlg.reason?.trim();
-    if (!row || !reason) {
-      showSnackbar?.("Please enter a reason for this edit.", 'warning');
-      return;
-    }
-
-    const { formDate, formType, financialCategory, formStaffId, formQuantity, formPrice, formNotes } =
-      row._formData;
-
-    const qty = Number(formQuantity || 0);
-    const price = Number(formPrice || 0);
-    const total = qty * price;
-
-    const transactionDate = new Date(formDate);
-    const now = new Date();
-    transactionDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds());
-
-    const selectedStaff = staffOptions.find((s) => s.id === formStaffId) || null;
-
-    // 1. Create the base update object
-    const updateData = {
-      item: "Expenses",
-      expenseType: formType,
-      expenseStaffId: selectedStaff ? selectedStaff.id : null,
-      expenseStaffName: selectedStaff ? selectedStaff.fullName : null,
-      expenseStaffEmail: selectedStaff ? selectedStaff.email : null,
-      quantity: qty,
-      price,
-      total,
-      notes: formNotes || "",
-      timestamp: transactionDate,
-      isEdited: true,
-      adminEdited: true,
-      editedBy: user?.email || "admin",
-      editReason: reason,
-      lastUpdatedAt: serverTimestamp(),
-    };
-
-    // 2. Conditionally add fields required by security rules
-    if (formType === "Salary") {
-      updateData.payrollRunId = row.payrollRunId || "admin_manual_edit";
-      updateData.voided = row.voided === true || row.voided === false ? row.voided : false;
-    }
-
-    if (formType === "Salary Advance") {
-      updateData.shiftId = row.shiftId || null;
-    }
-
-    try {
-      startBusy("Saving changes...");
-      await updateDoc(doc(db, "transactions", row.id), updateData);
-      setEditReasonDialog({ open: false, reason: "", row: null });
-      cancelEdit();
-      setFormDrawerOpen(false);
-      if (showSnackbar) showSnackbar("Expense has been updated.", 'success');
-    } catch (err) {
-      console.error("Failed to update expense", err);
-      if (showSnackbar) showSnackbar(`Failed to update expense: ${err.message}`, 'error');
-    } finally {
-      stopBusy();
-    }
   };
 
   /** ===================== CRUD: SOFT DELETE ===================== */
   const handleSoftDelete = (row) => {
-    setConfirmDialog({
-      open: true,
+    showConfirm({
       title: "Delete Expense?",
       message: `Soft delete expense: ${row.expenseType} (${toCurrency(row.total)})?`,
       requireReason: true,
+      confirmLabel: "Delete",
       confirmColor: "warning",
       onConfirm: async (reason) => {
         try {
@@ -660,10 +606,10 @@ export default function ExpenseManagement({ user, showSnackbar }) {
             deletedBy: user?.email || "admin",
             deletedAt: serverTimestamp(),
           });
-          if (showSnackbar) showSnackbar("Expense has been marked as deleted.", 'success');
+          showSnackbar("Expense has been marked as deleted.", 'success');
         } catch (err) {
           console.error("Failed to soft delete expense:", err);
-          if (showSnackbar) showSnackbar("Failed to delete expense.", 'error');
+          showSnackbar("Failed to delete expense.", 'error');
         } finally {
           stopBusy();
         }
@@ -673,20 +619,20 @@ export default function ExpenseManagement({ user, showSnackbar }) {
 
   /** ===================== CRUD: PERMANENT DELETE ===================== */
   const handlePermanentDelete = (row) => {
-    setConfirmDialog({
-      open: true,
+    showConfirm({
       title: "PERMANENTLY Delete?",
       message: `This will permanently remove the expense: ${row.expenseType} (${toCurrency(row.total)}). This action cannot be undone.`,
       requireReason: false,
+      confirmLabel: "Permanently Delete",
       confirmColor: "error",
       onConfirm: async () => {
         try {
           startBusy("Permanently deleting...");
           await deleteDoc(doc(db, "transactions", row.id));
-          if (showSnackbar) showSnackbar("Expense has been permanently deleted.", 'success');
+          showSnackbar("Expense has been permanently deleted.", 'success');
         } catch (err) {
           console.error("Failed to permanently delete expense:", err);
-          if (showSnackbar) showSnackbar("Failed to permanently delete expense.", 'error');
+          showSnackbar("Failed to permanently delete expense.", 'error');
         } finally {
           stopBusy();
         }
@@ -979,52 +925,9 @@ export default function ExpenseManagement({ user, showSnackbar }) {
         {FormContent}
       </DetailDrawer>
 
-      {/* Edit reason dialog */}
-      <Dialog
-        open={editReasonDialog.open}
-        onClose={() => setEditReasonDialog({ open: false, reason: "", row: null })}
-        maxWidth="xs"
-        fullWidth
-      >
-        <DialogTitle>Reason for this edit</DialogTitle>
-        <DialogContent sx={{ pt: 1 }}>
-          <Typography variant="body2" sx={{ mb: 1 }}>
-            Please describe why this expense was updated.
-          </Typography>
-          <TextField
-            autoFocus
-            multiline
-            minRows={2}
-            fullWidth
-            value={editReasonDialog.reason}
-            onChange={(e) =>
-              setEditReasonDialog((p) => ({ ...p, reason: e.target.value }))
-            }
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setEditReasonDialog({ open: false, reason: "", row: null })}>
-            Cancel
-          </Button>
-          <Button variant="contained" onClick={actuallySaveEdit}>
-            Save
-          </Button>
-        </DialogActions>
-      </Dialog>
-
       {/* Global loader */}
       {busy && <LoadingScreen overlay={true} message={busyMsg || "Working..."} />}
 
-      <ConfirmationReasonDialog
-        open={confirmDialog.open}
-        onClose={() => setConfirmDialog(p => ({ ...p, open: false }))}
-        title={confirmDialog.title}
-        message={confirmDialog.message}
-        requireReason={confirmDialog.requireReason}
-        onConfirm={confirmDialog.onConfirm}
-        confirmText={confirmDialog.confirmText}
-        confirmColor={confirmDialog.confirmColor}
-      />
     </Box>
   );
 }

@@ -55,25 +55,29 @@ import {
 import SummaryCards from "../common/SummaryCards";
 import {
   cap,
+  calcGross,
   inferShiftName,
   minutesBetweenTS,
   peso,
   resolveHourlyRate,
   shortageForShift,
   toHours,
-  toLocaleDateStringPHT,
   toLocalISO_PHT_fromTS,
   toYMD_PHT_fromTS,
   todayYMD_PHT,
   tsFromYMD,
   sumDenominations,
 } from "../../utils/payrollHelpers";
-import { generateDisplayId, generateBatchIds } from "../../utils/idGenerator";
+import { fmtDate, fmtCurrency } from "../../utils/formatters";
+import { generateDisplayId, generateBatchIds } from "../../services/orderService";
 import LoadingScreen from "../common/LoadingScreen";
-import DetailDrawer from "../common/DetailDrawer";
+import { useGlobalUI } from "../../contexts/GlobalUIContext";
 import AttachMoneyIcon from "@mui/icons-material/AttachMoney";
 import PeopleIcon from "@mui/icons-material/People";
 import ScheduleIcon from "@mui/icons-material/Schedule";
+import SellIcon from "@mui/icons-material/Sell";
+import ReceiptIcon from "@mui/icons-material/Receipt";
+import AccountBalanceIcon from "@mui/icons-material/AccountBalance";
 import PaystubDialog from "../Paystub";
 
 export default function RunPayroll({
@@ -83,8 +87,8 @@ export default function RunPayroll({
   onOpenedFromHistory,
   onOpenPaystubs,
   requestOpenDialogRef,
-  showSnackbar,
 }) {
+  const { showSnackbar, showConfirm } = useGlobalUI();
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
   const [payDate, setPayDate] = useState(() => todayYMD_PHT());
@@ -137,8 +141,6 @@ export default function RunPayroll({
     setBusyMsg("");
   };
 
-  const calcGross = (minutes, rate) =>
-    Number((((Number(minutes || 0) / 60) * Number(rate || 0))).toFixed(2));
 
   // ─── recalc helpers (previously lived in RunDialog) ─────────────────────────
 
@@ -335,7 +337,7 @@ export default function RunPayroll({
   /** ─── generate preview from shifts ─────────────────────────────────────── */
   const generatePreview = async (decision = null) => {
     if (!periodStart || !periodEnd) {
-      showSnackbar?.("Pick a start and end date first.", "warning");
+      showSnackbar("Pick a start and end date first.", "warning");
       return;
     }
 
@@ -375,7 +377,7 @@ export default function RunPayroll({
       });
 
       if (shiftsToProcess.length === 0) {
-        showSnackbar?.("No eligible shifts found in this period.", "info");
+        showSnackbar("No eligible shifts found in this period.", "info");
         stopBusy();
         return;
       }
@@ -467,7 +469,7 @@ export default function RunPayroll({
           const shiftOwnerEmail = row.staffEmail;
           const shiftOwnerUid = row.staffUid;
 
-          const shiftLabel = `${inferShiftName(row.start, row.title, row.label)} — ${toLocaleDateStringPHT(row.start)}`;
+          const shiftLabel = `${inferShiftName(row.start, row.title, row.label)} — ${fmtDate(row.start)}`;
 
           const isForOther =
             (targetEmail && targetEmail !== shiftOwnerEmail) ||
@@ -560,7 +562,7 @@ export default function RunPayroll({
         const bucket = byStaff.get(key);
         bucket.extraAdvances.push({
           id: docSnap.id,
-          label: `${tx.expenseType} (Admin Manual - ${toLocaleDateStringPHT(tx.timestamp)})`,
+          label: `${tx.expenseType} (Admin Manual - ${fmtDate(tx.timestamp)})`,
           amount: amt,
           fromShiftId: null,
         });
@@ -624,7 +626,7 @@ export default function RunPayroll({
       setStep(1);
     } catch (err) {
       console.error(err);
-      showSnackbar?.("Failed to generate payroll preview.", "error");
+      showSnackbar("Failed to generate payroll preview.", "error");
     } finally {
       stopBusy();
     }
@@ -645,7 +647,7 @@ export default function RunPayroll({
       const runRef = doc(db, "payrollRuns", id);
       const runDoc = await getDoc(runRef);
       if (!runDoc.exists()) {
-        showSnackbar?.("That payroll run does not exist anymore.", "error");
+        showSnackbar("That payroll run does not exist anymore.", "error");
         return;
       }
       const run = runDoc.data() || {};
@@ -817,7 +819,7 @@ export default function RunPayroll({
       setStep(1);
     } catch (err) {
       console.error(err);
-      showSnackbar?.("Failed to load that payroll run.", "error");
+      showSnackbar("Failed to load that payroll run.", "error");
     } finally {
       stopBusy();
     }
@@ -838,7 +840,7 @@ export default function RunPayroll({
   /** ─── save edits to run ─────────────────────────────────────────────────── */
   const saveEditsToRun = async (id = runId, { withLoader = true } = {}) => {
     if (!id) {
-      showSnackbar?.("No payroll run selected.", "warning");
+      showSnackbar("No payroll run selected.", "warning");
       return;
     }
     if (withLoader) startBusy("Saving payroll changes...");
@@ -936,11 +938,11 @@ export default function RunPayroll({
       await batch.commit();
 
       if (withLoader) {
-        showSnackbar?.("Payroll changes were saved.", "success");
+        showSnackbar("Payroll changes were saved.", "success");
       }
     } catch (err) {
       console.error(err);
-      showSnackbar?.("Failed to save payroll run.", "error");
+      showSnackbar("Failed to save payroll run.", "error");
     } finally {
       if (withLoader) stopBusy();
     }
@@ -980,7 +982,7 @@ export default function RunPayroll({
       return runRef.id;
     } catch (err) {
       console.error(err);
-      showSnackbar?.("Failed to create payroll run.", "error");
+      showSnackbar("Failed to create payroll run.", "error");
       return null;
     } finally {
       stopBusy();
@@ -990,7 +992,7 @@ export default function RunPayroll({
   const handleSaveRun = async () => {
     const id = await createRunInternal();
     if (id) {
-      showSnackbar?.("New payroll run has been created.", "success");
+      showSnackbar("New payroll run has been created.", "success");
     }
   };
 
@@ -1006,7 +1008,7 @@ export default function RunPayroll({
   /** ─── finalize run ──────────────────────────────────────────────────────── */
   const finalizeRun = async (id = runId) => {
     if (!id) {
-      showSnackbar?.("There is no payroll run to finalize.", "warning");
+      showSnackbar("There is no payroll run to finalize.", "warning");
       return;
     }
 
@@ -1060,8 +1062,6 @@ export default function RunPayroll({
         ? new Date(runPayDateTS.seconds * 1000)
         : new Date();
 
-      const calcGrossLocal = (minutes, rate) =>
-        Number((((Number(minutes || 0) / 60) * Number(rate || 0))).toFixed(2));
 
       updateBusy("Expanding each line to shift-level data...");
 
@@ -1122,7 +1122,7 @@ export default function RunPayroll({
               ? ov.minutesUsed
               : minutesBetweenTS(start, end);
 
-          const shiftLabel = `${toLocaleDateStringPHT(s.startTime)} (${inferShiftName(s.startTime, s.title, s.label)})`;
+          const shiftLabel = `${fmtDate(s.startTime)} (${inferShiftName(s.startTime, s.title, s.label)})`;
 
           const expenseDateTS =
             ov.expenseDate || s.startTime || runData.payDate || Timestamp.fromDate(runPayDate);
@@ -1185,7 +1185,7 @@ export default function RunPayroll({
           txBatch.update(doc(db, "shifts", sid), { payrollRunId: id });
         }
 
-        const grossPay = calcGrossLocal(totalMinutesLine, l.rate);
+        const grossPay = calcGross(totalMinutesLine, l.rate);
 
         const manualAdjustments = Array.isArray(l.adjustments)
           ? l.adjustments.filter((a) => a?.type === "manual-deduction")
@@ -1461,12 +1461,12 @@ export default function RunPayroll({
       setStatus("posted");
       setStep(1);
       stopBusy();
-      showSnackbar?.("Run finalized, transactions posted, and paystubs created.", "success");
+      showSnackbar("Run finalized, transactions posted, and paystubs created.", "success");
       onOpenPaystubs && onOpenPaystubs(id);
     } catch (err) {
       console.error(err);
       stopBusy();
-      showSnackbar?.("Failed to finalize payroll run.", "error");
+      showSnackbar("Failed to finalize payroll run.", "error");
     }
   };
 
@@ -1576,12 +1576,12 @@ export default function RunPayroll({
               </Stack>
               <SummaryCards
                 cards={[
-                  { label: "Staff", value: String(preview.length), icon: <PeopleIcon fontSize="small" /> },
-                  { label: "Hours", value: `${toHours(totalMinutes)} hrs`, icon: <ScheduleIcon fontSize="small" /> },
-                  { label: "Gross", value: peso(totalGross) },
-                  ...(totalAdditionsSum > 0 ? [{ label: "Additions", value: peso(totalAdditionsSum), color: "success.main" }] : []),
-                  { label: "Deductions", value: peso(totalAdvances + totalShortages + totalOtherDeds) },
-                  { label: "NET", value: peso(totalNet), color: "primary.main", icon: <AttachMoneyIcon fontSize="small" />, highlight: true },
+                  { label: "Staff", value: String(preview.length), icon: <PeopleIcon fontSize="small" />, color: "primary.main" },
+                  { label: "Hours", value: `${toHours(totalMinutes)} hrs`, icon: <ScheduleIcon fontSize="small" />, color: "info.main" },
+                  { label: "Gross", value: peso(totalGross), color: "text.primary" },
+                  ...(totalAdditionsSum > 0 ? [{ label: "Additions", value: peso(totalAdditionsSum), color: "success.main", icon: <SellIcon fontSize="small" /> }] : []),
+                  { label: "Deductions", value: peso(totalAdvances + totalShortages + totalOtherDeds), color: "error.main", icon: <ReceiptIcon fontSize="small" /> },
+                  { label: "NET", value: peso(totalNet), color: "success.main", icon: <AccountBalanceIcon fontSize="small" />, highlight: true },
                 ]}
               />
             </Card>
@@ -1630,308 +1630,230 @@ export default function RunPayroll({
                         <TableCell colSpan={6} sx={{ p: 0, border: 0 }}>
                           <Collapse in={!!expanded[l.id]} timeout="auto" unmountOnExit>
                             <Box sx={{ p: 2, bgcolor: "background.default" }}>
-                            {/* Rate override */}
-                            <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
-                              <Typography variant="subtitle2">Hourly Rate</Typography>
-                              <TextField
-                                type="number"
-                                size="small"
-                                label="Rate / hr"
-                                value={l.rate}
-                                onChange={(e) => {
-                                  const rate = Number(e.target.value || 0);
-                                  setPreview((prev) =>
-                                    prev.map((line) => {
-                                      if (line.id !== l.id) return line;
-                                      const newLine = { ...line, rate };
-                                      return { ...newLine, ...recalcLine(newLine) };
-                                    })
-                                  );
-                                }}
-                                inputProps={{ step: "0.01", min: 0 }}
-                                disabled={disableEdits}
-                                sx={{ width: 120 }}
-                              />
-                              <Typography variant="caption" color="text.secondary">
-                                Advances: {peso(l.advances)} &nbsp;|&nbsp; Shortages: {peso(l.shortages)} &nbsp;|&nbsp; Other Deds: {peso(l.otherDeductions || 0)}
-                              </Typography>
-                            </Stack>
-
-                            {/* Shifts included */}
-                            <Typography variant="subtitle2" gutterBottom>
-                              Shifts (included)
-                            </Typography>
-                            <Table size="small">
-                              <TableHead>
-                                <TableRow>
-                                  <TableCell>Shift</TableCell>
-                                  <TableCell>Start</TableCell>
-                                  <TableCell>End</TableCell>
-                                  <TableCell align="right">Hours</TableCell>
-                                  <TableCell align="right">System</TableCell>
-                                  <TableCell align="right">Denoms</TableCell>
-                                  <TableCell align="right">Shortage</TableCell>
-                                  <TableCell align="right">Expense Date</TableCell>
-                                  <TableCell align="center">Exclude</TableCell>
-                                </TableRow>
-                              </TableHead>
-                              <TableBody>
-                                {l.shiftRows
-                                  .filter((r) => !r.excluded)
-                                  .map((r) => {
-                                    const startForISO = r.overrideStart || r.start;
-                                    const endForISO = r.overrideEnd || r.end;
-                                    const startISO = toLocalISO_PHT_fromTS(startForISO);
-                                    const endISO = toLocalISO_PHT_fromTS(endForISO);
-
-                                    const label = `${inferShiftName(r.start, r.title, r.label)} — ${toLocaleDateStringPHT(r.start)}`;
-
-                                    const expenseDateYMD = isPerStaffMode
-                                      ? payDate
-                                      : r.expenseDate?.seconds
-                                        ? toYMD_PHT_fromTS(r.expenseDate)
-                                        : payDate || todayYMD_PHT();
-
-                                    return (
-                                      <TableRow key={r.id}>
-                                        <TableCell>
-                                          <Typography variant="body2">
-                                            {label}
-                                            {r.isOngoing && (
-                                              <Chip
-                                                label="Ongoing"
-                                                size="small"
-                                                color="warning"
-                                                variant="outlined"
-                                                sx={{ ml: 1, height: 20, fontSize: 10 }}
-                                              />
-                                            )}
-                                          </Typography>
-                                        </TableCell>
-                                        <TableCell>
-                                          <TextField
-                                            type="datetime-local"
-                                            size="small"
-                                            value={startISO}
-                                            onChange={(e) =>
-                                              updateShiftRow(l.id, r.id, {
-                                                overrideStart: Timestamp.fromDate(new Date(e.target.value)),
-                                              })
-                                            }
-                                            disabled={disableEdits}
-                                          />
-                                        </TableCell>
-                                        <TableCell>
-                                          <TextField
-                                            type="datetime-local"
-                                            size="small"
-                                            value={endISO}
-                                            onChange={(e) =>
-                                              updateShiftRow(l.id, r.id, {
-                                                overrideEnd: Timestamp.fromDate(new Date(e.target.value)),
-                                              })
-                                            }
-                                            disabled={disableEdits}
-                                          />
-                                        </TableCell>
-                                        <TableCell align="right">{toHours(r.minutesUsed)}</TableCell>
-                                        <TableCell align="right">{peso(r.systemTotal)}</TableCell>
-                                        <TableCell align="right">{peso(sumDenominations(r.denominations))}</TableCell>
-                                        <TableCell align="right">{peso(r.shortage)}</TableCell>
-                                        <TableCell align="right">
-                                          <TextField
-                                            type="date"
-                                            size="small"
-                                            value={expenseDateYMD}
-                                            onChange={(e) =>
-                                              updateShiftRow(l.id, r.id, {
-                                                expenseDate: tsFromYMD(e.target.value, false),
-                                              })
-                                            }
-                                            disabled={disableEdits || isPerStaffMode}
-                                          />
-                                        </TableCell>
-                                        <TableCell align="center">
-                                          <input
-                                            type="checkbox"
-                                            checked={!!r.excluded}
-                                            onChange={(e) =>
-                                              updateShiftRow(l.id, r.id, { excluded: !!e.target.checked })
-                                            }
-                                            disabled={disableEdits}
-                                          />
-                                        </TableCell>
-                                      </TableRow>
+                              {/* Rate override */}
+                              <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
+                                <Typography variant="subtitle2">Hourly Rate</Typography>
+                                <TextField
+                                  type="number"
+                                  size="small"
+                                  label="Rate / hr"
+                                  value={l.rate}
+                                  onChange={(e) => {
+                                    const rate = Number(e.target.value || 0);
+                                    setPreview((prev) =>
+                                      prev.map((line) => {
+                                        if (line.id !== l.id) return line;
+                                        const newLine = { ...line, rate };
+                                        return { ...newLine, ...recalcLine(newLine) };
+                                      })
                                     );
-                                  })}
-                              </TableBody>
-                            </Table>
+                                  }}
+                                  inputProps={{ step: "0.01", min: 0 }}
+                                  disabled={disableEdits}
+                                  sx={{ width: 120 }}
+                                />
+                                <Typography variant="caption" color="text.secondary">
+                                  Advances: {peso(l.advances)} &nbsp;|&nbsp; Shortages: {peso(l.shortages)} &nbsp;|&nbsp; Other Deds: {peso(l.otherDeductions || 0)}
+                                </Typography>
+                              </Stack>
 
-                            {/* Excluded shifts */}
-                            {l.shiftRows.some((r) => r.excluded) && (
-                              <>
-                                <Divider sx={{ my: 2 }} />
-                                <Typography variant="subtitle2" gutterBottom>Excluded</Typography>
-                                <Table size="small">
-                                  <TableHead>
-                                    <TableRow>
-                                      <TableCell>Shift</TableCell>
-                                      <TableCell align="right">Hours</TableCell>
-                                      <TableCell align="center">Re-include</TableCell>
-                                      <TableCell align="right">ID</TableCell>
-                                    </TableRow>
-                                  </TableHead>
-                                  <TableBody>
-                                    {l.shiftRows
-                                      .filter((r) => r.excluded)
-                                      .map((r) => {
-                                        const label = `${inferShiftName(r.start, r.title, r.label)} — ${toLocaleDateStringPHT(r.start)}`;
-                                        return (
-                                          <TableRow key={r.id}>
-                                            <TableCell>{label}</TableCell>
-                                            <TableCell align="right">{toHours(r.minutesOriginal)}</TableCell>
-                                            <TableCell align="center">
-                                              <Button
-                                                size="small"
-                                                onClick={() =>
-                                                  updateShiftRow(l.id, r.id, {
-                                                    excluded: false,
-                                                    minutesUsed: r.minutesOriginal,
-                                                  })
-                                                }
-                                                disabled={disableEdits}
-                                              >
-                                                Include
-                                              </Button>
-                                            </TableCell>
-                                            <TableCell align="right">
-                                              <Typography variant="caption" sx={{ opacity: 0.7 }}>
-                                                {r.displayId || r.id.slice(-6)}
-                                              </Typography>
-                                            </TableCell>
-                                          </TableRow>
-                                        );
-                                      })}
-                                  </TableBody>
-                                </Table>
-                              </>
-                            )}
-
-                            <Divider sx={{ my: 2 }} />
-
-                            {/* Additions */}
-                            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
-                              <Typography variant="subtitle2" sx={{ color: "green" }}>
-                                Additional Pay / Bonuses
+                              {/* Shifts included */}
+                              <Typography variant="subtitle2" gutterBottom>
+                                Shifts (included)
                               </Typography>
-                              <Button
-                                size="small"
-                                onClick={() => openItemDialog("addition", l.id)}
-                                disabled={disableEdits}
-                              >
-                                + Add Pay
-                              </Button>
-                            </Stack>
-                            <Table size="small" sx={{ mb: 2 }}>
-                              <TableHead>
-                                <TableRow>
-                                  <TableCell>Label</TableCell>
-                                  <TableCell align="right">Amount</TableCell>
-                                  <TableCell align="center">Actions</TableCell>
-                                </TableRow>
-                              </TableHead>
-                              <TableBody>
-                                {l.customAdditions && l.customAdditions.length > 0 ? (
-                                  l.customAdditions.map((d, idx) => (
-                                    <TableRow key={`add-${idx}`}>
-                                      <TableCell>{d.label}</TableCell>
-                                      <TableCell align="right" sx={{ color: "green", fontWeight: "bold" }}>
-                                        {peso(d.amount)}
-                                      </TableCell>
-                                      <TableCell align="center">
-                                        <Stack direction="row" spacing={1} justifyContent="center">
-                                          <Button
-                                            size="small"
-                                            onClick={() =>
-                                              openItemDialog("addition", l.id, {
-                                                index: idx,
-                                                label: d.label,
-                                                amount: d.amount,
-                                              })
-                                            }
-                                            disabled={disableEdits}
-                                          >
-                                            Edit
-                                          </Button>
-                                          <Button
-                                            size="small"
-                                            onClick={() => deleteItem("addition", l.id, idx)}
-                                            disabled={disableEdits}
-                                          >
-                                            Delete
-                                          </Button>
-                                        </Stack>
-                                      </TableCell>
-                                    </TableRow>
-                                  ))
-                                ) : (
+                              <Table size="small">
+                                <TableHead>
                                   <TableRow>
-                                    <TableCell colSpan={3} align="center" sx={{ color: "text.secondary", fontStyle: "italic" }}>
-                                      No additional pay.
-                                    </TableCell>
+                                    <TableCell>Shift</TableCell>
+                                    <TableCell>Start</TableCell>
+                                    <TableCell>End</TableCell>
+                                    <TableCell align="right">Hours</TableCell>
+                                    <TableCell align="right">System</TableCell>
+                                    <TableCell align="right">Denoms</TableCell>
+                                    <TableCell align="right">Shortage</TableCell>
+                                    <TableCell align="right">Expense Date</TableCell>
+                                    <TableCell align="center">Exclude</TableCell>
                                   </TableRow>
-                                )}
-                              </TableBody>
-                            </Table>
+                                </TableHead>
+                                <TableBody>
+                                  {l.shiftRows
+                                    .filter((r) => !r.excluded)
+                                    .map((r) => {
+                                      const startForISO = r.overrideStart || r.start;
+                                      const endForISO = r.overrideEnd || r.end;
+                                      const startISO = toLocalISO_PHT_fromTS(startForISO);
+                                      const endISO = toLocalISO_PHT_fromTS(endForISO);
 
-                            <Divider sx={{ my: 2 }} />
+                                      const label = `${inferShiftName(r.start, r.title, r.label)} — ${toLocaleDateStringPHT(r.start)}`;
 
-                            {/* Deductions */}
-                            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
-                              <Typography variant="subtitle2">
-                                Deductions for {l.staffName}
-                              </Typography>
-                              <Button
-                                size="small"
-                                onClick={() => openItemDialog("deduction", l.id)}
-                                disabled={disableEdits}
-                              >
-                                + Add Custom Deduction
-                              </Button>
-                            </Stack>
-                            <Table size="small" sx={{ mb: 2 }}>
-                              <TableHead>
-                                <TableRow>
-                                  <TableCell>Type</TableCell>
-                                  <TableCell>Label</TableCell>
-                                  <TableCell align="right">Amount</TableCell>
-                                  <TableCell align="center">Actions</TableCell>
-                                </TableRow>
-                              </TableHead>
-                              <TableBody>
-                                {(l.extraAdvances?.length || l.customDeductions?.length) ? (
-                                  <>
-                                    {(l.extraAdvances || []).map((d, idx) => (
-                                      <TableRow key={`extra-${idx}`}>
-                                        <TableCell>Salary Advance</TableCell>
-                                        <TableCell>{d.label}</TableCell>
-                                        <TableCell align="right">{peso(d.amount)}</TableCell>
-                                        <TableCell align="center">
-                                          <Typography variant="caption" color="text.secondary">auto</Typography>
-                                        </TableCell>
+                                      const expenseDateYMD = isPerStaffMode
+                                        ? payDate
+                                        : r.expenseDate?.seconds
+                                          ? toYMD_PHT_fromTS(r.expenseDate)
+                                          : payDate || todayYMD_PHT();
+
+                                      return (
+                                        <TableRow key={r.id}>
+                                          <TableCell>
+                                            <Typography variant="body2">
+                                              {label}
+                                              {r.isOngoing && (
+                                                <Chip
+                                                  label="Ongoing"
+                                                  size="small"
+                                                  color="warning"
+                                                  variant="outlined"
+                                                  sx={{ ml: 1, height: 20, fontSize: 10 }}
+                                                />
+                                              )}
+                                            </Typography>
+                                          </TableCell>
+                                          <TableCell>
+                                            <TextField
+                                              type="datetime-local"
+                                              size="small"
+                                              value={startISO}
+                                              onChange={(e) =>
+                                                updateShiftRow(l.id, r.id, {
+                                                  overrideStart: Timestamp.fromDate(new Date(e.target.value)),
+                                                })
+                                              }
+                                              disabled={disableEdits}
+                                            />
+                                          </TableCell>
+                                          <TableCell>
+                                            <TextField
+                                              type="datetime-local"
+                                              size="small"
+                                              value={endISO}
+                                              onChange={(e) =>
+                                                updateShiftRow(l.id, r.id, {
+                                                  overrideEnd: Timestamp.fromDate(new Date(e.target.value)),
+                                                })
+                                              }
+                                              disabled={disableEdits}
+                                            />
+                                          </TableCell>
+                                          <TableCell align="right">{toHours(r.minutesUsed)}</TableCell>
+                                          <TableCell align="right">{peso(r.systemTotal)}</TableCell>
+                                          <TableCell align="right">{peso(sumDenominations(r.denominations))}</TableCell>
+                                          <TableCell align="right">{peso(r.shortage)}</TableCell>
+                                          <TableCell align="right">
+                                            <TextField
+                                              type="date"
+                                              size="small"
+                                              value={expenseDateYMD}
+                                              onChange={(e) =>
+                                                updateShiftRow(l.id, r.id, {
+                                                  expenseDate: tsFromYMD(e.target.value, false),
+                                                })
+                                              }
+                                              disabled={disableEdits || isPerStaffMode}
+                                            />
+                                          </TableCell>
+                                          <TableCell align="center">
+                                            <input
+                                              type="checkbox"
+                                              checked={!!r.excluded}
+                                              onChange={(e) =>
+                                                updateShiftRow(l.id, r.id, { excluded: !!e.target.checked })
+                                              }
+                                              disabled={disableEdits}
+                                            />
+                                          </TableCell>
+                                        </TableRow>
+                                      );
+                                    })}
+                                </TableBody>
+                              </Table>
+
+                              {/* Excluded shifts */}
+                              {l.shiftRows.some((r) => r.excluded) && (
+                                <>
+                                  <Divider sx={{ my: 2 }} />
+                                  <Typography variant="subtitle2" gutterBottom>Excluded</Typography>
+                                  <Table size="small">
+                                    <TableHead>
+                                      <TableRow>
+                                        <TableCell>Shift</TableCell>
+                                        <TableCell align="right">Hours</TableCell>
+                                        <TableCell align="center">Re-include</TableCell>
+                                        <TableCell align="right">ID</TableCell>
                                       </TableRow>
-                                    ))}
-                                    {(l.customDeductions || []).map((d, idx) => (
-                                      <TableRow key={`custom-${idx}`}>
-                                        <TableCell>Custom</TableCell>
+                                    </TableHead>
+                                    <TableBody>
+                                      {l.shiftRows
+                                        .filter((r) => r.excluded)
+                                        .map((r) => {
+                                          const label = `${inferShiftName(r.start, r.title, r.label)} — ${toLocaleDateStringPHT(r.start)}`;
+                                          return (
+                                            <TableRow key={r.id}>
+                                              <TableCell>{label}</TableCell>
+                                              <TableCell align="right">{toHours(r.minutesOriginal)}</TableCell>
+                                              <TableCell align="center">
+                                                <Button
+                                                  size="small"
+                                                  onClick={() =>
+                                                    updateShiftRow(l.id, r.id, {
+                                                      excluded: false,
+                                                      minutesUsed: r.minutesOriginal,
+                                                    })
+                                                  }
+                                                  disabled={disableEdits}
+                                                >
+                                                  Include
+                                                </Button>
+                                              </TableCell>
+                                              <TableCell align="right">
+                                                <Typography variant="caption" sx={{ opacity: 0.7 }}>
+                                                  {r.displayId || r.id.slice(-6)}
+                                                </Typography>
+                                              </TableCell>
+                                            </TableRow>
+                                          );
+                                        })}
+                                    </TableBody>
+                                  </Table>
+                                </>
+                              )}
+
+                              <Divider sx={{ my: 2 }} />
+
+                              {/* Additions */}
+                              <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                                <Typography variant="subtitle2" sx={{ color: "green" }}>
+                                  Additional Pay / Bonuses
+                                </Typography>
+                                <Button
+                                  size="small"
+                                  onClick={() => openItemDialog("addition", l.id)}
+                                  disabled={disableEdits}
+                                >
+                                  + Add Pay
+                                </Button>
+                              </Stack>
+                              <Table size="small" sx={{ mb: 2 }}>
+                                <TableHead>
+                                  <TableRow>
+                                    <TableCell>Label</TableCell>
+                                    <TableCell align="right">Amount</TableCell>
+                                    <TableCell align="center">Actions</TableCell>
+                                  </TableRow>
+                                </TableHead>
+                                <TableBody>
+                                  {l.customAdditions && l.customAdditions.length > 0 ? (
+                                    l.customAdditions.map((d, idx) => (
+                                      <TableRow key={`add-${idx}`}>
                                         <TableCell>{d.label}</TableCell>
-                                        <TableCell align="right">{peso(d.amount)}</TableCell>
+                                        <TableCell align="right" sx={{ color: "green", fontWeight: "bold" }}>
+                                          {peso(d.amount)}
+                                        </TableCell>
                                         <TableCell align="center">
                                           <Stack direction="row" spacing={1} justifyContent="center">
                                             <Button
                                               size="small"
                                               onClick={() =>
-                                                openItemDialog("deduction", l.id, {
+                                                openItemDialog("addition", l.id, {
                                                   index: idx,
                                                   label: d.label,
                                                   amount: d.amount,
@@ -1943,7 +1865,7 @@ export default function RunPayroll({
                                             </Button>
                                             <Button
                                               size="small"
-                                              onClick={() => deleteItem("deduction", l.id, idx)}
+                                              onClick={() => deleteItem("addition", l.id, idx)}
                                               disabled={disableEdits}
                                             >
                                               Delete
@@ -1951,17 +1873,95 @@ export default function RunPayroll({
                                           </Stack>
                                         </TableCell>
                                       </TableRow>
-                                    ))}
-                                  </>
-                                ) : (
+                                    ))
+                                  ) : (
+                                    <TableRow>
+                                      <TableCell colSpan={3} align="center" sx={{ color: "text.secondary", fontStyle: "italic" }}>
+                                        No additional pay.
+                                      </TableCell>
+                                    </TableRow>
+                                  )}
+                                </TableBody>
+                              </Table>
+
+                              <Divider sx={{ my: 2 }} />
+
+                              {/* Deductions */}
+                              <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                                <Typography variant="subtitle2">
+                                  Deductions for {l.staffName}
+                                </Typography>
+                                <Button
+                                  size="small"
+                                  onClick={() => openItemDialog("deduction", l.id)}
+                                  disabled={disableEdits}
+                                >
+                                  + Add Custom Deduction
+                                </Button>
+                              </Stack>
+                              <Table size="small" sx={{ mb: 2 }}>
+                                <TableHead>
                                   <TableRow>
-                                    <TableCell colSpan={4} align="center" sx={{ color: "text.secondary" }}>
-                                      No other deductions.
-                                    </TableCell>
+                                    <TableCell>Type</TableCell>
+                                    <TableCell>Label</TableCell>
+                                    <TableCell align="right">Amount</TableCell>
+                                    <TableCell align="center">Actions</TableCell>
                                   </TableRow>
-                                )}
-                              </TableBody>
-                            </Table>
+                                </TableHead>
+                                <TableBody>
+                                  {(l.extraAdvances?.length || l.customDeductions?.length) ? (
+                                    <>
+                                      {(l.extraAdvances || []).map((d, idx) => (
+                                        <TableRow key={`extra-${idx}`}>
+                                          <TableCell>Salary Advance</TableCell>
+                                          <TableCell>{d.label}</TableCell>
+                                          <TableCell align="right">{peso(d.amount)}</TableCell>
+                                          <TableCell align="center">
+                                            <Typography variant="caption" color="text.secondary">auto</Typography>
+                                          </TableCell>
+                                        </TableRow>
+                                      ))}
+                                      {(l.customDeductions || []).map((d, idx) => (
+                                        <TableRow key={`custom-${idx}`}>
+                                          <TableCell>Custom</TableCell>
+                                          <TableCell>{d.label}</TableCell>
+                                          <TableCell align="right">{peso(d.amount)}</TableCell>
+                                          <TableCell align="center">
+                                            <Stack direction="row" spacing={1} justifyContent="center">
+                                              <Button
+                                                size="small"
+                                                onClick={() =>
+                                                  openItemDialog("deduction", l.id, {
+                                                    index: idx,
+                                                    label: d.label,
+                                                    amount: d.amount,
+                                                  })
+                                                }
+                                                disabled={disableEdits}
+                                              >
+                                                Edit
+                                              </Button>
+                                              <Button
+                                                size="small"
+                                                onClick={() => deleteItem("deduction", l.id, idx)}
+                                                disabled={disableEdits}
+                                              >
+                                                Delete
+                                              </Button>
+                                            </Stack>
+                                          </TableCell>
+                                        </TableRow>
+                                      ))}
+                                    </>
+                                  ) : (
+                                    <TableRow>
+                                      <TableCell colSpan={4} align="center" sx={{ color: "text.secondary" }}>
+                                        No other deductions.
+                                      </TableCell>
+                                    </TableRow>
+                                  )}
+                                </TableBody>
+                              </Table>
                             </Box>
                           </Collapse>
                         </TableCell>

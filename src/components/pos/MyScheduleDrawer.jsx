@@ -7,6 +7,7 @@ import {
 } from '@mui/material';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase';
+import { fmtDate as sharedFmtDate } from '../../utils/formatters';
 import DetailDrawer from '../common/DetailDrawer';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 
@@ -22,17 +23,15 @@ function addDays(dateStr, n) {
   return `${y}-${m}-${dd}`;
 }
 function fmtDate(dateStr) {
-  return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', {
-    weekday: 'short', month: 'short', day: 'numeric',
-  });
+  return sharedFmtDate(dateStr + 'T00:00:00');
 }
 
 const STATUS_CFG = {
-  scheduled:     { label: 'Scheduled', color: 'primary' },
-  'in-progress': { label: 'On Shift',  color: 'success' },
-  completed:     { label: 'Done',      color: 'default' },
-  absent:        { label: 'Absent',    color: 'error' },
-  covered:       { label: 'Covered',   color: 'warning' },
+  scheduled: { label: 'Scheduled', color: 'primary' },
+  'in-progress': { label: 'On Shift', color: 'success' },
+  completed: { label: 'Done', color: 'default' },
+  absent: { label: 'Absent', color: 'error' },
+  covered: { label: 'Covered', color: 'warning' },
 };
 
 export default function MyScheduleDrawer({ open, onClose, userEmail }) {

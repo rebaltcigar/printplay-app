@@ -8,7 +8,8 @@ import CloseIcon from '@mui/icons-material/Close';
 import SearchIcon from '@mui/icons-material/Search';
 
 import { useInvoices } from '../../hooks/useInvoices';
-import { fmtCurrency } from '../../utils/formatters';
+import { fmtCurrency, fmtDate } from '../../utils/formatters';
+import { useGlobalUI } from '../../contexts/GlobalUIContext';
 import InvoiceDetailDrawer from '../admin/InvoiceDetailDrawer';
 import CustomerSearchAutocomplete from './CustomerSearchAutocomplete';
 
@@ -16,7 +17,8 @@ import CustomerSearchAutocomplete from './CustomerSearchAutocomplete';
  * A sidebar drawer for POS cashiers to search for customers and view their unpaid invoices.
  * Mirrors the style of `MyScheduleDrawer` etc.
  */
-export default function POSInvoiceLookupDrawer({ open, onClose, user, userRole, showSnackbar, activeShiftId }) {
+export default function POSInvoiceLookupDrawer({ open, onClose, user, userRole, activeShiftId }) {
+    const { showSnackbar } = useGlobalUI();
     const [search, setSearch] = useState('');
     const [selectedInvoice, setSelectedInvoice] = useState(null);
 
@@ -129,7 +131,7 @@ export default function POSInvoiceLookupDrawer({ open, onClose, user, userRole, 
                                                     )}
                                                 </Box>
                                                 <Typography variant="caption" color="text.secondary">
-                                                    Due: {inv.dueDate?.seconds ? new Date(inv.dueDate.seconds * 1000).toLocaleDateString() : '—'}
+                                                    Due: {fmtDate(inv.dueDate)}
                                                 </Typography>
                                             </Box>
                                         </ListItemButton>
@@ -149,7 +151,6 @@ export default function POSInvoiceLookupDrawer({ open, onClose, user, userRole, 
                 invoice={selectedInvoice}
                 user={user}
                 userRole={userRole}
-                showSnackbar={showSnackbar}
                 activeShiftId={activeShiftId}
                 onPaymentSuccess={handlePaymentSuccess}
             />

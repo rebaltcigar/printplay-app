@@ -11,7 +11,7 @@ import {
     doc, getDoc, writeBatch, serverTimestamp, deleteField
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
-import { generateBatchIds } from '../utils/idGenerator';
+import { generateBatchIds } from '../services/orderService';
 
 // Icons
 import SearchIcon from '@mui/icons-material/Search';
@@ -34,7 +34,7 @@ import SummaryCards from './common/SummaryCards';
 import DetailDrawer from './common/DetailDrawer';
 import { SimpleReceipt } from './SimpleReceipt';
 import { ServiceInvoice } from './ServiceInvoice';
-import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice } from '../utils/printHelper';
+import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice } from '../services/printService';
 import ConfirmationReasonDialog from './ConfirmationReasonDialog';
 import { fmtCurrency as currency, fmtDateTime } from '../utils/formatters';
 import { usePOSServices } from '../hooks/usePOSServices';

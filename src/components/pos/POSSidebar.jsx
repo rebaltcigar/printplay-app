@@ -16,12 +16,14 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import MyScheduleDrawer from './MyScheduleDrawer';
 import MyPaystubsDrawer from './MyPaystubsDrawer';
 import MyAccountDrawer from './MyAccountDrawer';
+import { useGlobalUI } from '../../contexts/GlobalUIContext';
 
 export default function POSSidebar({
   open, onClose,
-  user, onLogout, showSnackbar,
+  user, onLogout,
   onOpenInvoices, // callback to open POSInvoiceLookupDrawer
 }) {
+  const { showSnackbar } = useGlobalUI();
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [paystubsOpen, setPaystubsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -115,7 +117,6 @@ export default function POSSidebar({
         open={accountOpen}
         onClose={() => setAccountOpen(false)}
         user={user}
-        showSnackbar={showSnackbar}
       />
     </>
   );

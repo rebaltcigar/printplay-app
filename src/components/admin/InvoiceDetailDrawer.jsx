@@ -6,12 +6,12 @@ import {
 import PrintIcon from '@mui/icons-material/Print';
 import PaymentsIcon from '@mui/icons-material/Payments';
 import AssignmentReturnIcon from '@mui/icons-material/AssignmentReturn';
-import { fmtCurrency } from '../../utils/formatters';
-import { displayStatus, writeOffInvoice } from '../../utils/invoiceService';
+import { fmtCurrency, fmtDate } from '../../utils/formatters';
+import { displayStatus, writeOffInvoice } from '../../services/invoiceService';
 import RecordPaymentDialog from '../RecordPaymentDialog';
-import ConfirmationReasonDialog from '../ConfirmationReasonDialog';
-import { safePrintInvoice } from '../../utils/printHelper';
+import { safePrintInvoice } from '../../services/printService';
 import DetailDrawer from '../common/DetailDrawer';
+import { useGlobalUI } from '../../contexts/GlobalUIContext';
 
 const STATUS_COLORS = {
     unpaid: 'warning',
@@ -21,15 +21,11 @@ const STATUS_COLORS = {
     overdue: 'error',
 };
 
-function toDateStr(val) {
-    if (!val) return '—';
-    const d = val?.toDate ? val.toDate() : new Date(val);
-    return isNaN(d) ? '—' : d.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
-}
 
-export default function InvoiceDetailDrawer({ open, onClose, invoice, user, userRole, showSnackbar, activeShiftId, onPaymentSuccess }) {
+
+export default function InvoiceDetailDrawer({ open, onClose, invoice, user, userRole, activeShiftId, onPaymentSuccess }) {
+    const { showSnackbar, showConfirm } = useGlobalUI();
     const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
-    const [confirmDialog, setConfirmDialog] = useState({ open: false, title: '', message: '', requireReason: false, onConfirm: null });
 
     if (!invoice) return <DetailDrawer open={open} onClose={onClose} title="Loading..." />;
 
@@ -37,12 +33,11 @@ export default function InvoiceDetailDrawer({ open, onClose, invoice, user, user
     const canPay = status !== 'paid' && status !== 'written_off';
 
     const handleWriteOff = () => {
-        setConfirmDialog({
-            open: true,
+        showConfirm({
             title: 'Write Off Invoice',
             message: `Are you sure you want to write off the remaining balance of ${fmtCurrency(invoice.balance)}? This will mark the invoice as fully resolved as Bad Debt.`,
             requireReason: true,
-            confirmText: 'Confirm Write-Off',
+            confirmLabel: 'Confirm Write-Off',
             confirmColor: 'error',
             onConfirm: async (reason) => {
                 try {
@@ -121,10 +116,10 @@ export default function InvoiceDetailDrawer({ open, onClose, invoice, user, user
                         <Typography variant="overline" color="text.secondary">Invoice Details</Typography>
                         <Grid container spacing={1}>
                             <Grid item xs={6}><Typography variant="body2" color="text.secondary">Date Issued:</Typography></Grid>
-                            <Grid item xs={6}><Typography variant="body2" fontWeight="medium">{toDateStr(invoice.createdAt)}</Typography></Grid>
+                            <Grid item xs={6}><Typography variant="body2" fontWeight="medium">{fmtDate(invoice.createdAt)}</Typography></Grid>
 
                             <Grid item xs={6}><Typography variant="body2" color="text.secondary">Due Date:</Typography></Grid>
-                            <Grid item xs={6}><Typography variant="body2" fontWeight="medium" color={status === 'overdue' ? 'error.main' : 'inherit'}>{toDateStr(invoice.dueDate)}</Typography></Grid>
+                            <Grid item xs={6}><Typography variant="body2" fontWeight="medium" color={status === 'overdue' ? 'error.main' : 'inherit'}>{fmtDate(invoice.dueDate)}</Typography></Grid>
 
                             <Grid item xs={6}><Typography variant="body2" color="text.secondary">Order Ref:</Typography></Grid>
                             <Grid item xs={6}><Typography variant="body2" fontWeight="medium">{invoice.orderNumber || '—'}</Typography></Grid>
@@ -188,7 +183,7 @@ export default function InvoiceDetailDrawer({ open, onClose, invoice, user, user
                             <TableBody>
                                 {invoice.payments.map((p, i) => (
                                     <TableRow key={p.paymentId || i}>
-                                        <TableCell>{toDateStr(p.date)}</TableCell>
+                                        <TableCell>{fmtDate(p.date)}</TableCell>
                                         <TableCell sx={{ textTransform: 'capitalize' }}>{p.method.replace('_', ' ')}</TableCell>
                                         <TableCell>{p.note || '—'}</TableCell>
                                         <TableCell>{p.staffEmail?.split('@')[0] || '—'}</TableCell>
@@ -209,15 +204,8 @@ export default function InvoiceDetailDrawer({ open, onClose, invoice, user, user
                 onClose={() => setPaymentDialogOpen(false)}
                 invoice={invoice}
                 user={user}
-                showSnackbar={showSnackbar}
                 activeShiftId={activeShiftId}
                 onSuccess={onPaymentSuccess}
-            />
-
-            <ConfirmationReasonDialog
-                open={confirmDialog.open}
-                onClose={() => setConfirmDialog({ ...confirmDialog, open: false })}
-                {...confirmDialog}
             />
         </>
     );

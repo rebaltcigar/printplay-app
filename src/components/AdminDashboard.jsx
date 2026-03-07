@@ -43,7 +43,7 @@ import HistoryGeneratorDialog from "./HistoryGeneratorDialog";
 import ConfirmationReasonDialog from "./ConfirmationReasonDialog";
 import MeetingRoomIcon from '@mui/icons-material/MeetingRoom';
 import DrawerDialog from "./DrawerDialog";
-import { openDrawer } from "../utils/drawerService";
+import { openDrawer } from "../services/drawerService";
 
 import { auth } from "../firebase";
 import { signOut } from "firebase/auth";

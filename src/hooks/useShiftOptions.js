@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { collection, query, orderBy, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
+import { fmtShortDate } from '../utils/formatters';
 
 /**
  * @param {string} [startDate]        - YYYY-MM-DD to filter shifts from (optional)
@@ -41,18 +42,13 @@ export function useShiftOptions({ startDate, endDate, emailToName = {} } = {}) {
     });
 
     return () => unsub();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startDate, endDate]);
 
   const shiftOptions = useMemo(() =>
     rawShifts.map((v) => {
       const staffName = emailToName[v.staffEmail] || v.staffEmail || 'Unknown';
-      const date = v.startTime?.seconds
-        ? new Date(v.startTime.seconds * 1000).toLocaleDateString('en-PH', {
-            month: 'short',
-            day: 'numeric',
-          })
-        : '';
+      const date = v.startTime ? fmtShortDate(v.startTime) : '';
       const displayId = v.displayId || v.id.slice(-8).toUpperCase();
       return {
         id: v.id,

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, getDocs, orderBy, Timestamp } from 'firebase/firestore';
-import { getRange } from '../utils/analytics';
+import { getRange } from '../services/analyticsService';
 
 const AnalyticsContext = createContext();
 
