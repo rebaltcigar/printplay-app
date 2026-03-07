@@ -15,18 +15,18 @@ const currency = fmtCurrency;
 
 // ─── Icon accent colours ──────────────────────────────────────────────────────
 const ICON_ACCENT = {
-    print:    '#C62828',  // dark red
-    photo:    '#7B1FA2',  // purple
-    monitor:  '#00897B',  // teal
-    copy:     '#388E3C',  // green
+    print: '#C62828',  // dark red
+    photo: '#7B1FA2',  // purple
+    monitor: '#00897B',  // teal
+    copy: '#388E3C',  // green
     scissors: '#E65100',  // deep orange
-    scan:     '#5E35B1',  // deep purple (was blue)
-    design:   '#C2185B',  // pink
-    food:     '#F57F17',  // amber
-    tech:     '#5D4037',  // brown
-    bag:      '#512DA8',  // deep purple
-    box:      '#558B2F',  // lime dark
-    other:    '#546E7A',  // blue-grey
+    scan: '#5E35B1',  // deep purple (was blue)
+    design: '#C2185B',  // pink
+    food: '#F57F17',  // amber
+    tech: '#5D4037',  // brown
+    bag: '#512DA8',  // deep purple
+    box: '#558B2F',  // lime dark
+    other: '#546E7A',  // blue-grey
 };
 const DEFAULT_ACCENT = '#546E7A';
 
@@ -53,13 +53,15 @@ function groupVariants(variants) {
 }
 
 // ─── Service / Retail tile ─────────────────────────────────────────────────────
-function ItemTile({ item, onClick, onShiftClick, accentOverride }) {
+function ItemTile({ item, effectiveStock, onClick, onShiftClick, accentOverride }) {
     const accent = accentOverride || accentFor(item);
     const isVariable = item.priceType === 'variable';
     const hasVariants = item.hasVariants;
-    const outOfStock = item.trackStock && item.stockCount !== undefined && item.stockCount <= 0;
-    const lowStock = !outOfStock && item.trackStock && item.stockCount !== undefined
-        && item.stockCount <= (item.lowStockThreshold || 3);
+
+    // Effective stock is either pre-calculated or follows item.stockCount
+    const stock = effectiveStock !== undefined ? effectiveStock : (item.trackStock ? item.stockCount : Infinity);
+    const outOfStock = stock <= 0;
+    const lowStock = !outOfStock && stock <= (item.lowStockThreshold || 3);
 
     const displayPrice = hasVariants
         ? 'Choose variant'
@@ -133,11 +135,11 @@ function ItemTile({ item, onClick, onShiftClick, accentOverride }) {
                         mb: 0.25,
                     }}
                 >
-                    {item.trackStock && item.stockCount !== undefined ? (
+                    {item.trackStock || (effectiveStock !== undefined && effectiveStock !== Infinity) ? (
                         <Badge
-                            badgeContent={item.stockCount}
+                            badgeContent={stock === Infinity ? 0 : Math.floor(stock)}
                             color={lowStock ? 'error' : 'default'}
-                            max={99}
+                            max={999}
                         >
                             {iconEl || <Box sx={{ width: 22, height: 22 }} />}
                         </Badge>
@@ -200,7 +202,7 @@ function ItemTile({ item, onClick, onShiftClick, accentOverride }) {
 }
 
 // ─── Auto-fill tile grid ───────────────────────────────────────────────────────
-function TileGrid({ items, onItemClick, onQtyClick, sections = null, overrideAccent }) {
+function TileGrid({ items, effectiveStockMap, onItemClick, onQtyClick, sections = null, overrideAccent }) {
     if (!sections && items.length === 0) {
         return (
             <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -242,6 +244,7 @@ function TileGrid({ items, onItemClick, onQtyClick, sections = null, overrideAcc
                             <ItemTile
                                 key={v.id}
                                 item={v}
+                                effectiveStock={effectiveStockMap?.[v.id]}
                                 onClick={() => onItemClick(v)}
                                 onShiftClick={onQtyClick ? () => onQtyClick(v) : undefined}
                                 accentOverride={overrideAccent}
@@ -259,6 +262,7 @@ function TileGrid({ items, onItemClick, onQtyClick, sections = null, overrideAcc
                 <ItemTile
                     key={item.id}
                     item={item}
+                    effectiveStock={effectiveStockMap?.[item.id]}
                     onClick={() => onItemClick(item)}
                     onShiftClick={onQtyClick ? () => onQtyClick(item) : undefined}
                 />
@@ -268,7 +272,7 @@ function TileGrid({ items, onItemClick, onQtyClick, sections = null, overrideAcc
 }
 
 // ─── Main component ────────────────────────────────────────────────────────────
-export default function POSItemGrid({ posItems, variantMap, onItemClick, onPCSession, onTabChange, pcRentalEnabled = true }) {
+export default function POSItemGrid({ posItems, allServices = [], variantMap, onItemClick, onPCSession, onTabChange, pcRentalEnabled = true }) {
     const [activeTab, setActiveTab] = useState(0);
     const [isTransitioning, setIsTransitioning] = useState(false);
     const [posFilter, setPosFilter] = useState('all'); // 'all' | 'service' | 'retail'
@@ -297,6 +301,30 @@ export default function POSItemGrid({ posItems, variantMap, onItemClick, onPCSes
         setDrilldown(null);
         setRetailSearch('');
     };
+
+    // Calculate effective stock for all items
+    const effectiveStockMap = useMemo(() => {
+        const map = {};
+        const serviceLookup = new Map(allServices.map(s => [s.id, s]));
+
+        allServices.forEach(item => {
+            let stock = item.trackStock ? (item.stockCount || 0) : Infinity;
+
+            // Check Consumables
+            if (item.consumables && item.consumables.length > 0) {
+                item.consumables.forEach(c => {
+                    const cItem = serviceLookup.get(c.itemId);
+                    if (cItem && cItem.trackStock) {
+                        const availableFromConsumable = (cItem.stockCount || 0) / (c.qty || 1);
+                        stock = Math.min(stock, availableFromConsumable);
+                    }
+                });
+            }
+            map[item.id] = stock;
+        });
+
+        return map;
+    }, [allServices]);
 
     // Filtered sale items
     const saleItems = useMemo(() => {
@@ -392,9 +420,9 @@ export default function POSItemGrid({ posItems, variantMap, onItemClick, onPCSes
                     >
                         <Stack direction="row" spacing={0.75}>
                             {[
-                                { key: 'all',     label: 'All' },
+                                { key: 'all', label: 'All' },
                                 { key: 'service', label: 'Services' },
-                                { key: 'retail',  label: 'Retail' },
+                                { key: 'retail', label: 'Retail' },
                             ].map(({ key, label }) => (
                                 <Chip
                                     key={key}
@@ -473,6 +501,7 @@ export default function POSItemGrid({ posItems, variantMap, onItemClick, onPCSes
                             <TileGrid
                                 items={[]}
                                 sections={drilldown.sections}
+                                effectiveStockMap={effectiveStockMap}
                                 onItemClick={handleVariantClick}
                                 onQtyClick={(v) => handleQtyOpen(v)}
                                 overrideAccent={drilldown.accent}
@@ -480,6 +509,7 @@ export default function POSItemGrid({ posItems, variantMap, onItemClick, onPCSes
                         ) : (
                             <TileGrid
                                 items={saleItems}
+                                effectiveStockMap={effectiveStockMap}
                                 onItemClick={handleTileClick}
                                 onQtyClick={handleShiftClick}
                             />

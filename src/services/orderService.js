@@ -174,12 +174,32 @@ export const deleteOrder = async (orderId, orderNumber, shiftId, userEmail, reas
     ));
 
     txSnap.forEach(d => {
+        const txData = d.data();
         batch.update(d.ref, {
             isDeleted: true,
             deletedBy: userEmail,
             deleteReason: reason,
             deletedAt: serverTimestamp()
         });
+
+        // REVERT INVENTORY
+        const revertStock = (svcId, q) => {
+            if (!svcId) return;
+            const ref = doc(db, 'services', svcId);
+            batch.update(ref, { stockCount: increment(q) });
+        };
+
+        // 1. Revert main item
+        if (txData.serviceId) {
+            revertStock(txData.serviceId, Number(txData.quantity));
+        }
+
+        // 2. Revert snapshotted consumables
+        if (txData.consumables && txData.consumables.length > 0) {
+            txData.consumables.forEach(c => {
+                revertStock(c.itemId, Number(c.qty) * Number(txData.quantity));
+            });
+        }
     });
 
     await batch.commit();

@@ -4,6 +4,25 @@ Completed versions archived from ROADMAP.md. CHANGELOG.md has the authoritative 
 
 ---
  
+ ## v0.5 — Retail & Inventory (2026-03-08)
+ Branch: `feature/retail-inventory`
+ 
+ **Goal**: Comprehensive stock management, recursive material deduction, and sales velocity forecasting.
+ 
+ **Why**: Manually tracking consumables like paper and ink was prone to error. Business owners needed to know when to reorder stock and ensure they never sold a service they couldn't fulfill.
+ 
+ **New Infrastructure:**
+ - **Centralized `inventoryService.js`**: Atomic management of stock levels, Weighted Average Cost (WAC), and transactional logging.
+ - **Linked Consumables**: Services can now be mapped to multiple retail items with specific consumption ratios.
+ - **Audit Logs (`inventory_logs`)**: Immutable event stream of every restock, adjustment, and sale decrement.
+ - **Analytics Hook (`useInventoryAnalytics.js`)**: Real-time sales velocity calculation over a rolling 30-day window.
+ 
+ **Features:**
+ - **Smart Inventory Dashboard**: Unified view with KPIs (`SummaryCards`), audit history (`DetailDrawer`), and forecasting columns (Avg Sales/Day, Stock Life).
+ - **POS Effective Stock**: Product tiles automatically look up material dependencies. If "Doc Paper" is out, "Printing" turns red and disables.
+ - **Recursive Deduction**: Checkout flow identifies linked items and decrements all within one Firestore batch.
+ - **Order Reversion**: Snapshot-based stock restoration ensures deleted orders return materials accurately, even if the service link has changed.
+ 
 ## v0.4.0 — Basic CRM Foundation (2026-03-07)
 Branch: `feature/basic-crm`
  

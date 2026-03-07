@@ -32,6 +32,7 @@ const BLANK_FORM = {
   adminOnly: false, type: 'service', costPrice: '',
   trackStock: false, stockCount: 0, lowStockThreshold: 5,
   hasVariants: false, posIcon: '', priceType: 'fixed', pricingNote: '',
+  consumables: [], // Array of { itemId: string, qty: number }
 };
 
 const BLANK_VARIANT_FORM = {
@@ -186,6 +187,7 @@ export default function ServiceCatalog({ showSnackbar }) {
       variantGroup: item.variantGroup || '',
       posLabel: item.posLabel || '',
       parentServiceId: item.parentServiceId || null,
+      consumables: item.consumables || [],
     });
     setVariantAddOpen(false);
     setVariantAddForm(BLANK_VARIANT_FORM);
@@ -248,6 +250,7 @@ export default function ServiceCatalog({ showSnackbar }) {
       pricingNote: form.pricingNote?.trim() || '',
       variantGroup: isEditingChild ? (form.variantGroup?.trim() || '') : '',
       posLabel: isEditingChild ? (form.posLabel?.trim() || '') : '',
+      consumables: form.consumables || [],
     };
     if (!payload.serviceName) {
       showSnackbar?.('Item name is required.', 'error');
@@ -619,6 +622,67 @@ export default function ServiceCatalog({ showSnackbar }) {
               />
             </Stack>
           )}
+        </Box>
+      )}
+
+      {/* Linked Consumables Section */}
+      {!isEditingChild && !form.hasVariants && (
+        <Box sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+          <Typography variant="subtitle2" gutterBottom>LINKED CONSUMABLES</Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+            Items that are automatically deducted from stock when this service is sold (e.g., Paper, Ink).
+          </Typography>
+
+          <Stack spacing={1.5}>
+            {(form.consumables || []).map((cons, idx) => {
+              const baseItem = items.find(i => i.id === cons.itemId);
+              return (
+                <Stack key={cons.itemId} direction="row" spacing={1} alignItems="center">
+                  <Typography variant="body2" sx={{ flex: 1 }}>{baseItem?.serviceName || 'Unknown Item'}</Typography>
+                  <TextField
+                    size="small"
+                    label="Qty used"
+                    type="number"
+                    value={cons.qty}
+                    onChange={(e) => {
+                      const newCons = [...form.consumables];
+                      newCons[idx].qty = Number(e.target.value);
+                      onChange('consumables', newCons);
+                    }}
+                    sx={{ width: 80 }}
+                  />
+                  <IconButton size="small" color="error" onClick={() => {
+                    const newCons = form.consumables.filter((_, i) => i !== idx);
+                    onChange('consumables', newCons);
+                  }}>
+                    <DeleteIcon fontSize="small" />
+                  </IconButton>
+                </Stack>
+              );
+            })}
+
+            <Divider />
+
+            <Stack direction="row" spacing={1}>
+              <FormControl fullWidth size="small">
+                <InputLabel>Add Consumable...</InputLabel>
+                <Select
+                  value=""
+                  label="Add Consumable..."
+                  onChange={(e) => {
+                    const itemId = e.target.value;
+                    if (form.consumables.some(c => c.itemId === itemId)) return;
+                    onChange('consumables', [...(form.consumables || []), { itemId, qty: 1 }]);
+                  }}
+                >
+                  {items
+                    .filter(i => i.type === 'retail' && i.id !== editing?.id)
+                    .map(i => <MenuItem key={i.id} value={i.id}>{i.serviceName}</MenuItem>)
+                  }
+                </Select>
+              </FormControl>
+            </Stack>
+          </Stack>
         </Box>
       )}
 

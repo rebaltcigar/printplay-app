@@ -804,7 +804,14 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
               height: '100%',
               overflow: 'hidden',
             }}>
-              <POSItemGrid posItems={posItems} variantMap={variantMap} onItemClick={handleGridItemClick} onPCSession={handlePCSession} onTabChange={setGridTab} pcRentalEnabled={systemSettings.pcRentalEnabled !== false} />
+              <POSItemGrid
+                posItems={posItems}
+                allServices={allServices}
+                variantMap={variantMap}
+                onItemClick={handleGridItemClick}
+                onPCSession={handlePCSession}
+                onTabChange={setGridTab}
+                pcRentalEnabled={systemSettings.pcRentalEnabled !== false} />
             </Box>
           )}
 

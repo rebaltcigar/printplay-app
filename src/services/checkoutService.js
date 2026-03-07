@@ -93,14 +93,25 @@ export const saveCheckout = async ({ currentOrder, paymentData, user, activeShif
             paymentMethod: paymentData.paymentMethod,
             paymentDetails: paymentData.paymentDetails || {},
             invoiceStatus: isUnpaid ? 'UNPAID' : 'PAID',
-            isDeleted: false
+            isDeleted: false,
+            consumables: item.consumables || [] // Snapshot for reversion
         });
 
-        // 6. Inventory Deduction
+        // 6. Inventory Deduction (Recursive)
+        const deductStock = (svcId, q) => {
+            if (!svcId) return;
+            const ref = doc(db, 'services', svcId);
+            batch.update(ref, { stockCount: increment(-q) });
+        };
+
         if (item.trackStock && item.serviceId) {
-            const svcRef = doc(db, 'services', item.serviceId);
-            batch.update(svcRef, {
-                stockCount: increment(-Number(item.quantity))
+            deductStock(item.serviceId, Number(item.quantity));
+        }
+
+        // Process Consumables
+        if (item.consumables && item.consumables.length > 0) {
+            item.consumables.forEach(c => {
+                deductStock(c.itemId, Number(c.qty) * Number(item.quantity));
             });
         }
     });

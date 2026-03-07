@@ -1,7 +1,7 @@
 # Kunek — Product Roadmap
 
 > Living document. "Kunek" is the platform. "PrintPlay" is the first business (tenant) running on it.
-> Updated: 2026-03-08 (v0.4.5)
+> Updated: 2026-03-08 (v0.5.0)
 >
 > Completed version details archived in `memory/release-history.md`.
 
@@ -11,7 +11,7 @@
 
 | Version | Branch | Status |
 |---------|--------|--------|
-| v0.5 | `feature/retail-inventory` | In Progress |
+| v0.5 | `feature/retail-inventory` | Released |
 | v0.4.5 | `main` | Released |
 | v0.4.4 | `main` | Released |
 | v0.4.0 | `feature/basic-crm` | Merged |
@@ -21,24 +21,7 @@
 | v0.2.0 | `feature/catalog-foundation` | Merged |
 | v0.1.32 | `feature/next-dev-2` | Merged |
 
-## Up Next — `feature/retail-inventory`
-
----
- 
-## v0.5 — Retail & Inventory ← **NEXT**
-**Goal**: Proper retail item management with stock tracking.
-
-- Retail tab in POS fully operational
-- Stock decrement on checkout when `trackStock: true`
-- Low stock indicator on POS tile
-- Paper / consumable tracking via transaction `attributes`
-- Restock flow in admin (adjust stockCount with reason log)
-- Inventory report: current stock levels, sales velocity, low stock list
-- Weighted average cost calculation for retail items
-
----
-
-## v0.6 — Reporting & Analytics
+## v0.6 — Reporting & Analytics ← **NEXT**
 **Goal**: Deeper business intelligence from data already being captured.
 
 - Shift breakdown by service variant (B&W vs Color, etc.)

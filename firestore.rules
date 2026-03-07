@@ -149,6 +149,13 @@ service cloud.firestore {
       allow read, write: if isSignedIn();
     }
 
+    /* ---------- Inventory Logs ---------- */
+    match /inventory_logs/{logId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update, delete: if isAdmin();
+    }
+
     /* ---------- Customers ---------- */
     match /customers/{id} {
       allow get, list: if isSignedIn(); 

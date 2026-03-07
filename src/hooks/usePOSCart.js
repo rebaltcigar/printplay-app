@@ -59,6 +59,7 @@ export const usePOSCart = (initialOrders = [{ id: 1, items: [], customer: null }
             price,
             costPrice: itemData.costPrice || 0,
             trackStock: itemData.trackStock || false,
+            consumables: itemData.consumables || [],
             quantity: qty,
         };
 

@@ -37,6 +37,10 @@ export function getRange(preset, monthYear /* Date|null */, allTimeStart /* Date
       start = now.startOf("day").subtract(6, "day");
       end = now.endOf("day");
       break;
+    case "past30":
+      start = now.startOf("day").subtract(29, "day");
+      end = now.endOf("day");
+      break;
     case "yesterday":
       start = now.subtract(1, "day").startOf("day");
       end = now.subtract(1, "day").endOf("day");

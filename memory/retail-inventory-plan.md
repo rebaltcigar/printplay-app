@@ -1,52 +1,55 @@
-# v0.5: Retail & Inventory Implementation Plan
+# v0.5: Retail & Inventory — Comprehensive Implementation Plan
 
-This update focuses on bridging the gap between services and physical inventory, enhancing stock visibility, and completing the audit trail for inventory movements.
+This plan follows the established project standards (Centralized Services, Global Contexts, and Component Decomposition) to implement a robust inventory system.
 
-## Objectives
-- Link services (e.g., Printing) to retail stock (e.g., Paper) so stock decrements automatically.
-- Implement a UI to view historical inventory movements (restocks/adjustments).
-- Add sales velocity and "days remaining" estimates to the Inventory Management view.
+## 3-Pass Audit & Strategy
 
-## Phase 1: Service-Inventory Linking (Consumables)
+### Pass 1: Data Model & Infrastructure (The "Safety" Pass)
+- [ ] **Schema Update**:
+    - `services` collection: Add `consumables` (array of `{ itemId, qty }`), `lowStockThreshold`, `totalValue` (cost-based).
+    - `inventory_logs` collection: New collection for auditing all stock movements (Restock, Damage, Adjustment).
+- [ ] **[NEW] inventoryService.js**: Centralize all stock logic.
+    - `recordStockAdjustment(itemId, qty, type, reason, cost?)`: Uses a Firestore batch to update the item and create a log entry.
+- [ ] **Permissions**: Guard restock and adjustment functions with `isAdmin()`.
 
-### [MODIFY] [ServiceCatalog.jsx](file:///c:/printplay-app/printplay-app/src/components/admin/ServiceCatalog.jsx)
-- Add a "Consumables" section in the item form.
-- Allow users to select another item (usually a retail item) and specify the quantity used per unit of this service.
-- Update `save` logic to store `consumables` array in the service document.
+### Pass 2: Service-Inventory Linking (The "Automation" Pass)
+- [ ] **Service Catalog UI**: Add "Linked Consumables" to the Item Editor.
+    - Allow mapping a Service (e.g., "Full Page Print") to a Retail Item (e.g., "A4 Paper") with a specific quantity.
+- [ ] **Checkout Logic**:
+    - Update `checkoutService.js` to recursively check for `consumables` on every line item.
+    - Batch the decrement of both the sold item (if retail) and its consumables in a single atomic operation.
 
-### [MODIFY] [POS.jsx](file:///c:/printplay-app/printplay-app/src/components/POS.jsx)
-- Update `addItemToCart` to include the `consumables` data.
-- Update `handleCheckout` to iterate through `consumables` and decrement their stock in the same batch as the main items.
-
----
-
-## Phase 2: Inventory Reporting & Audit
-
-### [MODIFY] [InventoryManagement.jsx](file:///c:/printplay-app/printplay-app/src/components/admin/InventoryManagement.jsx)
-- Implement `Audit History` dialog:
-  - Fetch transactions where `financialCategory === 'InventoryAsset'`.
-  - Display them in a table (Date, Item, Action, Qty, Cost).
-- Implement "Sales Velocity":
-  - For each item, calculate average daily units sold over the last 30 days.
-  - Display "Out of stock in X days" estimation if velocity > 0.
+### Pass 3: Analytics & Audit View (The "Intelligence" Pass)
+- [ ] **Audit History UI**: Implement the missing `Audit History` dialog in `InventoryManagement.jsx`.
+    - View all `inventory_logs` with filters for Item and Type.
+- [ ] **Sales Velocity & Forecasting**:
+    - [NEW] `useInventoryAnalytics.js` hook: Computes "Avg Units/Day" and "Days Remaining" based on a 30-day window.
+- [ ] **POS Visibility**: Enhanced badges in `POSItemGrid.jsx` showing "X remaining" for low-stock items.
 
 ---
 
-## Phase 3: UI/UX Polishing
+## Technical Standards Alignment
 
-### [MODIFY] [POSItemGrid.jsx](file:///c:/printplay-app/printplay-app/src/components/pos/POSItemGrid.jsx)
-- Ensure the "Retail" tab is visually distinct and items are well-organized.
-- Add a "Stock" badge even if not in "Low Stock" state for quick visibility.
+### 1. Centralized Actions
+- **DO NOT** use `updateDoc` inside `InventoryManagement.jsx`.
+- **DO** call `inventoryService.restockItem()` or `inventoryService.adjustStock()`.
+
+### 2. Global UI
+- Use `showConfirm` with `requireReason: true` for all manual stock adjustments (Destruction/Loss).
+- Use `showSnackbar` for success/error feedback via `GlobalUIContext`.
+
+### 3. Optimization
+- Lazy load the Audit History dialog to keep the main inventory list performant.
+- Use `memo` on inventory table rows to prevent unnecessary re-renders during search/filter.
+
+---
 
 ## Verification Plan
 
-### Manual Verification
-1. **Consumable Link**:
-   - Link "A4 Printing" to "A4 Paper" (qty: 1).
-   - Perform a sale of 10x "A4 Printing".
-   - Verify "A4 Paper" stock decrements by 10.
-2. **Restock Audit**:
-   - Perform a restock in `InventoryManagement`.
-   - Open Audit History and verify the entry appears with correct cost/qty.
-3. **Sales Velocity**:
-   - Check `Inventory Management` page for the new velocity indicator.
+### Automated
+- **Unit Tests**: Test WAC calculation logic in `inventoryService.js`.
+- **Integration**: Verify that deleting an order correctly *increments* (reverts) stock levels for both items and consumables.
+
+### Manual
+- **Workflow**: Perform a Restock $\rightarrow$ Check Audit Log.
+- **Workflow**: Sell a service with 2 linked consumables $\rightarrow$ Verify stock drops for all 3 documents.

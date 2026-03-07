@@ -6,10 +6,11 @@ import {
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import HistoryIcon from '@mui/icons-material/History'; // For audits
-import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, addDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db, auth } from '../../firebase';
 import { fmtCurrency, fmtPesoWhole } from '../../utils/formatters';
-import { generateDisplayId } from '../../services/orderService';
+import { restockItem, getInventoryLogs } from '../../services/inventoryService';
+import { useInventoryAnalytics } from '../../hooks/useInventoryAnalytics';
 import ValidatedInput from '../common/ValidatedInput';
 import PageHeader from '../common/PageHeader';
 import SummaryCards from '../common/SummaryCards';
@@ -26,6 +27,9 @@ export default function InventoryManagement({ showSnackbar }) {
     // Restock Dialog State
     const [restockDialog, setRestockDialog] = useState({ open: false, item: null });
     const [restockForm, setRestockForm] = useState({ qtyAdded: '', unitCost: '', totalCost: '' });
+
+    // Audit History State
+    const [auditDrawer, setAuditDrawer] = useState({ open: false, logs: [], loading: false });
 
     // Load Retail Items (Track Stock = True)
     useEffect(() => {
@@ -69,39 +73,12 @@ export default function InventoryManagement({ showSnackbar }) {
         }
 
         try {
-            // Weighted Average Cost Calculation
-            const oldQty = Number(item.stockCount || 0);
-            const oldCost = Number(item.costPrice || 0);
-            const oldTotalValue = oldQty * oldCost;
-
-            const newTotalValue = oldTotalValue + total;
-            const newTotalQty = oldQty + qty;
-
-            // Avoid divide by zero if newQty is 0 (unlikely here)
-            const newAverageCost = newTotalQty > 0 ? (newTotalValue / newTotalQty) : unit;
-
-            // 1. Update Item
-            await updateDoc(doc(db, 'services', item.id), {
-                stockCount: newTotalQty,
-                costPrice: newAverageCost,
-                lastRestocked: serverTimestamp()
-            });
-
-            // 2. Create "Inventory Purchase" Transaction (Asset)
-            // This effectively logs the "Buy" action
-            const displayId = await generateDisplayId("expenses", "EXP");
-            await addDoc(collection(db, 'transactions'), {
-                displayId,
-                item: `Restock: ${item.serviceName}`,
-                quantity: qty,
-                price: unit, // Unit Cost
-                total: total, // Total Cost
-                financialCategory: 'InventoryAsset', // Asset Purchase
-                category: 'Credit', // Technically an expense workflow but logged as Asset
-                timestamp: serverTimestamp(),
-                staffEmail: auth.currentUser?.email || 'admin',
-                notes: `Restocked ${qty} units. Old Cost: ${oldCost.toFixed(2)}, New Cost: ${newAverageCost.toFixed(2)}`,
-                inventoryItemId: item.id
+            const newAverageCost = await restockItem({
+                item,
+                qtyAdded: qty,
+                unitCost: unit,
+                totalCost: total,
+                staffEmail: auth.currentUser?.email || 'admin'
             });
 
             showSnackbar?.(`Restocked ${item.serviceName}. New Cost: ${fmtCurrency(newAverageCost)}`, 'success');
@@ -128,7 +105,8 @@ export default function InventoryManagement({ showSnackbar }) {
         setRestockForm({ ...restockForm, qtyAdded: val, totalCost: (parseFloat(val || 0) * unit).toFixed(2) });
     };
 
-    // --- Summary Calculations ---
+    // Analytics
+    const { velocityData, loading: analyticsLoading } = useInventoryAnalytics(items);
     const summaryCards = useMemo(() => {
         const totalValue = items.reduce((acc, i) => acc + ((i.stockCount || 0) * (i.costPrice || 0)), 0);
         const lowStockCount = items.filter(i => (i.stockCount || 0) <= (i.lowStockThreshold || 5)).length;
@@ -171,7 +149,15 @@ export default function InventoryManagement({ showSnackbar }) {
                 title="Inventory Management"
                 subtitle="Track stock levels and perform restocking for retail goods."
                 actions={
-                    <Button variant="contained" startIcon={<HistoryIcon />} onClick={() => { }}>
+                    <Button
+                        variant="contained"
+                        startIcon={<HistoryIcon />}
+                        onClick={async () => {
+                            setAuditDrawer({ ...auditDrawer, open: true, loading: true });
+                            const logs = await getInventoryLogs();
+                            setAuditDrawer({ open: true, logs, loading: false });
+                        }}
+                    >
                         Audit History
                     </Button>
                 }
@@ -186,10 +172,11 @@ export default function InventoryManagement({ showSnackbar }) {
                             <TableRow>
                                 <TableCell>Item Name</TableCell>
                                 <TableCell align="right">Current Stock</TableCell>
+                                <TableCell align="right">Avg Sales/Day</TableCell>
+                                <TableCell align="right">Stock Life</TableCell>
                                 <TableCell align="right">Avg Cost</TableCell>
                                 <TableCell align="right">Stock Value</TableCell>
                                 <TableCell align="right">Sell Price</TableCell>
-                                <TableCell align="right">Margin (Est)</TableCell>
                                 <TableCell align="right">Actions</TableCell>
                             </TableRow>
                         </TableHead>
@@ -202,6 +189,8 @@ export default function InventoryManagement({ showSnackbar }) {
                                 const marginPct = price > 0 ? (margin / price) * 100 : 0;
                                 const isLow = stock <= (item.lowStockThreshold || 5);
 
+                                const vData = velocityData[item.id] || { velocity: 0, daysRemaining: null };
+
                                 return (
                                     <TableRow key={item.id} hover>
                                         <TableCell fontWeight="bold">{item.serviceName}</TableCell>
@@ -211,12 +200,23 @@ export default function InventoryManagement({ showSnackbar }) {
                                             </Typography>
                                             {isLow && <Typography variant="caption" color="error">Low</Typography>}
                                         </TableCell>
+                                        <TableCell align="right">
+                                            {analyticsLoading ? '...' : vData.velocity.toFixed(2)}
+                                        </TableCell>
+                                        <TableCell align="right">
+                                            {analyticsLoading ? '...' :
+                                                vData.daysRemaining !== null
+                                                    ? <Typography variant="body2" color={vData.daysRemaining < 3 ? 'error' : 'inherit'}>
+                                                        {vData.daysRemaining} days
+                                                    </Typography>
+                                                    : <Typography variant="caption" color="text.secondary">No sales</Typography>
+                                            }
+                                        </TableCell>
                                         <TableCell align="right">{fmtCurrency(cost)}</TableCell>
                                         <TableCell align="right">{fmtPesoWhole(stock * cost)}</TableCell>
-                                        <TableCell align="right">{fmtCurrency(price)}</TableCell>
                                         <TableCell align="right">
                                             <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                                                <Typography variant="body2">{fmtCurrency(margin)}</Typography>
+                                                <Typography variant="body2">{fmtCurrency(price)}</Typography>
                                                 <Typography variant="caption" color={marginPct < 20 ? 'warning.main' : 'success.main'}>
                                                     {marginPct.toFixed(1)}%
                                                 </Typography>
@@ -322,6 +322,55 @@ export default function InventoryManagement({ showSnackbar }) {
                         </Box>
                     )}
                 </Stack>
+            </DetailDrawer>
+
+            {/* Audit History Drawer */}
+            <DetailDrawer
+                open={auditDrawer.open}
+                onClose={() => setAuditDrawer({ ...auditDrawer, open: false })}
+                title="Inventory Audit History"
+                subtitle="Recent stock movements across all retail items."
+                width={600}
+                loading={auditDrawer.loading}
+            >
+                <TableContainer>
+                    <Table size="small">
+                        <TableHead>
+                            <TableRow>
+                                <TableCell>Date</TableCell>
+                                <TableCell>Item</TableCell>
+                                <TableCell>Type</TableCell>
+                                <TableCell align="right">Qty</TableCell>
+                                <TableCell>Staff</TableCell>
+                            </TableRow>
+                        </TableHead>
+                        <TableBody>
+                            {auditDrawer.logs.map(log => (
+                                <TableRow key={log.id} hover>
+                                    <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                                        {log.timestamp?.toDate ? log.timestamp.toDate().toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
+                                    </TableCell>
+                                    <TableCell fontWeight="bold">{log.itemName}</TableCell>
+                                    <TableCell>
+                                        <Chip
+                                            label={log.type}
+                                            size="small"
+                                            color={log.type === 'Restock' ? 'success' : log.type === 'Sale' ? 'info' : 'warning'}
+                                            variant="outlined"
+                                        />
+                                    </TableCell>
+                                    <TableCell align="right" sx={{ color: log.qtyChange > 0 ? 'success.main' : 'error.main', fontWeight: 'bold' }}>
+                                        {log.qtyChange > 0 ? `+${log.qtyChange}` : log.qtyChange}
+                                    </TableCell>
+                                    <TableCell variant="caption">{log.staffEmail?.split('@')[0]}</TableCell>
+                                </TableRow>
+                            ))}
+                            {auditDrawer.logs.length === 0 && !auditDrawer.loading && (
+                                <TableRow><TableCell colSpan={5} align="center">No logs found.</TableCell></TableRow>
+                            )}
+                        </TableBody>
+                    </Table>
+                </TableContainer>
             </DetailDrawer>
         </Box >
     );
