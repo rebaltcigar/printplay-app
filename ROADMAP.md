@@ -11,6 +11,7 @@
 
 | Version | Branch | Status |
 |---------|--------|--------|
+| v0.5 | `feature/retail-inventory` | In Progress |
 | v0.4.5 | `main` | Released |
 | v0.4.4 | `main` | Released |
 | v0.4.0 | `feature/basic-crm` | Merged |
