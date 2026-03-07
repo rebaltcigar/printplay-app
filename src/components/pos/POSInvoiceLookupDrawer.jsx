@@ -16,7 +16,7 @@ import CustomerSearchAutocomplete from './CustomerSearchAutocomplete';
  * A sidebar drawer for POS cashiers to search for customers and view their unpaid invoices.
  * Mirrors the style of `MyScheduleDrawer` etc.
  */
-export default function POSInvoiceLookupDrawer({ open, onClose, user, showSnackbar, activeShiftId }) {
+export default function POSInvoiceLookupDrawer({ open, onClose, user, userRole, showSnackbar, activeShiftId }) {
     const [search, setSearch] = useState('');
     const [selectedInvoice, setSelectedInvoice] = useState(null);
 
@@ -148,6 +148,7 @@ export default function POSInvoiceLookupDrawer({ open, onClose, user, showSnackb
                 onClose={() => setSelectedInvoice(null)}
                 invoice={selectedInvoice}
                 user={user}
+                userRole={userRole}
                 showSnackbar={showSnackbar}
                 activeShiftId={activeShiftId}
                 onPaymentSuccess={handlePaymentSuccess}

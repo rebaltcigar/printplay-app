@@ -13,6 +13,16 @@
 
 ---
  
+## [0.4.2] — 2026-03-07
+
+### Fixed
+- **Invoice "Write Off" Visibility** — Restored the "Write Off" button by correcting the role check and propagating `userRole` through the component tree from `App.jsx`. Access is now granted to `superadmin`, `admin`, and `owner`.
+- **Smooth Invoice Filtering** — Converted the Invoices management page to use client-side filtering. This eliminates the "glitchy" loading flicker when switching status filters and ensures Summary Cards remain stable.
+- **POS Component Stability** — Fixed a duplicate default export and a variable naming collision in `POS.jsx` that was causing build failures.
+
+### Changed
+- **Invoice Drawer UI** — Removed the redundant "Close" button from the drawer footer in favor of the header "X" icon as the primary interaction.
+
 ## [0.4.1] — 2026-03-07
  
 ### Fixed

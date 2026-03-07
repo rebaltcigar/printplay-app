@@ -85,7 +85,7 @@ const currency = fmtCurrency;
 
 
 
-function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime, appSettings, staffDisplayName: initialStaffDisplayName }) {
+export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime, appSettings, staffDisplayName: staffDisplayNameProp }) {
   const theme = useTheme();
 
   // --- CORE POS STATE ---
@@ -125,7 +125,7 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
   // --- SIDEBAR ---
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [transactions, setTransactions] = useState([]);
-  const [staffDisplayName, setStaffDisplayName] = useState(initialStaffDisplayName || user?.email || '');
+  const [staffDisplayName, setStaffDisplayName] = useState(staffDisplayNameProp || user?.email || '');
 
   // --- DIALOGS ---
   const [openDrawerDialog, setOpenDrawerDialog] = useState(false);
@@ -1988,6 +1988,3 @@ function POSContent({ user, userRole, activeShiftId, shiftPeriod, shiftStartTime
     </Box >
   );
 }
-
-// Wrapper to export
-export default POSContent;

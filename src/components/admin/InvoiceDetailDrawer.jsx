@@ -27,7 +27,7 @@ function toDateStr(val) {
     return isNaN(d) ? '—' : d.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-export default function InvoiceDetailDrawer({ open, onClose, invoice, user, showSnackbar, activeShiftId, onPaymentSuccess }) {
+export default function InvoiceDetailDrawer({ open, onClose, invoice, user, userRole, showSnackbar, activeShiftId, onPaymentSuccess }) {
     const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
     const [confirmDialog, setConfirmDialog] = useState({ open: false, title: '', message: '', requireReason: false, onConfirm: null });
 
@@ -70,9 +70,9 @@ export default function InvoiceDetailDrawer({ open, onClose, invoice, user, show
                 width={800}
                 actions={
                     <>
-                        <Button onClick={onClose} color="inherit">Close</Button>
                         <Box sx={{ flexGrow: 1 }} />
-                        {canPay && user?.role === 'admin' && (
+                        {canPay && ['superadmin', 'admin', 'owner'].includes(userRole) && (
+
                             <Button
                                 startIcon={<AssignmentReturnIcon />}
                                 onClick={handleWriteOff}

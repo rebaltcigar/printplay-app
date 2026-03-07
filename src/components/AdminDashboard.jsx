@@ -64,7 +64,7 @@ import ReceivablesReport from "./admin/ReceivablesReport";
 import InvoiceManagement from "./admin/InvoiceManagement";
 import CustomerManagement from "./admin/CustomerManagement";
 
-export default function AdminDashboard({ user, onLogout, appSettings }) {
+export default function AdminDashboard({ user, userRole, onLogout, appSettings }) {
   // Router hooks
   const navigate = useNavigate();
   const location = useLocation();
@@ -373,7 +373,7 @@ export default function AdminDashboard({ user, onLogout, appSettings }) {
               } />
               <Route path="invoices" element={
                 <Box sx={{ p: 0, height: '100%', overflow: 'hidden' }}>
-                  <InvoiceManagement user={user} showSnackbar={showSnackbar} />
+                  <InvoiceManagement user={user} userRole={userRole} showSnackbar={showSnackbar} />
                 </Box>
               } />
               <Route path="receivables" element={

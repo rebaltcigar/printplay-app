@@ -47,7 +47,7 @@ export default function App() {
   const [shiftStartTime, setShiftStartTime] = useState(null);
 
   // Clock-in mode (non-cashier staff clocked in to an existing shift)
-  const [clockInMode, setClockInMode]   = useState(false);
+  const [clockInMode, setClockInMode] = useState(false);
   const [clockInLogId, setClockInLogId] = useState(null);
 
   // Staff display name (extracted from user doc during auth bootstrap — no extra fetch in POS)
@@ -166,7 +166,7 @@ export default function App() {
     // Fetch user doc for role
     const userSnap = await getDoc(doc(db, "users", cred.user.uid));
     if (!userSnap.exists()) {
-      await signOut(auth).catch(() => {});
+      await signOut(auth).catch(() => { });
       const e = new Error("No account record found. Contact your administrator.");
       e.code = "auth/user-not-found";
       throw e;
@@ -175,7 +175,7 @@ export default function App() {
     const userData = userSnap.data();
 
     if (userData?.suspended === true) {
-      await signOut(auth).catch(() => {});
+      await signOut(auth).catch(() => { });
       const e = new Error("This account has been suspended. Please contact your administrator.");
       e.code = "auth/account-suspended";
       throw e;
@@ -193,7 +193,7 @@ export default function App() {
 
     // ── Staff path ──
     if (role !== "staff") {
-      await signOut(auth).catch(() => {});
+      await signOut(auth).catch(() => { });
       const e = new Error("Unrecognized account role. Contact your administrator.");
       e.code = "auth/user-disabled";
       throw e;
@@ -217,7 +217,7 @@ export default function App() {
           const d = cashierSnap.docs[0].data();
           cashierName = d.fullName || d.name || lock.staffEmail;
         }
-      } catch {}
+      } catch { }
 
       return {
         type: "clockin",
@@ -317,7 +317,7 @@ export default function App() {
 
   /** Cancel pending login (sign out, Login.jsx resets phase) */
   const handleCancelLogin = async () => {
-    try { await signOut(auth); } catch {}
+    try { await signOut(auth); } catch { }
   };
 
   /** Clock in as non-cashier staff to an existing active shift */
@@ -334,12 +334,12 @@ export default function App() {
 
     // Write clock-in log
     const logRef = await addDoc(collection(db, "payroll_logs"), {
-      staffUid:   user.uid,
+      staffUid: user.uid,
       staffEmail: user.email,
-      staffName:  userData.fullName || userData.name || user.email,
-      clockIn:    serverTimestamp(),
-      shiftId:    lock?.activeShiftId || null,
-      type:       "clock_in",
+      staffName: userData.fullName || userData.name || user.email,
+      clockIn: serverTimestamp(),
+      shiftId: lock?.activeShiftId || null,
+      type: "clock_in",
     });
 
     setCurrentUser(user);
@@ -359,7 +359,7 @@ export default function App() {
     } catch (err) {
       console.warn("Clock-out log update failed:", err);
     }
-    try { await signOut(auth); } catch {}
+    try { await signOut(auth); } catch { }
     setClockInMode(false);
     setClockInLogId(null);
   };
@@ -444,7 +444,7 @@ export default function App() {
             currentUser && ['superadmin', 'admin', 'owner'].includes(userRole) ? (
               <Box sx={{ width: "100%", height: "100%", display: "flex" }}>
                 <AnalyticsProvider>
-                  <AdminDashboard user={currentUser} onLogout={handleAdminLogout} appSettings={appSettings} />
+                  <AdminDashboard user={currentUser} userRole={userRole} onLogout={handleAdminLogout} appSettings={appSettings} />
                 </AnalyticsProvider>
               </Box>
             ) : (

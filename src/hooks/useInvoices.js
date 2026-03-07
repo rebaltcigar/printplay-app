@@ -19,21 +19,25 @@ export function useInvoices(filters = {}) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setLoading(true);
     const constraints = [orderBy('createdAt', 'desc')];
 
-    // 'overdue' is display-only — fetch unpaid+partial, filter client-side
-    const statusFilter = filters.status === 'overdue' ? null : filters.status;
-    if (statusFilter) constraints.push(where('status', '==', statusFilter));
     if (filters.customerId) constraints.push(where('customerId', '==', filters.customerId));
     if (filters.from) constraints.push(where('createdAt', '>=', filters.from));
-    if (filters.to)   constraints.push(where('createdAt', '<=', filters.to));
+    if (filters.to) constraints.push(where('createdAt', '<=', filters.to));
 
     const q = query(collection(db, 'invoices'), ...constraints);
     const unsub = onSnapshot(q, (snap) => {
       let docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      // Client-side overdue filter
-      if (filters.status === 'overdue') docs = docs.filter(isOverdue);
+
+      // Client-side status filtering
+      if (filters.status) {
+        if (filters.status === 'overdue') {
+          docs = docs.filter(isOverdue);
+        } else {
+          docs = docs.filter(inv => inv.status === filters.status);
+        }
+      }
+
       setInvoices(docs);
       setLoading(false);
     }, (err) => {
@@ -42,7 +46,7 @@ export function useInvoices(filters = {}) {
     });
 
     return () => unsub();
-  }, [filters.status, filters.customerId, filters.from, filters.to]);
+  }, [filters.customerId, filters.from, filters.to, filters.status]); // Keep status in deps to trigger client-side refilter if needed, but the query remains the same
 
   // Outstanding totals (excludes paid + written_off)
   const outstandingTotal = invoices

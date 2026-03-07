@@ -40,22 +40,37 @@ function toDateStr(val) {
   return isNaN(d) ? '—' : d.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-export default function InvoiceManagement({ user, showSnackbar }) {
+export default function InvoiceManagement({ user, userRole, showSnackbar }) {
   const [statusFilter, setStatusFilter] = useState(null); // null = all
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(null);
 
-  const { invoices, loading } = useInvoices({ status: statusFilter });
+  const { invoices, loading } = useInvoices(); // Fetch all
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return invoices;
-    const q = search.toLowerCase();
-    return invoices.filter(inv =>
-      inv.customerName?.toLowerCase().includes(q) ||
-      inv.invoiceNumber?.toLowerCase().includes(q) ||
-      inv.orderNumber?.toLowerCase().includes(q)
-    );
-  }, [invoices, search]);
+    let list = invoices;
+
+    // 1. Filter by Status
+    if (statusFilter) {
+      if (statusFilter === 'overdue') {
+        list = list.filter(inv => isOverdue(inv));
+      } else {
+        list = list.filter(inv => (inv.status || 'unpaid') === statusFilter);
+      }
+    }
+
+    // 2. Filter by Search
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter(inv =>
+        inv.customerName?.toLowerCase().includes(q) ||
+        inv.invoiceNumber?.toLowerCase().includes(q) ||
+        inv.orderNumber?.toLowerCase().includes(q)
+      );
+    }
+
+    return list;
+  }, [invoices, statusFilter, search]);
 
   const summaryCards = useMemo(() => {
     let outstandingVal = 0;
@@ -201,6 +216,7 @@ export default function InvoiceManagement({ user, showSnackbar }) {
         open={!!selected}
         onClose={() => setSelected(null)}
         user={user}
+        userRole={userRole}
         showSnackbar={showSnackbar}
       />
     </Box>
