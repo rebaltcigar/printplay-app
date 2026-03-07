@@ -1,7 +1,7 @@
 # Kunek — Product Roadmap
 
 > Living document. "Kunek" is the platform. "PrintPlay" is the first business (tenant) running on it.
-> Updated: 2026-03-07 (v0.4.0)
+> Updated: 2026-03-08 (v0.4.5)
 >
 > Completed version details archived in `memory/release-history.md`.
 
@@ -11,6 +11,7 @@
 
 | Version | Branch | Status |
 |---------|--------|--------|
+| v0.4.5 | `main` | Released |
 | v0.4.4 | `main` | Released |
 | v0.4.0 | `feature/basic-crm` | Merged |
 | v0.3.0 | `feature/invoice-management` | Merged |
@@ -166,8 +167,8 @@ Full test plan: `memory/pos-test-plan.md`. Covers item grid, tile clicks, varian
 
 | Item | Priority |
 |------|----------|
-| `POS.jsx` is ~1700 lines — decompose into sub-components | Ongoing |
-| Standardize all alerts/errors to Snackbar system | Ongoing |
+| `POS.jsx` is ~1300 lines — decompose into sub-components | v0.4.5 (Partially done) |
+| Standardize all alerts/errors to Snackbar system | v0.4.5 (Standardized in POS/Shifts) |
 | JSDoc / TypeScript types for Transaction, Shift, Order, Invoice | v0.3+ |
 | Unit tests for critical calculations (Payroll, Cart Totals, Invoice Balance) | v0.3+ |
 | `localStorage` cache for `services` list — stale-while-revalidate for faster POS tile grid on first paint | v0.4+ |
