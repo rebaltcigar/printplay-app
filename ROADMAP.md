@@ -1,7 +1,7 @@
 # Kunek — Product Roadmap
 
 > Living document. "Kunek" is the platform. "PrintPlay" is the first business (tenant) running on it.
-> Updated: 2026-03-08 (v0.5.0)
+> Updated: 2026-03-08 (v0.5.1)
 >
 > Completed version details archived in `memory/release-history.md`.
 
@@ -11,6 +11,7 @@
 
 | Version | Branch | Status |
 |---------|--------|--------|
+| v0.5.1 | `main` | Released |
 | v0.5 | `feature/retail-inventory` | Released |
 | v0.4.5 | `main` | Released |
 | v0.4.4 | `main` | Released |

@@ -13,6 +13,17 @@
 
 ---
  
+ ## [0.5.1] — 2026-03-08
+ 
+ ### Fixed
+ - **POS ReferenceError** — Resolved a crash in the POS component where `allServices` was incorrectly destructured from the `usePOSServices` hook.
+ 
+ ## [0.5.0] — 2026-03-08
+ 
+ ### Added
+ - **Retail Inventory Sync** — Integrated stock tracking for retail items. Transactions now atomically decrement stock counts in Firestore upon checkout.
+ - **Atomic Stock Deductions** — Implemented transaction-based inventory updates to prevent race conditions during high-volume sales.
+ 
  ## [0.4.5] — 2026-03-08
  
  ### Added

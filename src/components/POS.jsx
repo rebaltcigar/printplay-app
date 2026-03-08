@@ -116,7 +116,7 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
   }));
 
   // Services and staff from shared hooks (replaces manual useEffect blocks)
-  const { serviceList, expenseTypes: expenseServiceItems, posItems, variantMap } = usePOSServices();
+  const { allServices, serviceList, expenseTypes: expenseServiceItems, posItems, variantMap } = usePOSServices();
   const services = serviceList;
   const { staffOptions } = useStaffList();
 
