@@ -7,6 +7,7 @@ import ViewListIcon from '@mui/icons-material/ViewList';
 import AppsIcon from '@mui/icons-material/Apps';
 import HistoryIcon from '@mui/icons-material/History';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
+import SwitchAccountIcon from '@mui/icons-material/SwitchAccount';
 
 const POSHeader = ({
     systemSettings,
@@ -22,7 +23,8 @@ const POSHeader = ({
     setOpenEndShiftDialog,
     menuAnchor,
     setMenuAnchor,
-    setOpenInvoiceLookup
+    setOpenInvoiceLookup,
+    onSwitchStaff
 }) => {
     return (
         <AppBar position="static" color="default" elevation={1} sx={{ bgcolor: 'background.paper', borderBottom: 1, borderColor: 'divider' }}>
@@ -49,7 +51,7 @@ const POSHeader = ({
                         <Typography variant="subtitle2" sx={{ fontWeight: 'bold', lineHeight: 1.2, color: 'text.primary', letterSpacing: '0.02em' }}>
                             {systemSettings.storeName}
                         </Typography>
-                        <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1, fontSize: '0.7rem', opacity: 0.8 }}>
+                        <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2, fontSize: '0.7rem', opacity: 0.8 }}>
                             {staffDisplayName} • {shiftPeriod}
                         </Typography>
                     </Box>
@@ -76,16 +78,17 @@ const POSHeader = ({
                             sx={{ cursor: 'pointer', fontSize: '0.7rem' }}
                         />
                     </Tooltip>
+                    <Tooltip title="Switch Staff">
+                        <IconButton size="small" onClick={onSwitchStaff}>
+                            <SwitchAccountIcon fontSize="small" />
+                        </IconButton>
+                    </Tooltip>
                     <Button size="small" variant="outlined" color="primary" onClick={() => setOpenHistoryDrawer(true)} startIcon={<HistoryIcon />}>Logs</Button>
                     <Button size="small" variant="outlined" color="error" onClick={() => setOpenDrawerDialog(true)}>Drawer</Button>
                     <Button size="small" variant="outlined" color="error" onClick={() => setOpenExpense(true)}>+ Expense</Button>
                     <Button size="small" variant="contained" color="error" onClick={() => setOpenEndShiftDialog(true)}>End Shift</Button>
                 </Box>
 
-                {/* Mobile Menu Toggle (missing in original? No, it uses menuAnchor) */}
-                {/* Original didn't have a specific button for menuAnchor in the Toolbar code I saw, 
-            but it had the MuiMenu component. It probably uses a more button which I missed or it's implicitly triggered. 
-            Wait, I should check the original code again for the trigger. */}
                 <IconButton
                     size="small"
                     edge="end"
@@ -98,6 +101,7 @@ const POSHeader = ({
 
                 {/* Mobile Menu */}
                 <MuiMenu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)}>
+                    <MenuItem onClick={() => { setMenuAnchor(null); onSwitchStaff(); }}>Switch Staff</MenuItem>
                     <MenuItem onClick={() => { setMenuAnchor(null); setOpenHistoryDrawer(true); }}>Logs</MenuItem>
                     <MenuItem onClick={() => { setMenuAnchor(null); setOpenExpense(true); }}>+ Expense</MenuItem>
                     <MenuItem onClick={() => { setMenuAnchor(null); setOpenInvoiceLookup(true); }}>Invoices / Receivables</MenuItem>

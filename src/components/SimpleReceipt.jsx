@@ -71,15 +71,15 @@ export const SimpleReceipt = ({ order, shiftData, staffName, settings }) => {
           <TableBody>
             <TableRow>
               <TableCell sx={{ borderBottom: 'none', py: 0.5, fontSize: '10px', fontWeight: 'bold' }}>Total Sales</TableCell>
-              <TableCell align="right" sx={{ borderBottom: 'none', py: 0.5, fontSize: '10px', fontWeight: 'bold' }}>{currency((breakdown?.cash || 0) + (breakdown?.gcash || 0) + (breakdown?.receivables || 0))}</TableCell>
+              <TableCell align="right" sx={{ borderBottom: 'none', py: 0.5, fontSize: '10px', fontWeight: 'bold' }}>{currency((breakdown?.cash || 0) + (breakdown?.digital || 0) + (breakdown?.receivables || 0))}</TableCell>
             </TableRow>
             <TableRow>
               <TableCell sx={{ borderBottom: 'none', py: 0.5, pl: 2, fontSize: '9px' }}>Cash</TableCell>
               <TableCell align="right" sx={{ borderBottom: 'none', py: 0.5, fontSize: '9px' }}>{currency(breakdown?.cash)}</TableCell>
             </TableRow>
             <TableRow>
-              <TableCell sx={{ borderBottom: 'none', py: 0.5, pl: 2, fontSize: '9px' }}>GCash</TableCell>
-              <TableCell align="right" sx={{ borderBottom: 'none', py: 0.5, fontSize: '9px' }}>{currency(breakdown?.gcash)}</TableCell>
+              <TableCell sx={{ borderBottom: 'none', py: 0.5, pl: 2, fontSize: '9px' }}>Digital</TableCell>
+              <TableCell align="right" sx={{ borderBottom: 'none', py: 0.5, fontSize: '9px' }}>{currency(breakdown?.digital)}</TableCell>
             </TableRow>
             <TableRow>
               <TableCell sx={{ borderBottom: 'none', py: 0.5, pl: 2, fontSize: '9px' }}>Receivables</TableCell>
@@ -145,7 +145,16 @@ export const SimpleReceipt = ({ order, shiftData, staffName, settings }) => {
   const isWalkIn = !custName || custName === 'Walk-in Customer' || custName === 'Walk-in' || order.customerId === 'walk-in';
   const showCustomerInfo = !isWalkIn;
 
-  const paymentLabel = order.paymentMethod === 'Charge' ? 'Unpaid (Charge)' : order.paymentMethod;
+  const DIGITAL_METHODS = ['GCash', 'Maya', 'Bank Transfer', 'Card'];
+  const buildPaymentLabel = () => {
+    if (order.paymentMethod === 'Charge') return 'Unpaid (Charge)';
+    if (DIGITAL_METHODS.includes(order.paymentMethod)) {
+      const detail = order.paymentDetails?.bankName || order.paymentMethod;
+      return `Digital (${detail})`;
+    }
+    return order.paymentMethod;
+  };
+  const paymentLabel = buildPaymentLabel();
   const mountNode = document.body;
 
   // Use Portal to render outside of root, allowing us to hide root completely
@@ -297,6 +306,11 @@ export const SimpleReceipt = ({ order, shiftData, staffName, settings }) => {
                   <Typography variant="caption" sx={{ fontSize: '10px', fontWeight: 'bold' }}>
                     {item.name}
                   </Typography>
+                  {item.note && (
+                    <Typography variant="caption" display="block" sx={{ fontSize: '8px', fontStyle: 'italic', lineHeight: 1 }}>
+                      Note: {item.note}
+                    </Typography>
+                  )}
                   <br />
                   {item.quantity} x {currency(item.price)}
                 </TableCell>
@@ -311,13 +325,29 @@ export const SimpleReceipt = ({ order, shiftData, staffName, settings }) => {
         <Divider sx={{ borderBottomWidth: '1px', borderColor: 'black', mb: 1 }} />
 
         {/* TOTALS */}
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-          <Typography variant="caption" sx={{ fontSize: '12px', fontWeight: 'bold', color: 'black' }}>
-            TOTAL AMOUNT
-          </Typography>
-          <Typography variant="caption" sx={{ fontSize: '12px', fontWeight: 'bold', color: 'black' }}>
-            {currency(order.total)}
-          </Typography>
+        <Box sx={{ mt: 1 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+            <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>Subtotal</Typography>
+            <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>{currency(order.subtotal || order.total)}</Typography>
+          </Box>
+
+          {order.discount?.amount > 0 && (
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+              <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>
+                Discount ({order.discount.type === 'percent' ? `${order.discount.value}%` : 'FLAT'})
+              </Typography>
+              <Typography variant="caption" sx={{ fontSize: '10px', color: 'black' }}>-{currency(order.discount.amount)}</Typography>
+            </Box>
+          )}
+
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+            <Typography variant="caption" sx={{ fontSize: '12px', fontWeight: 'bold', color: 'black' }}>
+              TOTAL AMOUNT
+            </Typography>
+            <Typography variant="caption" sx={{ fontSize: '12px', fontWeight: 'bold', color: 'black' }}>
+              {currency(order.total)}
+            </Typography>
+          </Box>
         </Box>
 
         {order.paymentMethod && (

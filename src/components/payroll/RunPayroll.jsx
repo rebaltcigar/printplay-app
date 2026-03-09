@@ -63,6 +63,7 @@ import {
   shortageForShift,
   toHours,
   toLocalISO_PHT_fromTS,
+  toLocaleDateStringPHT,
   toYMD_PHT_fromTS,
   todayYMD_PHT,
   tsFromYMD,

@@ -46,13 +46,13 @@ export default function EndShiftDialog({
         salesBreakdown,
         expensesBreakdown,
         totalCash,
-        totalGcash,
+        totalDigital,
         totalAr,
         systemTotal: finalTotal,
         loggedPcNonCash,
         arPaymentsTotal,
         arCashTotal,
-        arGcashTotal,
+        arDigitalTotal,
     } = financials;
 
     const shiftPeriod = settings.shiftPeriod || ''; // Ensure shiftPeriod is available
@@ -71,9 +71,9 @@ export default function EndShiftDialog({
             servicesTotal,
             expensesTotal,
             systemTotal: finalTotal,
-            totalCash,     // NEW: Required,
-            totalGcash,    // NEW: Required
-            totalAr,       // NEW: Required
+            totalCash,
+            totalDigital,
+            totalAr,
             arPaymentsTotal: arPaymentsTotal || 0,
             endTime: serverTimestamp()
         };
@@ -95,12 +95,12 @@ export default function EndShiftDialog({
                     expensesBreakdown,
                     breakdown: {
                         cash: totalCash,
-                        gcash: totalGcash,
+                        digital: totalDigital,
                         receivables: totalAr
                     },
                     arPaymentsTotal,
                     arCashTotal,
-                    arGcashTotal
+                    arDigitalTotal
                 });
             }
             onClose();
@@ -200,10 +200,10 @@ export default function EndShiftDialog({
                                         <Typography sx={{ fontSize: '0.75rem' }}>{currency(arCashTotal)}</Typography>
                                     </Box>
                                 )}
-                                {arGcashTotal > 0 && (
+                                {arDigitalTotal > 0 && (
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', pl: 1 }}>
-                                        <Typography sx={{ fontSize: '0.75rem' }}>AR Payments (GCash)</Typography>
-                                        <Typography sx={{ fontSize: '0.75rem' }}>{currency(arGcashTotal)}</Typography>
+                                        <Typography sx={{ fontSize: '0.75rem' }}>AR Payments (Digital)</Typography>
+                                        <Typography sx={{ fontSize: '0.75rem' }}>{currency(arDigitalTotal)}</Typography>
                                     </Box>
                                 )}
                                 <Divider sx={{ my: 0.5, borderStyle: 'divider' }} />
@@ -231,8 +231,8 @@ export default function EndShiftDialog({
                         <Typography variant="body2">{currency(totalCash)}</Typography>
                     </Box>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', pl: 1 }}>
-                        <Typography variant="body2">GCash</Typography>
-                        <Typography variant="body2">{currency(totalGcash)}</Typography>
+                        <Typography variant="body2">Digital (GCash / Maya / Bank)</Typography>
+                        <Typography variant="body2">{currency(totalDigital)}</Typography>
                     </Box>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', pl: 1 }}>
                         <Typography variant="body2">Receivables (Pay Later)</Typography>

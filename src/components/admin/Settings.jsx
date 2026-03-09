@@ -36,6 +36,9 @@ export default function Settings({ user, showSnackbar, isActive = true }) {
                 {/* Shift Templates */}
                 <Route path="shifttemplates" element={<ShiftTemplateSettings showSnackbar={showSnackbar} />} />
 
+                {/* Payment Methods */}
+                <Route path="payments" element={<StoreSettings section="payments" user={user} showSnackbar={showSnackbar} />} />
+
                 {/* ID System */}
                 <Route path="ids" element={<StoreSettings section="ids" user={user} showSnackbar={showSnackbar} />} />
 

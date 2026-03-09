@@ -11,6 +11,44 @@
 - **Infrastructure**: Firestore schema changes, new collections, indexes, security rules.
 - No roadmap content — belongs in ROADMAP.md.
 
+## [0.7.3] — 2026-03-10
+
+### Fixed
+- **Shift Summary GCash Label** — Corrected the visible "Payment Breakdown" section in the Shift Summary Receipt to display "Digital" (reading from `breakdown.digital`) instead of the stale "GCash" label and `breakdown.gcash` field.
+- **RunPayroll Crash** — Resolved a `ReferenceError: toLocaleDateStringPHT is not defined` in `RunPayroll.jsx` caused by the function being used but missing from the `payrollHelpers` import list.
+
+## [0.7.2] — 2026-03-12
+
+### Added
+- **PH Bank Integration** — Integrated high-fidelity, minimalist SVG logos for major PH banks and fintechs (GCash, Maya, BDO, BPI, Metrobank, Unionbank). No external dependencies for icons.
+- **Multiple Bank Accounts** — Store settings now support configuring multiple independent bank accounts with searchable bank names via `Autocomplete`.
+- **Google Drive QR Integration** — QR codes can now be hosted on Google Drive. Added a "Preview" feature that converts sharing links to direct image URLs instantly.
+- **Premium Checkout flow** — `CheckoutDialog` now features a sub-menu for bank selection when multiple accounts are enabled, providing a sleek, professional checkout experience.
+- **Universal Input Validation** — Migrated all payment configuration fields to `ValidatedInput`, ensuring strict data integrity for account numbers and names.
+
+### Changed
+- **Integrated Payments Status** — Updated Card payments to "Coming Soon" with a stylized placeholder, signaling future Maya/Stripe integrations.
+
+## [0.7.1] — 2026-03-11
+
+### Added
+- **Premium Payment Selector** — Redesigned the payment method selection in `CheckoutDialog.jsx` with a "Rich Selector" (Custom Dropdown). Displays icons, labels, and account details (Number/Name) directly in the selection menu for faster cashier verification and a cleaner UI.
+
+### Fixed
+- **Checkout Dialog ReferenceError** — Resolved a `ReferenceError: Paper is not defined` in `CheckoutDialog.jsx` that caused the checkout modal to crash.
+
+## [0.7.0] — 2026-03-11
+
+### Added
+- **Configurable Payment Methods** — Introduced dynamic settings for GCash, Maya, Bank Transfer, and Card. Includes support for QR code uploads and account detail display (Name/Number) on checkout.
+- **Line Notes** — Added capability to attach custom notes to individual items in the POS cart, which are persisted to the order and printed on receipts.
+- **Order Discounts** — Integrated order-level discounts (Percentage or Fixed amount) into the checkout flow with automatic subtotal breakdown and receipt display.
+- **Staff Handover** — Implemented a "Switch Staff" feature in the POS header to allow cashier transitions without ending the active shift.
+
+### Changed
+- **POS Architectural Decomposition** — Decomposed the monolithic `POS.jsx` by extracting manual entry logic into `POSEntryPanel.jsx` and cart table logic into `POSCartTable.jsx`, reducing code complexity and improving maintainability.
+- **Receipt Enhancements** — Updated `SimpleReceipt.jsx` to include line notes and a detailed subtotal/discount breakdown.
+
 ## [0.6.1] — 2026-03-10
 
 ### Fixed

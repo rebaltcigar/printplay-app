@@ -4,10 +4,27 @@ import {
     doc, increment
 } from "firebase/firestore";
 import { generateOrderNumber, createOrderObject, generateBatchIds } from "./orderService";
+import { createInvoice } from "./invoiceService";
+
+// ---------------------------------------------------------------------------
+// Shared helper: create a new customer doc if isNew, otherwise pass through
+// ---------------------------------------------------------------------------
+const resolveCustomer = async (customer, userEmail) => {
+    if (!customer || !customer.isNew) return customer || null;
+    const custRef = await addDoc(collection(db, 'customers'), {
+        fullName: customer.fullName,
+        createdAt: serverTimestamp(),
+        createdBy: userEmail || 'system_checkout',
+        lifetimeValue: 0,
+        outstandingBalance: 0,
+        totalOrders: 0
+    });
+    return { id: custRef.id, fullName: customer.fullName };
+};
 
 /**
  * Handles the complete checkout process for a new order.
- * 
+ *
  * @param {Object} params
  * @param {Object} params.currentOrder The order object from POS state
  * @param {Object} params.paymentData Payment details (method, tendered, etc.)
@@ -17,20 +34,10 @@ import { generateOrderNumber, createOrderObject, generateBatchIds } from "./orde
  * @returns {Promise<Object>} The completed order data
  */
 export const saveCheckout = async ({ currentOrder, paymentData, user, activeShiftId, currentTotal }) => {
-    let finalCustomer = currentOrder.customer;
+    const { discount, subtotal } = paymentData;
 
-    // 1. Create New Customer if needed
-    if (finalCustomer && finalCustomer.isNew) {
-        const custRef = await addDoc(collection(db, 'customers'), {
-            fullName: finalCustomer.fullName,
-            createdAt: serverTimestamp(),
-            createdBy: user?.email || 'system_checkout',
-            lifetimeValue: 0,
-            outstandingBalance: 0,
-            totalOrders: 0
-        });
-        finalCustomer = { id: custRef.id, fullName: finalCustomer.fullName };
-    }
+    // 1. Resolve customer (create if new)
+    const finalCustomer = await resolveCustomer(currentOrder.customer, user?.email);
 
     const isUnpaid = paymentData.paymentMethod === 'Charge' || paymentData.paymentMethod === 'Pay Later';
     const orderNum = await generateOrderNumber();
@@ -49,7 +56,9 @@ export const saveCheckout = async ({ currentOrder, paymentData, user, activeShif
             paymentData.amountTendered,
             paymentData.change,
             finalCustomer,
-            user
+            user,
+            discount,
+            subtotal
         )
     };
 
@@ -74,6 +83,7 @@ export const saveCheckout = async ({ currentOrder, paymentData, user, activeShif
         batch.set(txRef, {
             displayId: txIds[index],
             item: item.serviceName || item.name,
+            note: item.note || '',
             serviceId: item.serviceId || null,
             parentServiceId: item.parentServiceId || null,
             variantGroup: item.variantGroup || null,
@@ -94,21 +104,19 @@ export const saveCheckout = async ({ currentOrder, paymentData, user, activeShif
             paymentDetails: paymentData.paymentDetails || {},
             invoiceStatus: isUnpaid ? 'UNPAID' : 'PAID',
             isDeleted: false,
-            consumables: item.consumables || [] // Snapshot for reversion
+            consumables: item.consumables || []
         });
 
-        // 6. Inventory Deduction (Recursive)
+        // 6. Inventory Deduction
         const deductStock = (svcId, q) => {
             if (!svcId) return;
-            const ref = doc(db, 'services', svcId);
-            batch.update(ref, { stockCount: increment(-q) });
+            batch.update(doc(db, 'services', svcId), { stockCount: increment(-q) });
         };
 
         if (item.trackStock && item.serviceId) {
             deductStock(item.serviceId, Number(item.quantity));
         }
 
-        // Process Consumables
         if (item.consumables && item.consumables.length > 0) {
             item.consumables.forEach(c => {
                 deductStock(c.itemId, Number(c.qty) * Number(item.quantity));
@@ -123,30 +131,18 @@ export const saveCheckout = async ({ currentOrder, paymentData, user, activeShif
 
 /**
  * Updates an existing order (re-checkout/edit).
- * 
+ *
  * @param {Object} params
  * @param {Object} params.order The current tab/order object being edited
  * @param {Object} params.paymentData New payment details
  * @param {Object} params.user Current user
  * @param {string} params.activeShiftId
  * @param {number} params.currentTotal
- * @returns {Promise<void>}
+ * @returns {Promise<Object>}
  */
 export const updateCheckout = async ({ order, paymentData, user, activeShiftId, currentTotal }) => {
-    let finalCustomer = order.customer;
-
-    // 1. Create New Customer if needed (same as saveCheckout)
-    if (finalCustomer && finalCustomer.isNew) {
-        const custRef = await addDoc(collection(db, 'customers'), {
-            fullName: finalCustomer.fullName,
-            createdAt: serverTimestamp(),
-            createdBy: user?.email || 'system_checkout',
-            lifetimeValue: 0,
-            outstandingBalance: 0,
-            totalOrders: 0
-        });
-        finalCustomer = { id: custRef.id, fullName: finalCustomer.fullName };
-    }
+    // 1. Resolve customer (create if new)
+    const finalCustomer = await resolveCustomer(order.customer, user?.email);
 
     const batch = writeBatch(db);
     const finalItems = [];
@@ -163,10 +159,10 @@ export const updateCheckout = async ({ order, paymentData, user, activeShiftId, 
     for (const item of order.items) {
         const itemData = {
             item: item.name || item.serviceName,
+            note: item.note || '',
             price: Number(item.price),
             quantity: Number(item.quantity),
             total: Number(item.price) * Number(item.quantity),
-            notes: item.notes || '',
         };
         if (item.editReason) itemData.editReason = item.editReason;
 
@@ -180,7 +176,6 @@ export const updateCheckout = async ({ order, paymentData, user, activeShiftId, 
         } else {
             const ref = doc(collection(db, 'transactions'));
             const displayId = newIds[newIdIndex++] || `TEMP-${Date.now()}`;
-
             batch.set(ref, {
                 ...itemData,
                 displayId,
@@ -197,17 +192,13 @@ export const updateCheckout = async ({ order, paymentData, user, activeShiftId, 
                 isDeleted: false
             });
         }
-        finalItems.push({
-            ...itemData,
-            name: itemData.item
-        });
+        finalItems.push({ ...itemData, name: itemData.item });
     }
 
     // 4. Process Deletions
     if (order.deletedItems) {
         order.deletedItems.forEach(delItem => {
-            const ref = doc(db, 'transactions', delItem.transactionId);
-            batch.update(ref, {
+            batch.update(doc(db, 'transactions', delItem.transactionId), {
                 isDeleted: true,
                 deletedBy: user.email,
                 deleteReason: delItem.deleteReason,
@@ -217,11 +208,11 @@ export const updateCheckout = async ({ order, paymentData, user, activeShiftId, 
     }
 
     // 5. Update Order Doc
-    const orderRef = doc(db, 'orders', order.originalId);
     const updateObj = {
         items: finalItems,
-        total: currentTotal,
-        subtotal: currentTotal,
+        subtotal: paymentData.subtotal || currentTotal,
+        discount: paymentData.discount || { type: 'none', value: 0, amount: 0 },
+        total: paymentData.total || currentTotal,
         paymentMethod: paymentData.paymentMethod,
         paymentDetails: paymentData.paymentDetails || {},
         amountTendered: Number(paymentData.amountTendered),
@@ -234,7 +225,7 @@ export const updateCheckout = async ({ order, paymentData, user, activeShiftId, 
         updatedAt: serverTimestamp()
     };
 
-    batch.update(orderRef, updateObj);
+    batch.update(doc(db, 'orders', order.originalId), updateObj);
     await batch.commit();
 
     return { ...updateObj, id: order.originalId, orderNumber: order.orderNumber };

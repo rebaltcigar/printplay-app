@@ -578,7 +578,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     servicesTotal,
     expensesTotal,
     totalCash: cashSalesTotal,
-    totalGcash: gcashSalesTotal,
+    totalDigital: gcashSalesTotal,
     totalAr: arSalesTotal,
     systemTotal,
     salesBreakdown,
@@ -677,7 +677,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
               { label: 'System Total', value: fmtPeso(systemTotal || 0), highlight: true, color: 'primary.main' },
               { label: 'Services', value: fmtPeso(servicesTotal || 0), color: 'success.main' },
               { label: 'Cash', value: fmtPeso(cashSalesTotal || 0), color: 'success.main' },
-              { label: 'GCash', value: fmtPeso(gcashSalesTotal || 0), color: 'info.main' },
+              { label: 'Digital', value: fmtPeso(gcashSalesTotal || 0), color: 'info.main' },
               { label: 'A/R', value: fmtPeso(arSalesTotal || 0), color: 'warning.main' },
               { label: 'Expenses', value: fmtPeso(expensesTotal || 0), color: 'error.main' },
               { label: 'Expected Cash', value: fmtPeso(expectedCash || 0), color: 'text.primary' },
@@ -746,7 +746,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
                 <Typography variant="body2" fontWeight={600}>{fmtPeso(cashSalesTotal)}</Typography>
               </Box>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
-                <Typography variant="body2">GCash Sales</Typography>
+                <Typography variant="body2">Digital Sales</Typography>
                 <Typography variant="body2" fontWeight={600}>{fmtPeso(gcashSalesTotal)}</Typography>
               </Box>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
