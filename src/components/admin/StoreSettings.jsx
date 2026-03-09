@@ -1,8 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import {
     TextField, Box, Typography, Switch, FormControlLabel,
-    InputAdornment, Stack, Paper, Alert, Button, CircularProgress, LinearProgress, MenuItem
+    InputAdornment, Stack, Paper, Alert, Button, CircularProgress, LinearProgress, MenuItem,
+    Autocomplete, IconButton, Tooltip
 } from '@mui/material';
+import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import VisibilityIcon from '@mui/icons-material/Visibility';
 import FingerprintIcon from '@mui/icons-material/Fingerprint';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import {
@@ -13,6 +17,14 @@ import { registerFingerprint } from '../../services/biometricService';
 import { generateDisplayId, generateBatchIds } from '../../services/orderService';
 import { convertLogoUrl } from '../../services/brandingService';
 import PageHeader from '../common/PageHeader';
+import ValidatedInput from '../common/ValidatedInput';
+
+const PH_BANKS = [
+    'BDO Unibank', 'BPI', 'Metrobank', 'UnionBank', 'Landbank',
+    'Security Bank', 'China Bank', 'RCBC', 'PNB', 'EastWest Bank',
+    'Philtrust Bank', 'PBCOM', 'Bank of Commerce', 'Maybank',
+    'Bank of Makati', 'Citystate Savings Bank', 'PSBank', 'UCPB'
+].sort();
 
 export default function StoreSettings({ section, showSnackbar, user }) {
     const [loading, setLoading] = useState(false);
@@ -47,6 +59,14 @@ export default function StoreSettings({ section, showSnackbar, user }) {
         pcRentalMode: 'external', // 'external' = third-party timer | 'builtin' = Kunek v0.6
         pcRentalServiceId: '',    // Firestore serviceId of the catalog item used for PC billing
         invoiceDueDays: 7,        // Default days until an invoice is due
+        paymentMethods: {
+            cash: { enabled: true },
+            charge: { enabled: true },
+            card: { enabled: false },
+            gcash: { enabled: false, label: 'GCash', accountName: '', accountNumber: '', showDetails: false, qrUrl: '' },
+            maya: { enabled: false, label: 'Maya', accountName: '', accountNumber: '', showDetails: false, qrUrl: '' },
+            banks: [] // Array of { id, bankName, accountName, accountNumber, label, enabled, showDetails, qrUrl }
+        }
     });
 
     const [capturingHotkey, setCapturingHotkey] = useState(false);
@@ -245,7 +265,7 @@ export default function StoreSettings({ section, showSnackbar, user }) {
         <PageHeader title={title} subtitle={subtitle} />
     );
 
-    const handleFileChange = async (e) => {
+    const handleFileChange = async (e, type = 'logo', method = null, bankIndex = null) => {
         const file = e.target.files[0];
         if (!file) return;
 
@@ -256,18 +276,43 @@ export default function StoreSettings({ section, showSnackbar, user }) {
         }
 
         try {
-            setUploadingLogo(true);
-            const storageRef = ref(storage, `logos/store_logo_${Date.now()}`);
+            if (type === 'logo') setUploadingLogo(true);
+            else setLoading(true);
+
+            const storagePath = type === 'logo' ? `logos/store_logo_${Date.now()}` : `qrcodes/${method}_${Date.now()}`;
+            const storageRef = ref(storage, storagePath);
             await uploadBytes(storageRef, file);
             const downloadURL = await getDownloadURL(storageRef);
 
-            setSettings(prev => ({ ...prev, logoUrl: downloadURL }));
-            showSnackbar('Logo uploaded successfully! Don\'t forget to save changes.', 'success');
+            if (type === 'logo') {
+                setSettings(prev => ({ ...prev, logoUrl: downloadURL }));
+                showSnackbar('Logo uploaded successfully! Don\'t forget to save changes.', 'success');
+            } else if (method === 'bank') {
+                const newBanks = [...(settings.paymentMethods.banks || [])];
+                if (newBanks[bankIndex]) {
+                    newBanks[bankIndex].qrUrl = downloadURL;
+                    setSettings(prev => ({
+                        ...prev,
+                        paymentMethods: { ...prev.paymentMethods, banks: newBanks }
+                    }));
+                }
+                showSnackbar(`Bank QR code uploaded successfully!`, 'success');
+            } else {
+                setSettings(prev => ({
+                    ...prev,
+                    paymentMethods: {
+                        ...prev.paymentMethods,
+                        [method]: { ...prev.paymentMethods[method], qrUrl: downloadURL }
+                    }
+                }));
+                showSnackbar(`${method.toUpperCase()} QR code uploaded successfully!`, 'success');
+            }
         } catch (error) {
-            console.error("Error uploading logo:", error);
-            showSnackbar('Failed to upload logo.', 'error');
+            console.error(`Error uploading ${type}:`, error);
+            showSnackbar(`Failed to upload ${type}.`, 'error');
         } finally {
             setUploadingLogo(false);
+            setLoading(false);
         }
     };
 
@@ -288,6 +333,303 @@ export default function StoreSettings({ section, showSnackbar, user }) {
             </Button>
         </Box>
     );
+
+    const handleConvertQRLink = (methodKey, index = null) => {
+        if (methodKey === 'bank') {
+            const newBanks = [...(settings.paymentMethods.banks || [])];
+            if (newBanks[index]) {
+                const converted = convertLogoUrl(newBanks[index].qrUrl);
+                if (converted !== newBanks[index].qrUrl) {
+                    newBanks[index].qrUrl = converted;
+                    setSettings({
+                        ...settings,
+                        paymentMethods: { ...settings.paymentMethods, banks: newBanks }
+                    });
+                    showSnackbar('Google Drive link converted!', 'info');
+                }
+            }
+        } else {
+            const method = settings.paymentMethods[methodKey];
+            const converted = convertLogoUrl(method.qrUrl);
+            if (converted !== method.qrUrl) {
+                setSettings({
+                    ...settings,
+                    paymentMethods: {
+                        ...settings.paymentMethods,
+                        [methodKey]: { ...method, qrUrl: converted }
+                    }
+                });
+                showSnackbar('Google Drive link converted!', 'info');
+            }
+        }
+    };
+
+    const renderPaymentMethod = (key, title, hasDetails = true) => {
+        const method = settings.paymentMethods?.[key] || {};
+        return (
+            <Paper variant="outlined" sx={{ p: 2, mb: 2, borderRadius: '12px' }}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center">
+                    <Box>
+                        <Stack direction="row" spacing={1} alignItems="center">
+                            <Typography variant="subtitle1" fontWeight="bold">{title}</Typography>
+                        </Stack>
+                        <Typography variant="caption" color="text.secondary">
+                            {method.enabled ? 'Currently active at checkout.' : 'Hidden from checkout.'}
+                        </Typography>
+                    </Box>
+                    <Switch
+                        checked={!!method.enabled}
+                        onChange={e => setSettings({
+                            ...settings,
+                            paymentMethods: {
+                                ...settings.paymentMethods,
+                                [key]: { ...method, enabled: e.target.checked }
+                            }
+                        })}
+                    />
+                </Stack>
+
+                {method.enabled && hasDetails && (
+                    <Stack spacing={2} sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+                        <TextField
+                            label="Display Label"
+                            fullWidth
+                            size="small"
+                            placeholder={title}
+                            value={method.label || ''}
+                            onChange={e => setSettings({
+                                ...settings,
+                                paymentMethods: {
+                                    ...settings.paymentMethods,
+                                    [key]: { ...method, label: e.target.value }
+                                }
+                            })}
+                        />
+                        <Stack direction="row" spacing={2}>
+                            <ValidatedInput
+                                label="Account Name"
+                                fullWidth
+                                size="small"
+                                required
+                                value={method.accountName || ''}
+                                onChange={val => setSettings({
+                                    ...settings,
+                                    paymentMethods: {
+                                        ...settings.paymentMethods,
+                                        [key]: { ...method, accountName: val }
+                                    }
+                                })}
+                            />
+                            <ValidatedInput
+                                label="Account Number / Mobile"
+                                fullWidth
+                                size="small"
+                                required
+                                rule={key === 'gcash' || key === 'maya' ? 'phone' : 'text'}
+                                value={method.accountNumber || ''}
+                                onChange={val => setSettings({
+                                    ...settings,
+                                    paymentMethods: {
+                                        ...settings.paymentMethods,
+                                        [key]: { ...method, accountNumber: val }
+                                    }
+                                })}
+                            />
+                        </Stack>
+
+                        <FormControlLabel
+                            control={
+                                <Switch
+                                    size="small"
+                                    checked={!!method.showDetails}
+                                    onChange={e => setSettings({
+                                        ...settings,
+                                        paymentMethods: {
+                                            ...settings.paymentMethods,
+                                            [key]: { ...method, showDetails: e.target.checked }
+                                        }
+                                    })}
+                                />
+                            }
+                            label={<Typography variant="body2">Show details on checkout modal</Typography>}
+                        />
+
+                        <Box>
+                            <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                                QR Code (Supports Google Drive Links)
+                            </Typography>
+                            <Stack direction="row" spacing={1} alignItems="flex-start">
+                                <TextField
+                                    label="QR Code URL / Link"
+                                    fullWidth
+                                    size="small"
+                                    value={method.qrUrl || ''}
+                                    onChange={e => setSettings({
+                                        ...settings,
+                                        paymentMethods: {
+                                            ...settings.paymentMethods,
+                                            [key]: { ...method, qrUrl: e.target.value }
+                                        }
+                                    })}
+                                    helperText="Paste a direct image link or a Google Drive sharing link."
+                                />
+                                <Button
+                                    variant="outlined"
+                                    size="small"
+                                    onClick={() => handleConvertQRLink(key)}
+                                    sx={{ height: 40, mt: 0 }}
+                                >
+                                    Preview
+                                </Button>
+                            </Stack>
+                            {method.qrUrl && (
+                                <Box mt={1.5} sx={{ textAlign: 'center', p: 1, border: '1px dashed', borderColor: 'divider', borderRadius: 1 }}>
+                                    <img
+                                        src={method.qrUrl}
+                                        alt="QR Preview"
+                                        style={{ maxHeight: 120, maxWidth: '100%', objectFit: 'contain' }}
+                                        onError={(e) => { e.target.style.display = 'none'; }}
+                                    />
+                                </Box>
+                            )}
+                        </Box>
+                    </Stack>
+                )}
+            </Paper>
+        );
+    };
+
+    const renderBanksSection = () => {
+        const banks = settings.paymentMethods?.banks || [];
+        const addBank = () => {
+            const newBanks = [...banks, {
+                id: Date.now().toString(),
+                bankName: '',
+                accountName: '',
+                accountNumber: '',
+                label: 'Bank Transfer',
+                enabled: true,
+                showDetails: true,
+                qrUrl: ''
+            }];
+            setSettings({ ...settings, paymentMethods: { ...settings.paymentMethods, banks: newBanks } });
+        };
+
+        const removeBank = (id) => {
+            const newBanks = banks.filter(b => b.id !== id);
+            setSettings({ ...settings, paymentMethods: { ...settings.paymentMethods, banks: newBanks } });
+        };
+
+        const updateBank = (index, updates) => {
+            const newBanks = [...banks];
+            newBanks[index] = { ...newBanks[index], ...updates };
+            setSettings({ ...settings, paymentMethods: { ...settings.paymentMethods, banks: newBanks } });
+        };
+
+        return (
+            <Box sx={{ mb: 4 }}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+                    <Typography variant="subtitle1" fontWeight="bold">Bank Accounts</Typography>
+                    <Button startIcon={<AddCircleOutlineIcon />} onClick={addBank}>Add Bank</Button>
+                </Stack>
+
+                {banks.length === 0 && (
+                    <Paper variant="outlined" sx={{ p: 3, textAlign: 'center', bgcolor: 'action.hover', borderStyle: 'dashed' }}>
+                        <Typography variant="body2" color="text.secondary">No bank accounts configured.</Typography>
+                    </Paper>
+                )}
+
+                {banks.map((bank, index) => (
+                    <Paper key={bank.id} variant="outlined" sx={{ p: 2, mb: 2, borderRadius: '12px' }}>
+                        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+                            <Box sx={{ flex: 1, mr: 2 }}>
+                                <Autocomplete
+                                    options={PH_BANKS}
+                                    size="small"
+                                    value={bank.bankName || null}
+                                    onChange={(e, val) => updateBank(index, { bankName: val })}
+                                    renderInput={(params) => <TextField {...params} label="Select Bank" required />}
+                                />
+                            </Box>
+                            <Stack direction="row" spacing={1}>
+                                <Switch
+                                    checked={!!bank.enabled}
+                                    onChange={e => updateBank(index, { enabled: e.target.checked })}
+                                />
+                                <IconButton color="error" size="small" onClick={() => removeBank(bank.id)}>
+                                    <DeleteOutlineIcon />
+                                </IconButton>
+                            </Stack>
+                        </Stack>
+
+                        {bank.enabled && (
+                            <Stack spacing={2} sx={{ pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+                                <Stack direction="row" spacing={2}>
+                                    <ValidatedInput
+                                        label="Account Name"
+                                        fullWidth
+                                        size="small"
+                                        required
+                                        value={bank.accountName || ''}
+                                        onChange={val => updateBank(index, { accountName: val })}
+                                    />
+                                    <ValidatedInput
+                                        label="Account Number"
+                                        fullWidth
+                                        size="small"
+                                        required
+                                        value={bank.accountNumber || ''}
+                                        onChange={val => updateBank(index, { accountNumber: val })}
+                                    />
+                                </Stack>
+                                <FormControlLabel
+                                    control={
+                                        <Switch
+                                            size="small"
+                                            checked={!!bank.showDetails}
+                                            onChange={e => updateBank(index, { showDetails: e.target.checked })}
+                                        />
+                                    }
+                                    label={<Typography variant="body2">Show details on checkout modal</Typography>}
+                                />
+                                <Box>
+                                    <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                                        QR Code (Supports Google Drive Links)
+                                    </Typography>
+                                    <Stack direction="row" spacing={1}>
+                                        <TextField
+                                            label="QR Code URL"
+                                            fullWidth
+                                            size="small"
+                                            value={bank.qrUrl || ''}
+                                            onChange={e => updateBank(index, { qrUrl: e.target.value })}
+                                        />
+                                        <Button
+                                            variant="outlined"
+                                            size="small"
+                                            onClick={() => handleConvertQRLink('bank', index)}
+                                        >
+                                            Preview
+                                        </Button>
+                                    </Stack>
+                                    {bank.qrUrl && (
+                                        <Box mt={1.5} sx={{ textAlign: 'center', p: 1, border: '1px dashed', borderColor: 'divider', borderRadius: 1 }}>
+                                            <img
+                                                src={bank.qrUrl}
+                                                alt="QR Preview"
+                                                style={{ maxHeight: 120, maxWidth: '100%', objectFit: 'contain' }}
+                                                onError={(e) => { e.target.style.display = 'none'; }}
+                                            />
+                                        </Box>
+                                    )}
+                                </Box>
+                            </Stack>
+                        )}
+                    </Paper>
+                ))}
+            </Box>
+        );
+    };
 
     return (
         <Box sx={{ maxWidth: 800, p: 2, position: 'relative' }}>
@@ -685,6 +1027,55 @@ export default function StoreSettings({ section, showSnackbar, user }) {
                             Register Fingerprint
                         </Button>
                     </Paper>
+                </Stack>
+            )}
+            {section === 'payments' && (
+                <Stack spacing={3}>
+                    {renderHeader("Payment Methods", "Configure which payment options are available for customers at checkout.")}
+
+                    <Typography variant="subtitle2" color="primary" sx={{ mb: -1 }}>Legacy / Basic Methods</Typography>
+                    <Stack direction="row" spacing={2}>
+                        <Paper variant="outlined" sx={{ p: 2, flex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Box>
+                                <Typography variant="subtitle2">Cash (Always On)</Typography>
+                                <Typography variant="caption" color="text.secondary">Default payment method</Typography>
+                            </Box>
+                            <Switch checked disabled />
+                        </Paper>
+                        <Paper variant="outlined" sx={{ p: 2, flex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Box>
+                                <Typography variant="subtitle2">Charge to Account</Typography>
+                                <Typography variant="caption" color="text.secondary">Invoicing / Credit</Typography>
+                            </Box>
+                            <Switch
+                                checked={!!settings.paymentMethods?.charge?.enabled}
+                                onChange={e => setSettings({
+                                    ...settings,
+                                    paymentMethods: {
+                                        ...settings.paymentMethods,
+                                        charge: { ...settings.paymentMethods?.charge, enabled: e.target.checked }
+                                    }
+                                })}
+                            />
+                        </Paper>
+                    </Stack>
+
+                    <Typography variant="subtitle2" color="primary" sx={{ mb: -1, mt: 2 }}>Digital / Modern Methods</Typography>
+                    {renderPaymentMethod('gcash', 'GCash')}
+                    {renderPaymentMethod('maya', 'Maya')}
+
+                    {renderBanksSection()}
+
+                    <Typography variant="subtitle2" color="primary" sx={{ mb: -1, mt: 2 }}>Integrated Methods</Typography>
+                    <Paper variant="outlined" sx={{ p: 2, borderRadius: '12px', bgcolor: 'action.hover', borderStyle: 'dashed', textAlign: 'center' }}>
+                        <Typography variant="subtitle2" fontWeight="bold">Card Payments</Typography>
+                        <Typography variant="caption" color="primary" sx={{ fontWeight: 'bold' }}>COMING SOON</Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                            We are working on bringing direct card integrations (Maya Checkout / Stripe) to Kunek.
+                        </Typography>
+                    </Paper>
+
+                    {renderSaveButton()}
                 </Stack>
             )}
         </Box>

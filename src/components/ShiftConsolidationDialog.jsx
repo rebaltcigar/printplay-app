@@ -53,7 +53,7 @@ export default function ShiftConsolidationDialog({
     const {
         expectedCash,
         expensesTotal,
-        totalGcash: gcashSalesTotal,
+        totalDigital: digitalSalesTotal,
         totalAr: arTotal,
         totalCash,
         loggedPcNonCash,
@@ -67,38 +67,37 @@ export default function ShiftConsolidationDialog({
     const cashSalesTotal = totalCash - pcRentalCash;
 
 
-    // --- CASE 2: GCash ---
-    const gcashTransactions = useMemo(() =>
-        transactions.filter(t => t.paymentMethod === 'GCash' && t.item !== 'Expenses'),
+    // --- CASE 2: Digital (GCash, Maya, Bank Transfer, Card) ---
+    const DIGITAL_METHODS = ['GCash', 'Maya', 'Bank Transfer', 'Card'];
+    const digitalTransactions = useMemo(() =>
+        transactions.filter(t => DIGITAL_METHODS.includes(t.paymentMethod) && t.item !== 'Expenses'),
         [transactions]
     );
 
-    // We maintain local state for gcash statuses before saving
-    const [gcashStatuses, setGcashStatuses] = useState({});
+    // Local state for per-transaction reconciliation statuses
+    const [digitalStatuses, setDigitalStatuses] = useState({});
 
     useEffect(() => {
-        if (open && gcashTransactions) {
+        if (open && digitalTransactions) {
             const initial = {};
-            gcashTransactions.forEach(t => {
+            digitalTransactions.forEach(t => {
                 initial[t.id] = t.reconciliationStatus || 'Verified';
             });
-            setGcashStatuses(initial);
+            setDigitalStatuses(initial);
         }
-    }, [open, gcashTransactions]);
+    }, [open, digitalTransactions]);
 
-    const handleGcashStatusChange = (id, status) => {
-        setGcashStatuses(prev => ({ ...prev, [id]: status }));
+    const handleDigitalStatusChange = (id, status) => {
+        setDigitalStatuses(prev => ({ ...prev, [id]: status }));
     };
 
-    // gcashSalesTotal is now derived from computeShiftFinancials (see above)
-
-    const verifiedGcashTotal = useMemo(() => {
-        return gcashTransactions.reduce((acc, t) => {
-            const status = gcashStatuses[t.id] || 'Verified';
+    const verifiedDigitalTotal = useMemo(() => {
+        return digitalTransactions.reduce((acc, t) => {
+            const status = digitalStatuses[t.id] || 'Verified';
             if (status === 'Verified') return acc + (t.total || 0);
             return acc;
         }, 0);
-    }, [gcashTransactions, gcashStatuses]);
+    }, [digitalTransactions, digitalStatuses]);
 
 
     // --- CASE 3: Accounts Receivable ---
@@ -122,10 +121,9 @@ export default function ShiftConsolidationDialog({
                 lastConsolidatedAt: new Date()
             });
 
-            // 2. Update GCash Transaction Statuses
-            Object.entries(gcashStatuses).forEach(([txId, status]) => {
+            // 2. Update Digital Transaction Statuses
+            Object.entries(digitalStatuses).forEach(([txId, status]) => {
                 const txRef = doc(db, 'transactions', txId);
-                // Only update if changed (optimization, but batch limits ok for typical shift)
                 batch.update(txRef, { reconciliationStatus: status });
             });
 
@@ -150,7 +148,7 @@ export default function ShiftConsolidationDialog({
                     sx={{ borderBottom: 1, borderColor: 'divider' }}
                 >
                     <Tab icon={<PaymentsIcon />} label="Cash" />
-                    <Tab icon={<PhoneAndroidIcon />} label={`GCash (${gcashTransactions.length})`} />
+                    <Tab icon={<PhoneAndroidIcon />} label={`Digital (${digitalTransactions.length})`} />
                     <Tab icon={<ReceiptIcon />} label={`Receivables (${arTransactions.length})`} />
                 </Tabs>
 
@@ -228,19 +226,20 @@ export default function ShiftConsolidationDialog({
                     </Box>
                 </TabPanel>
 
-                {/* --- GCASH TAB --- */}
+                {/* --- DIGITAL TAB --- */}
                 <TabPanel value={tab} index={1}>
                     <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <Typography variant="subtitle1">
-                            Total Expected: {fmtCurrency(gcashSalesTotal)}
+                            Total Expected: {fmtCurrency(digitalSalesTotal)}
                         </Typography>
-                        <ChipLabel label={`Verified: ${fmtCurrency(verifiedGcashTotal)}`} color="primary" />
+                        <ChipLabel label={`Verified: ${fmtCurrency(verifiedDigitalTotal)}`} color="primary" />
                     </Box>
 
                     <TableContainer sx={{ maxHeight: 400 }}>
                         <Table size="small" stickyHeader>
                             <TableHead>
                                 <TableRow>
+                                    <TableCell>Method</TableCell>
                                     <TableCell>Ref No.</TableCell>
                                     <TableCell>Amount</TableCell>
                                     <TableCell>Customer</TableCell>
@@ -248,11 +247,17 @@ export default function ShiftConsolidationDialog({
                                 </TableRow>
                             </TableHead>
                             <TableBody>
-                                {gcashTransactions.length === 0 && (
-                                    <TableRow><TableCell colSpan={4} align="center">No GCash transactions</TableCell></TableRow>
+                                {digitalTransactions.length === 0 && (
+                                    <TableRow><TableCell colSpan={5} align="center">No digital transactions</TableCell></TableRow>
                                 )}
-                                {gcashTransactions.map((tx, idx) => (
+                                {digitalTransactions.map((tx, idx) => (
                                     <TableRow key={tx.id || idx}>
+                                        <TableCell>
+                                            <Typography variant="body2" fontWeight="bold">{tx.paymentMethod}</Typography>
+                                            {tx.paymentDetails?.bankName && (
+                                                <Typography variant="caption" color="text.secondary">{tx.paymentDetails.bankName}</Typography>
+                                            )}
+                                        </TableCell>
                                         <TableCell>
                                             <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
                                                 {tx.paymentDetails?.refNumber || '—'}
@@ -267,8 +272,8 @@ export default function ShiftConsolidationDialog({
                                             <Select
                                                 size="small"
                                                 variant="standard"
-                                                value={gcashStatuses[tx.id] || 'Verified'}
-                                                onChange={(e) => handleGcashStatusChange(tx.id, e.target.value)}
+                                                value={digitalStatuses[tx.id] || 'Verified'}
+                                                onChange={(e) => handleDigitalStatusChange(tx.id, e.target.value)}
                                                 sx={{ fontSize: '0.875rem' }}
                                             >
                                                 <MenuItem value="Verified">Verified</MenuItem>

@@ -114,18 +114,20 @@ export const generateOrderNumber = () => generateDisplayId('orders', 'ORD');
  * Creates a normalized order object for Firestore 'orders' collection.
  */
 export const createOrderObject = (
-    items, total, paymentMethod, paymentDetails, amountTendered, change, customer, user
+    items, total, paymentMethod, paymentDetails, amountTendered, change, customer, user, discount = null, subtotal = null
 ) => {
     return {
         items: items.map(i => ({
             itemId: i.id,
             name: i.serviceName || i.name,
+            note: i.note || '',
             price: i.price,
             costPrice: i.costPrice || 0,
             quantity: i.quantity || 1,
             subtotal: (i.price || 0) * (i.quantity || 1),
         })),
-        subtotal: total,
+        subtotal: subtotal || total,
+        discount: discount || { type: 'none', value: 0, amount: 0 },
         total: total,
         paymentMethod: paymentMethod,
         paymentDetails: paymentDetails || {},

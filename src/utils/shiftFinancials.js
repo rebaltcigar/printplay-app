@@ -5,14 +5,21 @@
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-// Legacy string match — used as fallback when pcRentalServiceId is not configured.
-// v0.6: this constant will be retired once all callers pass pcRentalServiceId.
 const PC_RENTAL_ITEM_FALLBACK = 'pc rental'; // lowercase for case-insensitive compare
 const EXPENSE_ITEMS = new Set(['Expenses', 'New Debt']);
 
+// All non-cash, non-charge payment methods are "digital".
+const DIGITAL_METHODS = new Set(['GCash', 'Maya', 'Bank Transfer', 'Card']);
+
+/**
+ * Returns true if the payment method is a digital (non-cash, non-charge) method.
+ * Used to determine what does NOT go into the physical cash drawer.
+ * @param {string} method
+ * @returns {boolean}
+ */
+export const isDigitalPayment = (method) => DIGITAL_METHODS.has(method);
+
 // Determine if a transaction is a PC Rental billing transaction.
-// Uses OR logic so both new transactions (serviceId) and old ones (item name) always match.
-// No data migration needed — old transactions identified by name, new ones by serviceId.
 const isPcRentalTx = (tx, pcRentalServiceId) =>
     (pcRentalServiceId ? tx.serviceId === pcRentalServiceId : false) ||
     String(tx.item ?? '').trim().toLowerCase() === PC_RENTAL_ITEM_FALLBACK;
@@ -23,7 +30,6 @@ const isPcRentalTx = (tx, pcRentalServiceId) =>
 
 /**
  * Sum a denominations object (e.g. { bill_1000: 2, coin_5: 3 } → 2005).
- * Accepts keys like `bill_1000`, `coin_5`, `b_100`, `c_0.25`.
  * @param {Object} denoms
  * @returns {number}
  */
@@ -47,9 +53,7 @@ export const sumDenominations = (denoms = {}) => {
 /**
  * Split a transaction list into PC Rental transactions and everything else.
  * @param {Array}       transactions
- * @param {string|null} pcRentalServiceId - Firestore serviceId of the PC Rental catalog item.
- *   When provided, matching is by serviceId (clean). When null, falls back to item name
- *   string match for backward compatibility with legacy transactions.
+ * @param {string|null} pcRentalServiceId
  * @returns {{ pcRentalTxs: Array, otherTxs: Array }}
  */
 export const splitPcRental = (transactions = [], pcRentalServiceId = null) => {
@@ -63,20 +67,20 @@ export const splitPcRental = (transactions = [], pcRentalServiceId = null) => {
 };
 
 /**
- * Tally cash/gcash/ar totals from a list of sales transactions
- * (do NOT pass expense transactions here).
- * @param {Array} saleTxs - non-expense, non-PC-rental transactions
- * @returns {{ cash: number, gcash: number, ar: number }}
+ * Tally cash/digital/ar totals from a list of sales transactions.
+ * (Do NOT pass expense transactions here.)
+ * @param {Array} saleTxs
+ * @returns {{ cash: number, digital: number, ar: number }}
  */
 export const tallyPaymentMethods = (saleTxs = []) => {
-    let cash = 0, gcash = 0, ar = 0;
+    let cash = 0, digital = 0, ar = 0;
     for (const tx of saleTxs) {
         const amt = Number(tx.total || 0);
-        if (tx.paymentMethod === 'GCash') gcash += amt;
+        if (isDigitalPayment(tx.paymentMethod)) digital += amt;
         else if (tx.paymentMethod === 'Charge') ar += amt;
         else cash += amt;
     }
-    return { cash, gcash, ar };
+    return { cash, digital, ar };
 };
 
 // ---------------------------------------------------------------------------
@@ -85,31 +89,24 @@ export const tallyPaymentMethods = (saleTxs = []) => {
 
 /**
  * Compute the full financial summary for a shift from raw transactions.
- * This is used at shift-end and in any "live" transaction list context.
  *
- * Handles the hybrid PC Rental model:
- *   - PC Rental total comes from a manual user input (pcRentalTotal)
- *   - Logged PC Rental transactions may capture non-cash methods (GCash/Charge)
- *   - The cash portion of PC Rental = pcRentalTotal − logged non-cash PC Rental
- *
- * @param {Array}       transactions     - All shift transactions (raw, unfiltered)
- * @param {number}      pcRentalTotal    - Manual PC Rental total (from timer system)
- * @param {string|null} pcRentalServiceId - Catalog serviceId for PC Rental billing item.
- *   Pass from settings.pcRentalServiceId. Null = fallback to item name string match.
+ * @param {Array}       transactions      All shift transactions (raw, unfiltered)
+ * @param {number}      pcRentalTotal     Manual PC Rental total (from timer system)
+ * @param {string|null} pcRentalServiceId Catalog serviceId for PC Rental item.
  * @returns {{
- *   servicesTotal:    number,   // non-PC, non-expense sales
- *   expensesTotal:    number,   // Expenses + New Debt
- *   salesBreakdown:   [string, number][], // per-item sorted array
- *   expensesBreakdown:[string, number][], // per-expense-type sorted array
- *   totalCash:        number,   // cash sales + implied PC cash
- *   totalGcash:       number,
+ *   servicesTotal:    number,
+ *   expensesTotal:    number,
+ *   salesBreakdown:   [string, number][],
+ *   expensesBreakdown:[string, number][],
+ *   totalCash:        number,
+ *   totalDigital:     number,
  *   totalAr:          number,
- *   systemTotal:      number,   // servicesTotal + pcRentalTotal - expensesTotal
- *   expectedCash:     number,   // totalCash - expensesTotal
- *   loggedPcNonCash:  number,   // GCash + Charge logged as PC Rental
- *   arPaymentsTotal:  number,   // Total AR Payments collected this shift (NOT counted as sales)
- *   arCashTotal:      number,   // Total AR Payments collected in Cash
- *   arGcashTotal:     number,   // Total AR Payments collected in GCash
+ *   systemTotal:      number,
+ *   expectedCash:     number,
+ *   loggedPcNonCash:  number,
+ *   arPaymentsTotal:  number,
+ *   arCashTotal:      number,
+ *   arDigitalTotal:   number,
  * }}
  */
 export const computeShiftFinancials = (transactions = [], pcRentalTotal = 0, pcRentalServiceId = null) => {
@@ -117,13 +114,13 @@ export const computeShiftFinancials = (transactions = [], pcRentalTotal = 0, pcR
     const { pcRentalTxs, otherTxs } = splitPcRental(transactions, pcRentalServiceId);
 
     // --- PC Rental logged payment methods ---
-    let pcGcash = 0, pcAr = 0;
+    let pcDigital = 0, pcAr = 0;
     for (const tx of pcRentalTxs) {
         const amt = Number(tx.total || 0);
-        if (tx.paymentMethod === 'GCash') pcGcash += amt;
+        if (isDigitalPayment(tx.paymentMethod)) pcDigital += amt;
         else if (tx.paymentMethod === 'Charge') pcAr += amt;
     }
-    const loggedPcNonCash = pcGcash + pcAr;
+    const loggedPcNonCash = pcDigital + pcAr;
     const impliedPcCash = Math.max(0, pc - loggedPcNonCash);
 
     // --- Regular sales and expenses ---
@@ -131,8 +128,8 @@ export const computeShiftFinancials = (transactions = [], pcRentalTotal = 0, pcR
     let expensesTotal = 0;
     let arPaymentsTotal = 0;
     let arCashTotal = 0;
-    let arGcashTotal = 0;
-    let regularCash = 0, regularGcash = 0, regularAr = 0;
+    let arDigitalTotal = 0;
+    let regularCash = 0, regularDigital = 0, regularAr = 0;
     const salesMap = new Map();
     const expensesMap = new Map();
 
@@ -146,11 +143,11 @@ export const computeShiftFinancials = (transactions = [], pcRentalTotal = 0, pcR
             expensesMap.set(key, (expensesMap.get(key) || 0) + amt);
         } else if (tx.item === 'AR Payment') {
             arPaymentsTotal += amt;
-            if (tx.paymentMethod === 'GCash') {
-                regularGcash += amt;
-                arGcashTotal += amt;
+            if (isDigitalPayment(tx.paymentMethod)) {
+                regularDigital += amt;
+                arDigitalTotal += amt;
             } else if (tx.paymentMethod === 'Charge') {
-                regularAr += amt; // Should rarely happen for AR Payment
+                regularAr += amt;
             } else {
                 regularCash += amt;
                 arCashTotal += amt;
@@ -158,14 +155,14 @@ export const computeShiftFinancials = (transactions = [], pcRentalTotal = 0, pcR
         } else {
             servicesTotal += amt;
             salesMap.set(tx.item || '—', (salesMap.get(tx.item || '—') || 0) + amt);
-            if (tx.paymentMethod === 'GCash') regularGcash += amt;
+            if (isDigitalPayment(tx.paymentMethod)) regularDigital += amt;
             else if (tx.paymentMethod === 'Charge') regularAr += amt;
             else regularCash += amt;
         }
     }
 
     const totalCash = regularCash + impliedPcCash;
-    const totalGcash = regularGcash + pcGcash;
+    const totalDigital = regularDigital + pcDigital;
     const totalAr = regularAr + pcAr;
     const systemTotal = servicesTotal + pc - expensesTotal;
     const expectedCash = totalCash - expensesTotal;
@@ -179,14 +176,14 @@ export const computeShiftFinancials = (transactions = [], pcRentalTotal = 0, pcR
         salesBreakdown,
         expensesBreakdown,
         totalCash,
-        totalGcash,
+        totalDigital,
         totalAr,
         systemTotal,
         expectedCash,
         loggedPcNonCash,
         arPaymentsTotal,
         arCashTotal: Number(arCashTotal.toFixed(2)),
-        arGcashTotal: Number(arGcashTotal.toFixed(2)),
+        arDigitalTotal: Number(arDigitalTotal.toFixed(2)),
     };
 };
 
@@ -201,15 +198,13 @@ export const computeShiftFinancials = (transactions = [], pcRentalTotal = 0, pcR
  *   1. shift.breakdown.cash (set at end-of-shift; most accurate)
  *   2. aggregated cashSales + (pcRentalTotal - pcNonCashSales) fallback
  *
- * @param {Object} shift          - Firestore shift doc
- * @param {Object} [txAgg]        - Aggregated tx data { cashSales, expenses, pcNonCashSales }
+ * @param {Object} shift
+ * @param {Object} [txAgg]
  * @returns {number} expectedCash
  */
 export const computeExpectedCash = (shift, txAgg = {}) => {
     const pc = Number(shift?.pcRentalTotal || 0);
     const expenses = Number(txAgg?.expenses || shift?.expensesTotal || 0);
-    // Deduct non-cash (GCash/Charge) PC Rental transactions from the manual total
-    // so those amounts are NOT counted as cash in the drawer.
     const pcNonCash = Number(txAgg?.pcNonCashSales || 0);
     const pcCash = Math.max(0, pc - pcNonCash);
 
@@ -227,28 +222,24 @@ export const computeExpectedCash = (shift, txAgg = {}) => {
  * Aggregate a shift's transactions into totals by service, payment method,
  * and expense category. Used for the Shifts admin table and report views.
  *
- * This intentionally does NOT include PC Rental in the base sales total
- * because PC Rental is entered manually at end-of-shift.
- *
- * @param {Array}       txList            - Shift transactions (filtered, non-deleted)
- * @param {Array}       serviceMeta       - [{ name: string, category: string }] from Firestore
- * @param {string|null} pcRentalServiceId - Catalog serviceId for PC Rental item (null = string fallback)
+ * @param {Array}       txList
+ * @param {Array}       serviceMeta       [{ name: string, category: string }]
+ * @param {string|null} pcRentalServiceId
  * @returns {{
- *   serviceTotals: Object,
- *   sales:         number,
- *   expenses:      number,
- *   systemTotal:   number,
- *   cashSales:     number,
- *   gcashSales:    number,
- *   arSales:       number,
- *   pcNonCashSales: number,  // GCash + Charge logged as PC Rental (NOT cash in drawer)
- *   arPayments:    number,  // Collections of old receivables (NOT sales)
+ *   serviceTotals:  Object,
+ *   sales:          number,
+ *   expenses:       number,
+ *   systemTotal:    number,
+ *   cashSales:      number,
+ *   digitalSales:   number,
+ *   arSales:        number,
+ *   pcNonCashSales: number,
+ *   arPayments:     number,
  * }}
  */
 export const aggregateShiftTransactions = (txList = [], serviceMeta = [], pcRentalServiceId = null) => {
     const normalize = (s) => String(s ?? '').trim().toLowerCase();
 
-    // Build serviceName → category lookup from meta
     const nameToCategory = {};
     for (const s of serviceMeta) {
         const n = normalize(s.name);
@@ -257,8 +248,7 @@ export const aggregateShiftTransactions = (txList = [], serviceMeta = [], pcRent
 
     const serviceTotals = {};
     let sales = 0, expenses = 0;
-    let cashSales = 0, gcashSales = 0, arSales = 0;
-    // Track non-cash PC Rental so expectedCash is not inflated
+    let cashSales = 0, digitalSales = 0, arSales = 0;
     let pcNonCashSales = 0;
     let arPayments = 0;
 
@@ -270,9 +260,6 @@ export const aggregateShiftTransactions = (txList = [], serviceMeta = [], pcRent
 
         const isPcRental = isPcRentalTx(tx, pcRentalServiceId);
 
-        // Determine category (sale = revenue, expense = cost)
-        // New values: 'Sale' / 'Expense'
-        // Legacy fallback: 'debit' (old sale) / 'credit' (old expense)
         let cat = nameToCategory[itemName];
         if (!cat) {
             cat = itemName === 'expenses' ? 'expense' : 'sale';
@@ -304,14 +291,14 @@ export const aggregateShiftTransactions = (txList = [], serviceMeta = [], pcRent
                 arPayments += amt;
             }
 
-            if (tx.paymentMethod === 'GCash') {
-                gcashSales += amt;
-                if (isPcRental) pcNonCashSales += amt;   // GCash PC Rental → not in drawer
+            if (isDigitalPayment(tx.paymentMethod)) {
+                digitalSales += amt;
+                if (isPcRental) pcNonCashSales += amt;
             } else if (tx.paymentMethod === 'Charge') {
                 arSales += amt;
-                if (isPcRental) pcNonCashSales += amt;   // AR PC Rental → not in drawer
+                if (isPcRental) pcNonCashSales += amt;
             } else {
-                // Cash: only add if NOT PC Rental (PC Rental cash covered by manual total input)
+                // Cash: only add if NOT PC Rental
                 if (!isPcRental) {
                     cashSales += amt;
                 }
@@ -327,7 +314,7 @@ export const aggregateShiftTransactions = (txList = [], serviceMeta = [], pcRent
         expenses,
         systemTotal: sales - expenses,
         cashSales,
-        gcashSales,
+        digitalSales,
         arSales,
         pcNonCashSales,
         arPayments,
@@ -340,8 +327,8 @@ export const aggregateShiftTransactions = (txList = [], serviceMeta = [], pcRent
 
 /**
  * Compute cash difference: positive = overage, negative = shortage.
- * @param {number} cashOnHand   - Actual counted cash
- * @param {number} expectedCash - Expected cash (from computeExpectedCash)
+ * @param {number} cashOnHand
+ * @param {number} expectedCash
  * @returns {number}
  */
 export const computeDifference = (cashOnHand, expectedCash) =>

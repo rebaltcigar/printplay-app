@@ -24,6 +24,7 @@ export default function SettingsLayout({ children }) {
         { id: 'hardware', path: 'hardware', label: 'Hardware & Hotkeys', icon: <ComputerIcon /> },
         { id: 'expensetypes', path: 'expensetypes', label: 'Expense Types', icon: <ListAltIcon /> },
         { id: 'shifttemplates', path: 'shifttemplates', label: 'Shift Templates', icon: <AccessTimeIcon /> },
+        { id: 'payments', path: 'payments', label: 'Payment Methods', icon: <PointOfSaleIcon /> },
         { id: 'ids', path: 'ids', label: 'ID System', icon: <TagIcon /> },
         { id: 'datacore', path: 'datacore', label: 'Data Core', icon: <StorageIcon /> },
     ];
