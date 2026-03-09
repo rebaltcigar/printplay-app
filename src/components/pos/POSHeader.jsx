@@ -35,7 +35,13 @@ const POSHeader = ({
                 {/* Branding */}
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                     {systemSettings.logoUrl ? (
-                        <img src={systemSettings.logoUrl} alt="logo" height={32} style={{ maxWidth: 120, objectFit: 'contain' }} />
+                        <img
+                            src={systemSettings.logoUrl}
+                            alt="logo"
+                            height={32}
+                            onError={(e) => { e.target.src = "/logo.png"; }}
+                            style={{ maxWidth: 120, objectFit: 'contain' }}
+                        />
                     ) : (
                         <img src="/logo.png" alt="logo" width={24} height={24} />
                     )}

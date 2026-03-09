@@ -11,6 +11,7 @@ import { useGlobalUI } from "../contexts/GlobalUIContext";
 import { fmtCurrency } from "../utils/formatters";
 import { getFriendlyErrorMessage } from "../services/errorService";
 import { ROLES } from "../utils/permissions";
+import dayjs from "dayjs";
 
 import {
   buildServiceMap,
@@ -54,8 +55,9 @@ export default function AdminHome({ user, isActive = true }) {
   // --- CONTEXT CONSUMPTION ---
   const {
     preset, setPreset,
+    selectedMonthYear, setSelectedMonthYear,
     range: r,
-    transactions: filteredTx, // Context returns raw list, but we filter 'isDeleted' in context or here? Context returns all. We filter here.
+    transactions: filteredTx,
     shifts: shiftsScope,
     services,
     loading: analyticsLoading
@@ -63,10 +65,7 @@ export default function AdminHome({ user, isActive = true }) {
 
   const { total: outstandingReceivables, loading: receivablesLoading } = useOutstandingReceivables();
 
-  // Local re-filter for deleted (Context gives everything found in range)
-  // Actually context *could* filter, but let's do it here to be safe or use `filteredTx` name for raw and then filter.
-  // Wait, `transactions` in context is raw.
-  const transactionsRaw = filteredTx; // Alias
+  const transactionsRaw = filteredTx;
 
   /* ------------ global controls ------------ */
   // Presets managed by Context now.
@@ -74,6 +73,26 @@ export default function AdminHome({ user, isActive = true }) {
   const [showExpenses, setShowExpenses] = useState(true);
   const [includeCapitalInExpenses, setIncludeCapitalInExpenses] = useState(true);
   const [allTimeMode, setAllTimeMode] = useState("monthly");
+
+  const YEARS = useMemo(() => {
+    const list = [];
+    const currentYear = dayjs().year();
+    for (let y = currentYear; y >= 2024; y--) list.push(y);
+    return list;
+  }, []);
+
+  const MONTHS = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+  ];
+
+  const handleMonthChange = (e) => {
+    setSelectedMonthYear(selectedMonthYear.month(e.target.value));
+  };
+
+  const handleYearChange = (e) => {
+    setSelectedMonthYear(selectedMonthYear.year(e.target.value));
+  };
 
 
 
@@ -290,15 +309,44 @@ export default function AdminHome({ user, isActive = true }) {
           subtitle="Overview & Analytics"
           actions={
             <Stack direction="row" spacing={2} alignItems="center">
+              {preset === "customMonth" && (
+                <Stack direction="row" spacing={1}>
+                  <FormControl size="small" sx={{ minWidth: 120 }}>
+                    <InputLabel>Month</InputLabel>
+                    <Select
+                      value={selectedMonthYear.month()}
+                      label="Month"
+                      onChange={handleMonthChange}
+                    >
+                      {MONTHS.map((m, i) => (
+                        <MenuItem key={m} value={i}>{m}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <FormControl size="small" sx={{ minWidth: 100 }}>
+                    <InputLabel>Year</InputLabel>
+                    <Select
+                      value={selectedMonthYear.year()}
+                      label="Year"
+                      onChange={handleYearChange}
+                    >
+                      {YEARS.map(y => (
+                        <MenuItem key={y} value={y}>{y}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Stack>
+              )}
               <FormControl size="small" sx={{ minWidth: 160 }}>
                 <InputLabel>Time Range</InputLabel>
-                <Select value={preset} onChange={(e) => setPreset(e.target.value)}>
+                <Select value={preset} label="Time Range" onChange={(e) => setPreset(e.target.value)}>
                   <MenuItem value="today">Today</MenuItem>
                   <MenuItem value="yesterday">Yesterday</MenuItem>
                   <MenuItem value="thisWeek">This Week</MenuItem>
                   <MenuItem value="lastWeek">Last Week</MenuItem>
                   <MenuItem value="thisMonth">This Month</MenuItem>
                   <MenuItem value="lastMonth">Last Month</MenuItem>
+                  <MenuItem value="customMonth">Specific Month</MenuItem>
                   <MenuItem value="thisYear">This Year</MenuItem>
                   <MenuItem value="lastYear">Last Year</MenuItem>
                   <MenuItem value="allTime">All Time</MenuItem>
@@ -363,6 +411,12 @@ export default function AdminHome({ user, isActive = true }) {
           <Card sx={{ p: 2 }}>
             <Typography variant="body2" color="text.secondary">
               Operating Expenses
+            </Typography>
+            <Typography
+              variant="h4"
+              sx={{ color: "error.main", fontWeight: "bold", my: 1 }}
+            >
+              {fmtCurrency(kpi.expenses)}
             </Typography>
             <Typography variant="caption" color="text.secondary">
               Operating Expenses Only (Excl. Assets)

@@ -11,6 +11,7 @@
 
 | Version | Branch | Status |
 |---------|--------|--------|
+| v0.6.1 | `feature/reporting-analytics` | Released |
 | v0.6.0 | `feature/reporting-analytics` | Released |
 | v0.5.1 | `main` | Released |
 | v0.5 | `feature/retail-inventory` | Released |

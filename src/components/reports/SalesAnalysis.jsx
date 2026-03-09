@@ -1,5 +1,5 @@
 // src/components/reports/SalesAnalysis.jsx
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
     Box,
     Paper,
@@ -9,15 +9,12 @@ import {
     Select,
     MenuItem,
     Grid,
-    Card,
-    CardContent,
     TableContainer,
     Table,
     TableHead,
     TableRow,
     TableCell,
     TableBody,
-    Divider,
     FormControlLabel,
     Checkbox,
     Stack
@@ -35,21 +32,19 @@ import {
     CartesianGrid,
     Legend
 } from 'recharts';
-import { db } from '../../firebase';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import {
-    getRange,
-    txAmount,
     buildServiceMap,
     fmtPeso,
     getBusinessType,
     buildHourlySeries,
-    isPcRentalTx,
     calculateMetrics,
-    classifyFinancialTx
+    classifyFinancialTx,
+    classifyCategory
 } from '../../services/analyticsService';
 import { useAnalytics } from '../../contexts/AnalyticsContext';
 import PageHeader from '../common/PageHeader';
+import SummaryCards from '../common/SummaryCards';
+import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 
 const COLORS = ["#007bff", "#28a745", "#ffc107", "#dc3545", "#6610f2", "#e83e8c", "#17a2b8"];
 
@@ -58,7 +53,6 @@ export default function SalesAnalysis() {
 
     const {
         preset, setPreset,
-        range: r,
         transactions,
         shifts,
         services,
@@ -74,21 +68,15 @@ export default function SalesAnalysis() {
         const itemMap = {};
         const bizMap = { retail: 0, service: 0 };
 
-        // Use centralized metrics for totalSales
         const metrics = calculateMetrics(transactions, shifts);
         const total = metrics.sales;
 
-        // Wrapper to process amounts
         const process = (amt, itemName, catName, type) => {
             if (amt <= 0) return;
-            // Cat
-            if (!catMap[catName]) catMap[catName] = 0;
-            catMap[catName] += amt;
-            // Item
+            catMap[catName] = (catMap[catName] || 0) + amt;
             if (!itemMap[itemName]) itemMap[itemName] = { amount: 0, count: 0 };
             itemMap[itemName].amount += amt;
             itemMap[itemName].count += 1;
-            // Biz Type
             bizMap[type] = (bizMap[type] || 0) + amt;
         };
 
@@ -96,38 +84,24 @@ export default function SalesAnalysis() {
             const cf = classifyFinancialTx(t, serviceMap);
             if (cf.type !== 'revenue') return;
 
-            const normItem = (t.item || "").trim().toLowerCase();
-            let cat = "Others";
-            let type = getBusinessType(t, serviceMap);
-
-            const svc = serviceMap.get(normItem);
-            if (svc) {
-                cat = svc.category || "Service";
-            } else if (t.category) {
-                cat = t.category;
-            } else {
-                if (normItem.includes('print')) cat = "Printing";
-                else if (normItem.includes('scan') || normItem.includes('lamin')) cat = "Services";
-                else cat = "Uncategorized";
-            }
+            const category = classifyCategory(t, serviceMap);
+            const type = getBusinessType(t, serviceMap);
 
             let displayName = t.item || "Unknown";
+            const normItem = (t.item || "").trim().toLowerCase();
+            const svc = serviceMap.get(normItem);
+
             if (aggregateVariants && svc && svc.parentServiceId) {
                 const parent = services.find(s => s.id === svc.parentServiceId);
                 if (parent) displayName = parent.serviceName;
             }
 
-            process(cf.amount, displayName, cat.charAt(0).toUpperCase() + cat.slice(1), type);
+            process(cf.amount, displayName, category, type);
         });
 
-        // PC Rental
         shifts.forEach(s => {
             const val = Number(s.pcRentalTotal || 0);
-            if (val > 0) {
-                const cat = "PC Rental";
-                const item = "PC Rental (Time)";
-                process(val, item, cat, 'service');
-            }
+            if (val > 0) process(val, "PC Rental (Time)", "PC Rental", 'service');
         });
 
         const catList = Object.entries(catMap)
@@ -143,16 +117,25 @@ export default function SalesAnalysis() {
             { name: 'Service', value: bizMap.service, color: '#007bff' }
         ].filter(b => b.value > 0);
 
-        const hourlyList = buildHourlySeries(transactions);
-
         return {
             categoryData: catList,
             itemData: itemList,
             businessTypeData: bizList,
-            hourlyData: hourlyList,
+            hourlyData: buildHourlySeries(transactions),
             totalSales: total
         };
     }, [transactions, shifts, services, serviceMap, loading, aggregateVariants]);
+
+    const cards = [
+        {
+            label: 'Total Sales',
+            value: fmtPeso(totalSales),
+            sub: preset === 'allTime' ? 'Since start' : preset,
+            color: 'primary.main',
+            icon: <AttachMoneyIcon />,
+            highlight: true
+        }
+    ];
 
     return (
         <Box sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column', gap: 2, overflowY: 'auto' }}>
@@ -184,20 +167,9 @@ export default function SalesAnalysis() {
             />
 
             <Grid container spacing={2}>
-                {/* TOP ROW: KPIs and Distributions */}
                 <Grid size={{ xs: 12, md: 4 }}>
                     <Stack spacing={2}>
-                        <Card>
-                            <CardContent sx={{ textAlign: 'center', py: 3 }}>
-                                <Typography variant="body2" color="text.secondary">Total Sales</Typography>
-                                <Typography variant="h4" fontWeight="bold" color="primary.main">
-                                    {fmtPeso(totalSales)}
-                                </Typography>
-                                <Typography variant="caption" color="text.secondary">
-                                    {preset === 'allTime' ? 'Since earliest record' : preset}
-                                </Typography>
-                            </CardContent>
-                        </Card>
+                        <SummaryCards cards={cards} loading={loading} />
 
                         <Paper sx={{ p: 2 }}>
                             <Typography variant="subtitle2" align="center" gutterBottom>Retail vs Service</Typography>
@@ -287,7 +259,6 @@ export default function SalesAnalysis() {
                     </Paper>
                 </Grid>
 
-                {/* FULL WIDTH ROW: HOURLY VOLUME */}
                 <Grid size={{ xs: 12 }}>
                     <Paper sx={{ p: 3, minHeight: 400 }}>
                         <Typography variant="h6" align="center" gutterBottom>Transaction Volume by Hour</Typography>
@@ -314,7 +285,6 @@ export default function SalesAnalysis() {
                         </ResponsiveContainer>
                     </Paper>
                 </Grid>
-
             </Grid>
         </Box>
     );

@@ -1,5 +1,5 @@
 // src/components/reports/ShiftAudit.jsx
-import React, { useState, useEffect, useMemo } from 'react';
+import React from 'react';
 import {
     Box,
     Paper,
@@ -14,36 +14,20 @@ import {
     TableRow,
     TableCell,
     TableBody,
-    Chip
+    Chip,
+    Skeleton
 } from '@mui/material';
-import { db } from '../../firebase';
-import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
-import { getRange, fmtPeso } from '../../services/analyticsService';
+import { fmtPeso } from '../../services/analyticsService';
 import dayjs from 'dayjs';
+import { useAnalytics } from '../../contexts/AnalyticsContext';
 import PageHeader from '../common/PageHeader';
 
 export default function ShiftAudit() {
-    const [preset, setPreset] = useState("thisMonth");
-    const [shifts, setShifts] = useState([]);
-    const [loading, setLoading] = useState(true);
-
-    const r = useMemo(() => getRange(preset, null, null), [preset]);
-
-    useEffect(() => {
-        setLoading(true);
-        // Fetch COMPLETED shifts mostly
-        const q = query(
-            collection(db, "shifts"),
-            where("startTime", ">=", r.startUtc),
-            where("startTime", "<=", r.endUtc),
-            orderBy("startTime", "desc")
-        );
-        const unsub = onSnapshot(q, (snap) => {
-            setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-            setLoading(false);
-        });
-        return () => unsub();
-    }, [r.startUtc, r.endUtc]);
+    const {
+        preset, setPreset,
+        shifts,
+        loading
+    } = useAnalytics();
 
     return (
         <Box sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -68,7 +52,7 @@ export default function ShiftAudit() {
                 }
             />
 
-            <TableContainer component={Paper} sx={{ flex: 1 }}>
+            <TableContainer component={Paper} sx={{ flex: 1, position: 'relative' }}>
                 <Table stickyHeader size="small">
                     <TableHead>
                         <TableRow>
@@ -82,7 +66,13 @@ export default function ShiftAudit() {
                         </TableRow>
                     </TableHead>
                     <TableBody>
-                        {shifts.length === 0 ? (
+                        {loading ? (
+                            [1, 2, 3, 4, 5].map((i) => (
+                                <TableRow key={i}>
+                                    <TableCell colSpan={7}><Skeleton variant="text" /></TableCell>
+                                </TableRow>
+                            ))
+                        ) : shifts.length === 0 ? (
                             <TableRow><TableCell colSpan={7} align="center">No shifts in range.</TableCell></TableRow>
                         ) : (
                             shifts.map((s) => {
@@ -90,14 +80,10 @@ export default function ShiftAudit() {
                                 const end = s.endTime?.seconds ? dayjs.unix(s.endTime.seconds) : (s.endTime ? dayjs(s.endTime) : null);
 
                                 const actual = Number(s.actualCash || 0);
-                                const expected = Number(s.expectedCash || 0); // Need to define how expected is calculated if not stored
-                                // Assuming expectedCash is stored on shift close. 
-                                // If not, we might need 'systemCash' or 'totalCashInDrawer' from DB if available.
-                                // Falling back to `totalCash` if expectedCash missing (legacy)
                                 const expVal = s.expectedCash !== undefined ? s.expectedCash : (s.systemCash || 0);
 
                                 const diff = actual - expVal;
-                                const isShort = diff < -5; // tolerance
+                                const isShort = diff < -5;
                                 const isOver = diff > 5;
 
                                 return (

@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { collection, query, where, onSnapshot, getDocs, orderBy, Timestamp } from 'firebase/firestore';
-import { getRange, getEarliestDate } from '../services/analyticsService';
+import { collection, query, where, onSnapshot, getDocs, orderBy, Timestamp, limit } from 'firebase/firestore';
+import { getRange } from '../services/analyticsService';
+import dayjs from 'dayjs';
 
 const AnalyticsContext = createContext();
 
@@ -12,7 +13,8 @@ export function useAnalytics() {
 export function AnalyticsProvider({ children }) {
     // --- Global Controls ---
     const [preset, setPreset] = useState("thisMonth");
-    const [customRange, setCustomRange] = useState(null); // { start, end } if needed
+    const [selectedMonthYear, setSelectedMonthYear] = useState(dayjs());
+    const [allTimeStart, setAllTimeStart] = useState(null);
 
     // --- Data State ---
     const [transactions, setTransactions] = useState([]);
@@ -23,50 +25,59 @@ export function AnalyticsProvider({ children }) {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
-    const allTimeStart = useMemo(() => {
-        // We find the earliest date once we have some data, 
-        // but for initial fetch of 'allTime', we need a reasonable baseline.
-        // If we haven't fetched allTime yet, we might not know the REAL start.
-        // However, we can use a "metadata" approach if needed.
-        // FOR NOW: allow the context to refine the range once data is loaded.
-        const earliest = getEarliestDate(transactions, shifts);
-        return earliest;
-    }, [transactions, shifts]);
-
-    // --- Computed Range ---
-    const r = useMemo(() => {
-        return getRange(preset, null, allTimeStart);
-    }, [preset, allTimeStart]);
-
-    // --- 1. Fetch Services (Static / Rare Update) ---
+    // --- 1. Fetch Baseline Earliest Date ONCE ---
     useEffect(() => {
-        // Services don't change often, so snapshot is fine, or we could fetch once.
-        // Let's keep snapshot for now to support dynamic price changes appearing instantly.
+        const fetchEarliest = async () => {
+            try {
+                // Check transactions for earliest timestamp
+                const qTx = query(collection(db, "transactions"), orderBy("timestamp", "asc"), limit(1));
+                const snapTx = await getDocs(qTx);
+                if (!snapTx.empty) {
+                    const d = snapTx.docs[0].data();
+                    const ts = d.timestamp?.seconds ? d.timestamp.seconds * 1000 : d.timestamp;
+                    setAllTimeStart(new Date(ts));
+                } else {
+                    // Fallback to a reasonable product launch date if DB is empty
+                    setAllTimeStart(new Date("2024-01-01"));
+                }
+            } catch (err) {
+                console.warn("[Analytics] Error fetching earliest date:", err);
+                setAllTimeStart(new Date("2024-01-01"));
+            }
+        };
+        fetchEarliest();
+    }, []);
+
+    // --- 2. Computed Range (Stable) ---
+    const r = useMemo(() => {
+        return getRange(preset, selectedMonthYear.toDate(), allTimeStart);
+    }, [preset, selectedMonthYear, allTimeStart]);
+
+    // --- 3. Fetch Services (Static / Rare Update) ---
+    useEffect(() => {
         const unsub = onSnapshot(collection(db, "services"), (snap) => {
             setServices(snap.docs.map(d => ({ id: d.id, ...d.data() })));
         }, (err) => console.error("Services Error:", err));
         return () => unsub();
     }, []);
 
-    // --- 2. Smart Fetching Strategy ---
+    // --- 4. Smart Fetching Strategy ---
     useEffect(() => {
-        if (!r.startUtc || !r.endUtc) return;
+        const startTs = r.startUtc?.getTime();
+        const endTs = r.endUtc?.getTime();
+        if (!startTs || !endTs) return;
 
         setLoading(true);
         setError(null);
 
-        // STRATEGY: 
-        // If range is "Live" (Today/Yesterday/ThisWeek/ThisMonth) -> USE SNAPSHOT (Realtime)
-        // If range is "Historical" (LastMonth/LastYear/AllTime) -> USE GET (One-time fetch)
-
-        const isHistorical = ["lastMonth", "lastYear", "allTime"].includes(preset);
+        const isHistorical = ["lastMonth", "lastYear", "allTime", "customMonth"].includes(preset);
 
         // --- QUERIES ---
         const txQuery = query(
             collection(db, "transactions"),
             where("timestamp", ">=", Timestamp.fromDate(r.startUtc)),
             where("timestamp", "<=", Timestamp.fromDate(r.endUtc)),
-            orderBy("timestamp", "desc") // Default desc for lists
+            orderBy("timestamp", "desc")
         );
 
         const shiftQuery = query(
@@ -81,7 +92,6 @@ export function AnalyticsProvider({ children }) {
             where("createdAt", "<=", Timestamp.fromDate(r.endUtc))
         );
 
-        // --- FETCHERS ---
         let unsubTx = () => { };
         let unsubShifts = () => { };
         let unsubInvoices = () => { };
@@ -102,11 +112,8 @@ export function AnalyticsProvider({ children }) {
                     setLoading(false);
                 } else {
                     console.log(`[Analytics] Subscribing to REAL-TIME updates for ${preset}...`);
-                    // Real-time Listeners
                     unsubTx = onSnapshot(txQuery, (snap) => {
                         setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-                        // We set loading false after first tx load, but wait for shifts too?
-                        // Actually, simplified:
                     }, (err) => setError(err));
 
                     unsubShifts = onSnapshot(shiftQuery, (snap) => {
@@ -128,16 +135,16 @@ export function AnalyticsProvider({ children }) {
         fetchData();
 
         return () => {
-            try { if (unsubTx) unsubTx(); } catch (e) { console.warn("Firebase unsub err:", e); }
-            try { if (unsubShifts) unsubShifts(); } catch (e) { console.warn("Firebase unsub err:", e); }
-            try { if (unsubInvoices) unsubInvoices(); } catch (e) { console.warn("Firebase unsub err:", e); }
+            try { if (unsubTx) unsubTx(); } catch (e) { }
+            try { if (unsubShifts) unsubShifts(); } catch (e) { }
+            try { if (unsubInvoices) unsubInvoices(); } catch (e) { }
         };
 
-    }, [r.startUtc, r.endUtc, preset]); // Re-run when range changes
+    }, [r.startUtc?.getTime(), r.endUtc?.getTime(), preset]);
 
-    // Memoize the value to prevent unnecessary re-renders of consumers
     const value = useMemo(() => ({
         preset, setPreset,
+        selectedMonthYear, setSelectedMonthYear,
         range: r,
         transactions,
         shifts,
@@ -145,7 +152,7 @@ export function AnalyticsProvider({ children }) {
         invoices,
         loading,
         error
-    }), [preset, r, transactions, shifts, services, invoices, loading, error]);
+    }), [preset, selectedMonthYear, r, transactions, shifts, services, invoices, loading, error]);
 
     return (
         <AnalyticsContext.Provider value={value}>

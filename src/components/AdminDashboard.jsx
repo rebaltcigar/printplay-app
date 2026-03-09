@@ -304,6 +304,7 @@ export default function AdminDashboard({ user, userRole, onLogout, appSettings }
                 component="img"
                 src={storeSettings.logoUrl}
                 alt="logo"
+                onError={(e) => { e.target.src = "/logo.png"; }}
                 sx={{ width: 32, height: 32, borderRadius: "6px" }}
               />
               <Typography variant="h6" sx={{ fontWeight: 600, color: '#fff' }}>

@@ -11,6 +11,13 @@
 - **Infrastructure**: Firestore schema changes, new collections, indexes, security rules.
 - No roadmap content — belongs in ROADMAP.md.
 
+## [0.6.1] — 2026-03-10
+
+### Fixed
+- **Financial P&L Report Crash** — Resolved a `TypeError` where `toFixed` was called on undefined due to missing `date` and `margin` fields in the centralized analytics service.
+- **Store Logo Reliability** — Improved Google Drive logo URL conversion and added robust `onError` fallbacks to ensure the logo always displays (local fallback if external is blocked).
+- **Dashboard UI Fix** — Restored the missing "Operating Expenses" numeric value display in the Admin Home summary cards.
+
 ## [0.6.0] — 2026-03-09
 
 ### Added

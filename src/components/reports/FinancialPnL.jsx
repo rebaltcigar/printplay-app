@@ -1,5 +1,5 @@
 // src/components/reports/FinancialPnL.jsx
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import {
     Box,
     Paper,
@@ -9,8 +9,6 @@ import {
     Select,
     MenuItem,
     Grid,
-    Card,
-    CardContent,
     TableContainer,
     Table,
     TableHead,
@@ -18,7 +16,6 @@ import {
     TableCell,
     TableBody,
     Stack,
-    Divider,
     Button
 } from '@mui/material';
 import {
@@ -32,26 +29,22 @@ import {
     ResponsiveContainer,
     ReferenceLine
 } from 'recharts';
-import { db } from '../../firebase';
-import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import {
-    getRange,
-    txAmount,
-    classifyTx,
-    buildServiceMap,
-    generateMonthlyKeys,
-    saleMatchesService,
     fmtPeso,
-    isPcRentalTx,
-    classifyFinancialTx
+    buildServiceMap,
+    buildPnLSeries
 } from '../../services/analyticsService';
 import dayjs from 'dayjs';
 import { useAnalytics } from '../../contexts/AnalyticsContext';
 import { safePrint } from '../../services/printService';
 import PageHeader from '../common/PageHeader';
+import SummaryCards from '../common/SummaryCards';
+import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import ReceiptIcon from '@mui/icons-material/Receipt';
+import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
 
 export default function FinancialPnL() {
-    // --- Context ---
     const {
         preset, setPreset,
         range: r,
@@ -61,67 +54,19 @@ export default function FinancialPnL() {
         loading
     } = useAnalytics();
 
-    // --- Service Map ---
     const serviceMap = useMemo(() => buildServiceMap(services), [services]);
 
-    // --- 2. Process P&L ---
     const { tableData, summary } = useMemo(() => {
         if (loading) return { tableData: [], summary: {} };
 
-        // 1. Generate Buckets (Months)
-        // If preset is "thisMonth", we might want daily granularity? 
-        // SaaS convention: P&L is usually Monthly, but let's follow the range granularity helper?
-        // For now, let's force MONTHLY buckets for P&L unless range is very short.
-        // Actually, "generateMonthlyKeys" is specific for months. 
-        // If range is "thisMonth", let's just show that one month.
-
-        const keys = generateMonthlyKeys(r.startLocal, r.endLocal); // ["YYYY-MM", ...]
-        const buckets = new Map();
-        keys.forEach(k => buckets.set(k, { date: k, sales: 0, cogs: 0, opex: 0, netProfit: 0 }));
-
-        const getBucketKey = (dateArgs) => dayjs(dateArgs).format("YYYY-MM");
-
-        // 2. Iterate Transactions
-        transactions.forEach(t => {
-            const cf = classifyFinancialTx(t, serviceMap);
-            if (cf.type === 'none') return;
-
-            const k = getBucketKey(t.timestamp.seconds ? t.timestamp.seconds * 1000 : t.timestamp);
-            const b = buckets.get(k);
-            if (!b) return;
-
-            if (cf.type === 'revenue') {
-                b.sales += cf.amount;
-                b.cogs += cf.cost;
-            } else if (cf.type === 'cogs') {
-                b.cogs += Math.abs(cf.amount);
-            } else if (cf.type === 'opex') {
-                b.opex += Math.abs(cf.amount);
-            }
+        const results = buildPnLSeries({
+            transactions,
+            shifts,
+            startLocal: r.startLocal,
+            endLocal: r.endLocal,
+            serviceMap
         });
 
-        // 3. Iterate Shifts (PC Rental Revenue)
-        shifts.forEach(s => {
-            const k = getBucketKey(s.startTime.seconds * 1000);
-            const b = buckets.get(k);
-            if (b) {
-                b.sales += Number(s.pcRentalTotal || 0);
-            }
-        });
-
-        // 4. Finalize
-        const results = keys.map(k => {
-            const b = buckets.get(k);
-            b.netProfit = b.sales - b.cogs - b.opex;
-            if (b.sales > 0) {
-                b.margin = (b.netProfit / b.sales) * 100;
-            } else {
-                b.margin = 0;
-            }
-            return b;
-        });
-
-        // 5. Total Summaries
         const total = results.reduce((acc, curr) => ({
             sales: acc.sales + curr.sales,
             cogs: acc.cogs + curr.cogs,
@@ -132,12 +77,24 @@ export default function FinancialPnL() {
         total.margin = total.sales > 0 ? (total.netProfit / total.sales) * 100 : 0;
 
         return { tableData: results, summary: total };
+    }, [transactions, shifts, loading, r, serviceMap]);
 
-    }, [transactions, shifts, loading, r]);
+    const cards = [
+        { label: 'Total Revenue', value: fmtPeso(summary?.sales), color: 'primary.main', icon: <AttachMoneyIcon /> },
+        { label: 'COGS', value: fmtPeso(summary?.cogs), color: 'text.secondary', icon: <ReceiptIcon /> },
+        { label: 'OpEx', value: fmtPeso(summary?.opex), color: 'error.main', icon: <AccountBalanceWalletIcon /> },
+        {
+            label: 'Net Profit',
+            value: fmtPeso(summary?.netProfit),
+            sub: `Margin: ${summary?.margin?.toFixed(1)}%`,
+            color: summary?.netProfit >= 0 ? 'success.main' : 'error.main',
+            icon: <TrendingUpIcon />,
+            highlight: true
+        }
+    ];
 
     return (
         <Box sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column', gap: 2 }}>
-
             <PageHeader
                 title="Profit & Loss"
                 subtitle="Financial performance summary across revenue, COGS, and expenses."
@@ -145,11 +102,7 @@ export default function FinancialPnL() {
                     <Stack direction="row" spacing={2} alignItems="center">
                         <FormControl size="small" sx={{ minWidth: 150 }}>
                             <InputLabel>Date Range</InputLabel>
-                            <Select
-                                value={preset}
-                                label="Date Range"
-                                onChange={(e) => setPreset(e.target.value)}
-                            >
+                            <Select value={preset} label="Date Range" onChange={(e) => setPreset(e.target.value)}>
                                 <MenuItem value="thisMonth">This Month</MenuItem>
                                 <MenuItem value="lastMonth">Last Month</MenuItem>
                                 <MenuItem value="last90">Last 90 Days</MenuItem>
@@ -162,33 +115,8 @@ export default function FinancialPnL() {
                 }
             />
 
-            {/* SUMMARY CARDS */}
-            <Grid container spacing={2}>
-                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-                    <SummaryCard title="Total Revenue" value={summary?.sales} color="primary.main" />
-                </Grid>
-                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-                    <SummaryCard title="COGS" value={summary?.cogs} color="text.secondary" />
-                </Grid>
-                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-                    <SummaryCard title="OpEx" value={summary?.opex} color="error.main" />
-                </Grid>
-                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-                    <Card>
-                        <CardContent sx={{ pb: 1 }}>
-                            <Typography variant="body2" color="text.secondary">Net Profit</Typography>
-                            <Typography variant="h5" fontWeight="bold" sx={{ color: summary?.netProfit >= 0 ? 'success.main' : 'error.main' }}>
-                                {fmtPeso(summary?.netProfit)}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary">
-                                Margin: {summary?.margin?.toFixed(1)}%
-                            </Typography>
-                        </CardContent>
-                    </Card>
-                </Grid>
-            </Grid>
+            <SummaryCards cards={cards} loading={loading} />
 
-            {/* CHART SECTION */}
             <Paper sx={{ p: 2, height: 350 }}>
                 <Typography variant="subtitle2" gutterBottom>Financial Trend</Typography>
                 <ResponsiveContainer width="100%" height="100%">
@@ -216,7 +144,6 @@ export default function FinancialPnL() {
                 </ResponsiveContainer>
             </Paper>
 
-            {/* DATA TABLE */}
             <TableContainer component={Paper} sx={{ flex: 1 }}>
                 <Table stickyHeader size="small">
                     <TableHead>
@@ -231,9 +158,7 @@ export default function FinancialPnL() {
                     </TableHead>
                     <TableBody>
                         {tableData.length === 0 ? (
-                            <TableRow>
-                                <TableCell colSpan={6} align="center">No data available.</TableCell>
-                            </TableRow>
+                            <TableRow><TableCell colSpan={6} align="center">No data available.</TableCell></TableRow>
                         ) : (
                             tableData.map((row) => (
                                 <TableRow key={row.date} hover>
@@ -251,20 +176,6 @@ export default function FinancialPnL() {
                     </TableBody>
                 </Table>
             </TableContainer>
-
         </Box>
-    );
-}
-
-function SummaryCard({ title, value, color }) {
-    return (
-        <Card sx={{ height: '100%' }}>
-            <CardContent>
-                <Typography variant="body2" color="text.secondary">{title}</Typography>
-                <Typography variant="h5" fontWeight="bold" sx={{ color: color || 'inherit' }}>
-                    {fmtPeso(value)}
-                </Typography>
-            </CardContent>
-        </Card>
     );
 }

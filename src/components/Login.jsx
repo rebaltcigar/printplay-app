@@ -568,6 +568,7 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
                 component="img"
                 src={branding.logoUrl}
                 alt="logo"
+                onError={(e) => { e.target.src = "/logo.png"; }}
                 sx={{ width: 44, height: 44, objectFit: "contain", borderRadius: 1 }}
               />
               <Typography variant="caption" sx={{

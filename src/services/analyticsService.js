@@ -90,6 +90,13 @@ export function getRange(preset, monthYear /* Date|null */, allTimeStart /* Date
       end = now.endOf("day");
       break;
     }
+    case "customMonth":
+      if (monthYear) {
+        const m = dayjs(monthYear).tz(ZONE);
+        start = m.startOf("month");
+        end = m.endOf("month");
+      }
+      break;
     default:
       start = now.startOf("month");
       end = now.endOf("month");
@@ -117,6 +124,22 @@ export function buildServiceMap(services /* active only */) {
     m.set(normalize(name), { category: String(s.category || ""), name });
   });
   return m;
+}
+
+/** Classify an item into a reporting category (Printing, Services, etc.) */
+export function classifyCategory(t, serviceMap) {
+  const normItem = normalize(t.item);
+  const svc = serviceMap.get(normItem);
+
+  if (svc && svc.category) return svc.category.charAt(0).toUpperCase() + svc.category.slice(1);
+  if (t.category) return t.category.charAt(0).toUpperCase() + t.category.slice(1);
+
+  // Heuristics
+  if (normItem.includes('print')) return "Printing";
+  if (normItem.includes('scan') || normItem.includes('lamin')) return "Services";
+  if (isPcRentalTx(t)) return "PC Rental";
+
+  return "Uncategorized";
 }
 
 /** Classify a transaction to 'sale' | 'expense' | 'unknownSale' | null */
@@ -488,4 +511,30 @@ export function buildConsumptionSeries(transactions, serviceMap) {
   });
 
   return Object.values(map).sort((a, b) => b.qty - a.qty);
+}
+
+/**
+ * Build a Profit & Loss series for a given range (usually monthly).
+ * Returns array of { key, x, sales, cogs, opex, netProfit }
+ */
+export function buildPnLSeries({ transactions, shifts, startLocal, endLocal, serviceMap }) {
+  const trend = buildTrendSeries({
+    transactions,
+    shifts,
+    startLocal,
+    endLocal,
+    granularity: 'month',
+    serviceMap
+  });
+
+  return trend.map(t => ({
+    key: t.key,
+    x: t.x,
+    date: t.key, // Ensure compatibility with FinancialPnL
+    sales: t.sales,
+    cogs: t.cogs,
+    opex: t.opex,
+    netProfit: t.operatingProfit,
+    margin: t.sales > 0 ? (t.operatingProfit / t.sales) * 100 : 0
+  }));
 }
