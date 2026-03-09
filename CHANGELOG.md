@@ -11,9 +11,18 @@
 - **Infrastructure**: Firestore schema changes, new collections, indexes, security rules.
 - No roadmap content — belongs in ROADMAP.md.
 
----
- 
- ## [0.5.1] — 2026-03-08
+## [0.6.0] — 2026-03-09
+
+### Added
+- **Consumption Report** — Added paper size consumption tracking and reporting from transaction attributes.
+- **Aging Report** — Implemented an invoice aging report to track outstanding balances across 0-30, 31-60, and 60+ day buckets.
+- **Hourly Volume Chart** — Integrated a dynamic hourly volume chart in Sales Analysis to identify peak business hours.
+
+### Changed
+- **Reporting Layout Optimization** — Reorganized the Sales Analysis report for better information density and prioritised the Hourly Volume chart.
+- **Centralized Analytics** — Refactored analytics logic into `src/services/analyticsService.js` for better performance and maintainability.
+
+## [0.5.1] — 2026-03-08
  
  ### Fixed
  - **POS ReferenceError** — Resolved a crash in the POS component where `allServices` was incorrectly destructured from the `usePOSServices` hook.

@@ -1,5 +1,5 @@
 // src/components/reports/StaffPerformance.jsx
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import {
     Box,
     Paper,
@@ -22,51 +22,49 @@ import {
     YAxis,
     CartesianGrid,
     Tooltip,
-    Legend,
     ResponsiveContainer
 } from 'recharts';
-import { db } from '../../firebase';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
-import { getRange, txAmount, fmtPeso } from '../../services/analyticsService';
+import { txAmount, fmtPeso } from '../../services/analyticsService';
+import { useAnalytics } from '../../contexts/AnalyticsContext';
 import PageHeader from '../common/PageHeader';
 
 export default function StaffPerformance() {
-    const [preset, setPreset] = useState("thisMonth");
-    const [transactions, setTransactions] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const {
+        preset, setPreset,
+        transactions,
+        loading
+    } = useAnalytics();
 
-    const r = useMemo(() => getRange(preset, null, null), [preset]);
-
-    useEffect(() => {
-        setLoading(true);
-        const qTx = query(
-            collection(db, "transactions"),
-            where("timestamp", ">=", r.startUtc),
-            where("timestamp", "<=", r.endUtc)
-        );
-        const unsub = onSnapshot(qTx, (snap) => {
-            setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-            setLoading(false);
-        });
-        return () => unsub();
-    }, [r.startUtc, r.endUtc]);
-
-    // --- Metrics ---
+    // --- Metrics Aggregated by Order ---
     const staffData = useMemo(() => {
         if (loading) return [];
         const map = {};
 
+        // To get true Order Count and average order value, we need to bucket by orderNumber
+        const orderMap = {}; // staffEmail -> Set(orderNumbers)
+
         transactions.forEach(t => {
             if (t.isDeleted) return;
             const amt = txAmount(t);
-            if (amt <= 0) return; // Sales only
+            if (amt <= 0 && t.financialCategory !== 'Revenue') return;
             if (t.item === 'Paid Debt') return;
 
             const staff = t.staffEmail || "Unknown";
+            const orderNum = t.orderNumber;
 
-            if (!map[staff]) map[staff] = { name: staff, sales: 0, count: 0 };
+            if (!map[staff]) {
+                map[staff] = { name: staff, sales: 0, txCount: 0, orderCount: 0 };
+                orderMap[staff] = new Set();
+            }
+
             map[staff].sales += amt;
-            map[staff].count += 1;
+            map[staff].txCount += 1;
+            if (orderNum) orderMap[staff].add(orderNum);
+        });
+
+        // Convert Sets to counts
+        Object.keys(map).forEach(staff => {
+            map[staff].orderCount = orderMap[staff].size;
         });
 
         return Object.values(map).sort((a, b) => b.sales - a.sales);
@@ -96,45 +94,45 @@ export default function StaffPerformance() {
             />
 
             {/* CHART */}
-            <Paper sx={{ p: 2, height: 350 }}>
-                <Typography variant="subtitle2">Sales Leaders</Typography>
+            <Paper sx={{ p: 2, height: 300 }}>
+                <Typography variant="subtitle2" gutterBottom>Sales Leaders</Typography>
                 <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={staffData} layout="vertical" margin={{ left: 20, right: 30 }}>
                         <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                         <XAxis type="number" tickFormatter={(val) => `₱${val / 1000}k`} />
                         <YAxis type="category" dataKey="name" width={150} style={{ fontSize: '0.8rem' }} />
                         <Tooltip formatter={(val) => fmtPeso(val)} />
-                        <Bar dataKey="sales" name="Total Sales" fill="#82ca9d" barSize={20} />
+                        <Bar dataKey="sales" name="Total Sales" fill="#28a745" barSize={20} radius={[0, 4, 4, 0]} />
                     </BarChart>
                 </ResponsiveContainer>
             </Paper>
 
             {/* TABLE */}
-            <TableContainer component={Paper} sx={{ flex: 1 }}>
+            <TableContainer component={Paper} sx={{ flex: 1, overflowY: 'auto' }}>
                 <Table stickyHeader size="small">
                     <TableHead>
                         <TableRow>
                             <TableCell>Rank</TableCell>
-                            <TableCell>Staff</TableCell>
-                            <TableCell align="right">Transactions</TableCell>
+                            <TableCell>Staff Member</TableCell>
+                            <TableCell align="right">Total Orders</TableCell>
                             <TableCell align="right">Total Sales</TableCell>
-                            <TableCell align="right">Avg / Tx</TableCell>
+                            <TableCell align="right">Avg Order Value</TableCell>
                         </TableRow>
                     </TableHead>
                     <TableBody>
                         {staffData.length === 0 ? (
-                            <TableRow><TableCell colSpan={5} align="center">No data.</TableCell></TableRow>
+                            <TableRow><TableCell colSpan={5} align="center">No data found for this period.</TableCell></TableRow>
                         ) : (
                             staffData.map((row, idx) => (
                                 <TableRow key={row.name} hover>
                                     <TableCell>{idx + 1}</TableCell>
                                     <TableCell sx={{ fontWeight: 500 }}>{row.name}</TableCell>
-                                    <TableCell align="right">{row.count}</TableCell>
+                                    <TableCell align="right">{row.orderCount}</TableCell>
                                     <TableCell align="right" sx={{ fontWeight: 'bold', color: 'success.main' }}>
                                         {fmtPeso(row.sales)}
                                     </TableCell>
                                     <TableCell align="right">
-                                        {fmtPeso(row.count ? row.sales / row.count : 0)}
+                                        {fmtPeso(row.orderCount ? row.sales / row.orderCount : 0)}
                                     </TableCell>
                                 </TableRow>
                             ))

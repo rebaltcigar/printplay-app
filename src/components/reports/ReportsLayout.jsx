@@ -7,6 +7,9 @@ import PieChartIcon from '@mui/icons-material/PieChart';
 import PeopleIcon from '@mui/icons-material/People';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'; // For Audit/Shifts
 import { useNavigate, useLocation } from 'react-router-dom';
+import InventoryIcon from '@mui/icons-material/Inventory';
+import HistoryIcon from '@mui/icons-material/History';
+import PageHeader from '../common/PageHeader';
 
 export default function ReportsLayout({ children }) {
     const navigate = useNavigate();
@@ -15,6 +18,8 @@ export default function ReportsLayout({ children }) {
     const menuItems = [
         { id: 'financial', path: '', label: 'Financials (P&L)', icon: <AttachMoneyIcon /> }, // default
         { id: 'sales', path: 'sales', label: 'Sales Analysis', icon: <PieChartIcon /> },
+        { id: 'consumption', path: 'consumption', label: 'Consumables', icon: <InventoryIcon /> },
+        { id: 'aging', path: 'aging', label: 'AR Aging (Unpaid)', icon: <HistoryIcon /> },
         { id: 'staff', path: 'staff', label: 'Staff Performance', icon: <PeopleIcon /> },
         { id: 'shifts', path: 'shifts', label: 'Shift Audit', icon: <ReceiptLongIcon /> },
     ];

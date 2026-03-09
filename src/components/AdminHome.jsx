@@ -19,6 +19,7 @@ import {
   classifyTx,
   buildTrendSeries,
   normalize,
+  calculateMetrics,
 } from "../services/analyticsService";
 
 import TrendSection from "./dashboard/TrendSection";
@@ -140,50 +141,9 @@ export default function AdminHome({ user, isActive = true }) {
     return transactionsRaw.filter((t) => !t.isDeleted);
   }, [transactionsRaw]);
 
-  // 2. METRICS (Use filteredTxValid)
+  // 2. METRICS (Use centralized logic)
   const kpi = useMemo(() => {
-    let sales = 0;
-    let expenses = 0;
-    let profit = 0;
-
-    // Sum PC Rentals from Shifts
-    let pcRentalRevenue = 0;
-    shiftsScope.forEach(s => {
-      pcRentalRevenue += Number(s.pcRentalTotal || 0);
-    });
-
-    // Sum Transactions
-    filteredTxValid.forEach((t) => {
-      const itemName = normalize(t.item);
-      const isPcRental = itemName === 'pc rental';
-
-      const amt = txAmount(t);
-      const isExp =
-        t.category === "expense" ||
-        t.expenseType ||
-        t.item === "Expenses";
-
-      if (isExp) {
-        // ... (keep capital check)
-        const isCap =
-          (t.expenseType || "").toLowerCase().includes("asset") ||
-          (t.notes || "").toLowerCase().includes("capex") ||
-          t.financialCategory === 'CAPEX';
-
-        if (!isCap) {
-          expenses += Math.abs(amt);
-        }
-      } else {
-        // EXCLUDE PC Rental from transaction sum as it comes from shift.pcRentalTotal
-        if (!isPcRental) {
-          sales += amt;
-        }
-      }
-    });
-
-    profit = sales - expenses;
-
-    return { sales, expenses, profit };
+    return calculateMetrics(filteredTxValid, shiftsScope);
   }, [filteredTxValid, shiftsScope]);
 
   // 3. TRENDS
@@ -421,7 +381,7 @@ export default function AdminHome({ user, isActive = true }) {
               {receivablesLoading ? "—" : fmtCurrency(outstandingReceivables)}
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              Unpaid Customer Accounts
+              {preset === 'allTime' ? 'Since earliest record' : 'Unpaid Customer Accounts'}
             </Typography>
           </Card>
         </Box>

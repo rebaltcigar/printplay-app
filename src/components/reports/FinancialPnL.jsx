@@ -42,6 +42,8 @@ import {
     generateMonthlyKeys,
     saleMatchesService,
     fmtPeso,
+    isPcRentalTx,
+    classifyFinancialTx
 } from '../../services/analyticsService';
 import dayjs from 'dayjs';
 import { useAnalytics } from '../../contexts/AnalyticsContext';
@@ -81,46 +83,20 @@ export default function FinancialPnL() {
 
         // 2. Iterate Transactions
         transactions.forEach(t => {
-            if (t.isDeleted) return;
-            const amt = txAmount(t);
+            const cf = classifyFinancialTx(t, serviceMap);
+            if (cf.type === 'none') return;
+
             const k = getBucketKey(t.timestamp.seconds ? t.timestamp.seconds * 1000 : t.timestamp);
-
             const b = buckets.get(k);
-            if (!b) return; // Out of range or logic error
+            if (!b) return;
 
-            // Classify
-            if (t.financialCategory) {
-                // Modern Classification
-                if (t.financialCategory === 'Revenue') {
-                    b.sales += amt;
-                    // Calculate COGS if unitCost is present (Accrual Basis)
-                    if (t.unitCost) {
-                        const cost = Number(t.unitCost) * Number(t.quantity || 1);
-                        b.cogs += cost;
-                    }
-                }
-                else if (t.financialCategory === 'COGS') b.cogs += Math.abs(amt); // Legacy or Adjustments
-                else if (t.financialCategory === 'OPEX') b.opex += Math.abs(amt);
-                // CAPEX and InventoryAsset are excluded from P&L
-            } else {
-                // Legacy Fallback
-                const isExp = t.amount < 0 && !t.serviceId;
-                // Note: txAmount returns positive for sales, negative for expenses usually, 
-                // but let's stick to the analytics helper logic or explicit checks.
-
-                if (t.item === 'New Debt' || t.item === 'Paid Debt' || t.category === 'expense' || t.category === 'credit') return; // Skip debt/expense for P&L revenue
-
-                // Check if purely expense
-                const type = (t.expenseType || "").toLowerCase();
-                if (t.item === 'Expenses' || type) {
-                    // Exclude Capital
-                    if (!type.includes('asset') && !type.includes('capital') && !type.includes('capex')) {
-                        b.opex += Math.abs(amt);
-                    }
-                } else {
-                    // Assume Sale
-                    b.sales += amt;
-                }
+            if (cf.type === 'revenue') {
+                b.sales += cf.amount;
+                b.cogs += cf.cost;
+            } else if (cf.type === 'cogs') {
+                b.cogs += Math.abs(cf.amount);
+            } else if (cf.type === 'opex') {
+                b.opex += Math.abs(cf.amount);
             }
         });
 

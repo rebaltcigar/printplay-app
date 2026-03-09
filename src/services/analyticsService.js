@@ -11,6 +11,21 @@ dayjs.extend(isoWeek);
 
 export const ZONE = "Asia/Manila"; // always UTC+8
 
+/** Normalize a string for matching */
+export function normalize(s) {
+  return String(s ?? '').trim().toLowerCase();
+}
+
+/** Determine if a transaction is a PC Rental billing transaction */
+export function isPcRentalTx(tx) {
+  const item = normalize(tx.item);
+  const PC_RENTAL_ITEM_FALLBACK = 'pc rental';
+  const PC_RENTAL_SERVICE_ID = 'pc-rental';
+  return tx.serviceId === PC_RENTAL_SERVICE_ID ||
+    item.includes(PC_RENTAL_ITEM_FALLBACK) ||
+    item.startsWith('pc rental');
+}
+
 /** Format helpers (UPDATED: add commas, no decimals) */
 export const fmtPeso = (n) =>
   `₱${Number(n || 0).toLocaleString(undefined, {
@@ -93,9 +108,6 @@ export function getRange(preset, monthYear /* Date|null */, allTimeStart /* Date
   };
 }
 
-/** Normalize service/item name */
-export const normalize = (s) => String(s ?? "").trim().toLowerCase();
-
 /** Build service map: serviceName(lowercased) -> { category, name } */
 export function buildServiceMap(services /* active only */) {
   const m = new Map();
@@ -111,7 +123,8 @@ export function buildServiceMap(services /* active only */) {
 export function classifyTx(t, serviceMap) {
   const item = normalize(t.item);
   if (serviceMap.has(item)) {
-    const cat = normalize(serviceMap.get(item).category);
+    const svc = serviceMap.get(item);
+    const cat = normalize(svc.category);
     // New values: 'sale' / 'expense'
     // Legacy fallback: 'debit' (old sale) / 'credit' (old expense)
     if (cat === 'sale' || cat === 'debit') return 'sale';
@@ -120,6 +133,17 @@ export function classifyTx(t, serviceMap) {
   if (String(t.item) === 'Expenses') return 'expense';
   if (item) return 'unknownSale';
   return null;
+}
+
+/** Determine if a transaction is 'retail' or 'service' based on the service catalog type */
+export function getBusinessType(t, serviceMap) {
+  const item = normalize(t.item);
+  if (serviceMap.has(item)) {
+    return serviceMap.get(item).type || 'service';
+  }
+  // Fallback heuristics
+  if (item.includes('print') || item.includes('scan') || item.includes('photo')) return 'service';
+  return 'retail'; // Assume retail for others if unknown
 }
 
 /** Amount of a transaction */
@@ -318,4 +342,150 @@ export function buildTrendSeries({
   }
 
   return out;
+}
+
+/** 
+ * Build series for hourly transaction volume.
+ * Returns array of { hour: 0-23, count: number, sales: number }
+ */
+export function buildHourlySeries(transactions) {
+  const hours = Array.from({ length: 24 }, (_, i) => ({ hour: i, count: 0, sales: 0 }));
+
+  (transactions || []).forEach(t => {
+    if (t.isDeleted || t.financialCategory !== 'Revenue') return;
+    const ts = t.timestamp?.seconds
+      ? dayjs.unix(t.timestamp.seconds).tz(ZONE)
+      : dayjs(t.timestamp).tz(ZONE);
+
+    if (!ts.isValid()) return;
+    const h = ts.hour();
+    hours[h].count += 1;
+    hours[h].sales += txAmount(t);
+  });
+  return hours;
+}
+
+/**
+ * Classify a transaction for financial reporting (Revenue, COGS, OPEX, etc.)
+ */
+export function classifyFinancialTx(t, serviceMap = new Map()) {
+  const res = { type: 'none', amount: 0, cost: 0 };
+  if (!t || t.isDeleted) return res;
+
+  // 1. Basic Filters
+  if (isPcRentalTx(t) || t.item === 'New Debt' || t.item === 'Paid Debt') return res;
+
+  const amt = txAmount(t);
+  res.amount = amt;
+  const normItem = normalize(t.item);
+
+  // 2. Modern Classification (financialCategory)
+  if (t.financialCategory) {
+    if (t.financialCategory === 'Revenue') {
+      res.type = 'revenue';
+      if (t.unitCost) {
+        res.cost = Number(t.unitCost) * Number(t.quantity || 1);
+      }
+    } else if (t.financialCategory === 'COGS') {
+      res.type = 'cogs';
+    } else if (t.financialCategory === 'OPEX') {
+      res.type = 'opex';
+    } else if (t.financialCategory === 'CAPEX') {
+      res.type = 'capex';
+    }
+    return res;
+  }
+
+  // 3. Legacy Fallback
+  // Heuristic for expenses
+  const isExp = t.category === 'expense' || !!t.expenseType || normItem === 'expenses' || t.amount < 0;
+
+  if (isExp) {
+    if (isCapitalExpense(t)) {
+      res.type = 'capex';
+    } else {
+      res.type = 'opex';
+    }
+  } else {
+    // Assume Revenue
+    res.type = 'revenue';
+  }
+
+  return res;
+}
+
+/**
+ * Calculate core metrics (Sales, Expenses, Profit) consistently.
+ * EXCLUDES PC Rental from transaction sum (as it's usually counted from shifts).
+ */
+export function calculateMetrics(transactions = [], shifts = [], serviceMap = new Map()) {
+  let sales = 0;
+  let expenses = 0;
+
+  // 1. PC Rental from shifts
+  shifts.forEach(s => {
+    sales += Number(s.pcRentalTotal || 0);
+  });
+
+  // 2. Regular transactions
+  (transactions || []).forEach(t => {
+    const cf = classifyFinancialTx(t, serviceMap);
+    if (cf.type === 'revenue') {
+      sales += cf.amount;
+    } else if (cf.type === 'opex' || cf.type === 'cogs') {
+      expenses += Math.abs(cf.amount);
+    }
+  });
+
+  return {
+    sales,
+    expenses,
+    profit: sales - expenses
+  };
+}
+
+/**
+ * Find the earliest valid timestamp across transactions and shifts.
+ * Returns null if no data.
+ */
+export function getEarliestDate(transactions = [], shifts = []) {
+  let earliest = null;
+
+  const compare = (ts) => {
+    if (!ts) return;
+    const d = dayjs(ts.seconds ? ts.seconds * 1000 : ts);
+    if (!d.isValid()) return;
+    if (!earliest || d.isBefore(earliest)) earliest = d;
+  };
+
+  transactions.forEach(t => compare(t.timestamp));
+  shifts.forEach(s => compare(s.startTime));
+
+  return earliest ? earliest.toDate() : null;
+}
+
+/**
+ * Aggregate consumables used across transactions.
+ * Returns array of { itemId, name, qty }
+ */
+export function buildConsumptionSeries(transactions, serviceMap) {
+  const map = {};
+
+  (transactions || []).forEach(t => {
+    if (t.isDeleted || !t.consumables || t.consumables.length === 0) return;
+
+    const qtySold = Number(t.quantity || 1);
+    t.consumables.forEach(c => {
+      if (!map[c.itemId]) {
+        map[c.itemId] = {
+          itemId: c.itemId,
+          name: c.itemName || 'Unknown Item',
+          qty: 0
+        };
+      }
+      map[c.itemId].qty += (Number(c.qty) * qtySold);
+    });
+  });
+
+  return Object.values(map).sort((a, b) => b.qty - a.qty);
 }

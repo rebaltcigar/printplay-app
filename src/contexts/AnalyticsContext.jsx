@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, getDocs, orderBy, Timestamp } from 'firebase/firestore';
-import { getRange } from '../services/analyticsService';
+import { getRange, getEarliestDate } from '../services/analyticsService';
 
 const AnalyticsContext = createContext();
 
@@ -18,15 +18,25 @@ export function AnalyticsProvider({ children }) {
     const [transactions, setTransactions] = useState([]);
     const [shifts, setShifts] = useState([]);
     const [services, setServices] = useState([]);
+    const [invoices, setInvoices] = useState([]);
 
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
+    const allTimeStart = useMemo(() => {
+        // We find the earliest date once we have some data, 
+        // but for initial fetch of 'allTime', we need a reasonable baseline.
+        // If we haven't fetched allTime yet, we might not know the REAL start.
+        // However, we can use a "metadata" approach if needed.
+        // FOR NOW: allow the context to refine the range once data is loaded.
+        const earliest = getEarliestDate(transactions, shifts);
+        return earliest;
+    }, [transactions, shifts]);
+
     // --- Computed Range ---
     const r = useMemo(() => {
-        // Pass any custom month/year overrides if we add them later
-        return getRange(preset, null, null);
-    }, [preset]);
+        return getRange(preset, null, allTimeStart);
+    }, [preset, allTimeStart]);
 
     // --- 1. Fetch Services (Static / Rare Update) ---
     useEffect(() => {
@@ -65,21 +75,30 @@ export function AnalyticsProvider({ children }) {
             where("startTime", "<=", Timestamp.fromDate(r.endUtc))
         );
 
+        const invoiceQuery = query(
+            collection(db, "invoices"),
+            where("createdAt", ">=", Timestamp.fromDate(r.startUtc)),
+            where("createdAt", "<=", Timestamp.fromDate(r.endUtc))
+        );
+
         // --- FETCHERS ---
         let unsubTx = () => { };
         let unsubShifts = () => { };
+        let unsubInvoices = () => { };
 
         const fetchData = async () => {
             try {
                 if (isHistorical) {
                     console.log(`[Analytics] Performing ONE-TIME fetch for ${preset}...`);
-                    const [txSnap, shiftSnap] = await Promise.all([
+                    const [txSnap, shiftSnap, invSnap] = await Promise.all([
                         getDocs(txQuery),
-                        getDocs(shiftQuery)
+                        getDocs(shiftQuery),
+                        getDocs(invoiceQuery)
                     ]);
 
                     setTransactions(txSnap.docs.map(d => ({ id: d.id, ...d.data() })));
                     setShifts(shiftSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+                    setInvoices(invSnap.docs.map(d => ({ id: d.id, ...d.data() })));
                     setLoading(false);
                 } else {
                     console.log(`[Analytics] Subscribing to REAL-TIME updates for ${preset}...`);
@@ -92,7 +111,11 @@ export function AnalyticsProvider({ children }) {
 
                     unsubShifts = onSnapshot(shiftQuery, (snap) => {
                         setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-                        setLoading(false); // Assume done when both connect, simple approx
+                    }, (err) => setError(err));
+
+                    unsubInvoices = onSnapshot(invoiceQuery, (snap) => {
+                        setInvoices(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                        setLoading(false);
                     }, (err) => setError(err));
                 }
             } catch (err) {
@@ -107,6 +130,7 @@ export function AnalyticsProvider({ children }) {
         return () => {
             try { if (unsubTx) unsubTx(); } catch (e) { console.warn("Firebase unsub err:", e); }
             try { if (unsubShifts) unsubShifts(); } catch (e) { console.warn("Firebase unsub err:", e); }
+            try { if (unsubInvoices) unsubInvoices(); } catch (e) { console.warn("Firebase unsub err:", e); }
         };
 
     }, [r.startUtc, r.endUtc, preset]); // Re-run when range changes
@@ -118,9 +142,10 @@ export function AnalyticsProvider({ children }) {
         transactions,
         shifts,
         services,
+        invoices,
         loading,
         error
-    }), [preset, r, transactions, shifts, services, loading, error]);
+    }), [preset, r, transactions, shifts, services, invoices, loading, error]);
 
     return (
         <AnalyticsContext.Provider value={value}>

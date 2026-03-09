@@ -11,6 +11,7 @@
 
 | Version | Branch | Status |
 |---------|--------|--------|
+| v0.6.0 | `feature/reporting-analytics` | Released |
 | v0.5.1 | `main` | Released |
 | v0.5 | `feature/retail-inventory` | Released |
 | v0.4.5 | `main` | Released |
@@ -22,21 +23,8 @@
 | v0.2.0 | `feature/catalog-foundation` | Merged |
 | v0.1.32 | `feature/next-dev-2` | Merged |
 
-## v0.6 — Reporting & Analytics ← **NEXT**
-**Goal**: Deeper business intelligence from data already being captured.
-
-- Shift breakdown by service variant (B&W vs Color, etc.)
-- Parent-level aggregation in reports ("all Document Printing" combined)
-- Paper size consumption report (from transaction attributes)
-- Retail vs Service revenue split
-- Transaction volume by hour chart
-- Invoice aging report (outstanding 0–30d, 31–60d, 60d+)
-- Staff performance leaderboard
-- Fix remaining Shift Sales vs Total Sales discrepancies
-
----
-
-## v0.7 — Automated Tests
+## v0.7 — Automated Tests ← **NEXT**
+**Goal**: Regression safety net for the POS. Must pass before every deploy touching POS code.
 **Goal**: Regression safety net for the POS. Must pass before every deploy touching POS code.
 
 Full test plan: `memory/pos-test-plan.md`. Covers item grid, tile clicks, variants, qty dialog, manual entry, cart CRUD, checkout (Cash/GCash/Charge), hotkeys, PC Rental tab, tab switching, and end-shift PC rental modes.
