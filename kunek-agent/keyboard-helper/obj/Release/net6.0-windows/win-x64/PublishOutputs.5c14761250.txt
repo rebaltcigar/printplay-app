@@ -1,0 +1,8 @@
+C:\printplay-app\kunek-agent\keyboard-helper\dist\KeyboardHelper.pdb
+C:\printplay-app\kunek-agent\keyboard-helper\dist\D3DCompiler_47_cor3.dll
+C:\printplay-app\kunek-agent\keyboard-helper\dist\PenImc_cor3.dll
+C:\printplay-app\kunek-agent\keyboard-helper\dist\PresentationNative_cor3.dll
+C:\printplay-app\kunek-agent\keyboard-helper\dist\vcruntime140_cor3.dll
+C:\printplay-app\kunek-agent\keyboard-helper\dist\wpfgfx_cor3.dll
+C:\printplay-app\kunek-agent\keyboard-helper\dist\sni.dll
+C:\printplay-app\kunek-agent\keyboard-helper\dist\KeyboardHelper.exe

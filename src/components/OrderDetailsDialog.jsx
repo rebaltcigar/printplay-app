@@ -11,7 +11,7 @@ import SaveIcon from '@mui/icons-material/Save';
 
 // Components
 import EditTransactionDialog from './EditTransactionDialog';
-import OrderCustomerDialog from './OrderCustomerDialog';
+import CustomerSelectionDrawer from './pos/CustomerSelectionDrawer';
 
 // Firebase
 import { db } from '../firebase';
@@ -242,10 +242,11 @@ export default function OrderDetailsDialog({ open, onClose, order, onUpdate, onP
                 It's designed for selecting a customer from a list or creating one.
                 If we use `OrderCustomerDialog`, passing `onSelect` handles the returned data.
             */}
-            <OrderCustomerDialog
+            <CustomerSelectionDrawer
                 open={customerDialog}
                 onClose={() => setCustomerDialog(false)}
-                onSelect={handleUpdateCustomer}
+                currentCustomer={currentCustomer}
+                onSelectCustomer={handleUpdateCustomer}
             />
         </Dialog>
     );

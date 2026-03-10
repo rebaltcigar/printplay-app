@@ -1,6 +1,22 @@
-# Kunek — Release History
+---
 
-Completed versions archived from ROADMAP.md. CHANGELOG.md has the authoritative diff-level record; this file preserves design decisions, schema changes, and rationale.
+ ## v0.7.4 — PC Timer UI Overhaul & Unified Logic (2026-03-10)
+ Branch: `main`
+
+ **Goal**: Professionalize the PC Map dashboard and unify session management into a single, high-polish flow.
+
+ **Why**: The initial PC Map was visually inconsistent with the rest of the Kunek POS. Cashiers also needed a more streamlined way to "Top up" (add time) without using a separate, less featured dialog.
+
+ **Refined Infrastructure:**
+ - **Unified `StartSessionDialog.jsx`**: Replaced the separate `ExtendTimeDialog`. It now handles both new session setup and time extension for active sessions.
+ - **High-Density Table View**: Implemented a "Pondo-style" table to handle 50+ PCs with ease, providing comprehensive details in a single view.
+ - **Standardized PC Cards**: Redesigned Grid view tiles to match the 145x160px and iconography of POS "Service" tiles for a more premium look.
+
+ **Features:**
+ - **"By Amount" First Input**: Optimized for the most common use case where customers pay a specific amount (e.g., ₱20).
+ - **Real-time Conversion**: Shows hours/minutes equivalent instantly as the amount is typed (and vice-versa).
+ - **Checkout Parity**: Top-ups now support the full Kunek checkout experience: digital payments (GCash/Maya/Bank), discounts, and detailed transaction logs.
+ - **Context Menu parity**: Right-click functionality implemented for both PC cards AND table rows, including Pause/Resume and Maintenance toggles.
 
 ---
  
@@ -51,9 +67,17 @@ customers/{id}
 - **Shared UI**: `CustomerForm.jsx` ensures consistency between Admin and POS.
 - **POS Modernization**: Minimalist 'Walk-in' display with dedicated selection drawer.
 - **Cleanup**: Stripped dead code from `POS.jsx` (~100 lines removed).
- 
----
 
+## v0.8.0 - PC Timer Phase 2: Members & Persistence (2026-03-10)
+- **Member Authentication**: Added username/password support for member accounts (`customers` collection).
+- **Security**: Implemented forced password change on first login for all members (default `123`).
+- **Session Persistence**: Implemented "Save Balance" (save unused time to account) and "Use Balance" (resume session from account minutes).
+- **Wallet Top-up**: Added standalone `WalletTopupDialog` for member account credits.
+- **Agent Login**: Implemented secure member login and resume flow on the `kunek-agent` lock screen.
+- **Bidirectional IPC**: Enhanced service-to-launcher bridge for real-time authentication feedback.
+- **Deduction logic**: Integrated atomic Firestore `increment()` for safe balance management.
+
+---
 
 ## v0.3.0 — Invoice & Charge Management (2026-03-07)
 Branch: `feature/invoice-management`

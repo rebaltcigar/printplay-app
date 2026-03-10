@@ -1,0 +1,2 @@
+C:\printplay-app\kunek-agent\dist\KeyboardHelper.pdb
+C:\printplay-app\kunek-agent\dist\KeyboardHelper.exe

@@ -25,6 +25,25 @@ export default function CustomerForm({ formData, onChange, disabled = false, aut
             />
             <Stack direction="row" spacing={2}>
                 <ValidatedInput
+                    label="Username (Login)"
+                    rule="text"
+                    fullWidth
+                    value={formData.username || ''}
+                    onChange={handleChange('username')}
+                    disabled={disabled}
+                    placeholder="Min 4 characters, no spaces"
+                />
+                <ValidatedInput
+                    label="Password"
+                    rule="text"
+                    fullWidth
+                    value={formData.password || '123'}
+                    onChange={handleChange('password')}
+                    disabled={disabled}
+                />
+            </Stack>
+            <Stack direction="row" spacing={2}>
+                <ValidatedInput
                     label="Phone"
                     rule="phone"
                     fullWidth

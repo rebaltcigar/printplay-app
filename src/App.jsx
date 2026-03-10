@@ -28,6 +28,7 @@ import {
   setDoc,
   addDoc,
   updateDoc,
+  onSnapshot,
   collection,
   query,
   where,
@@ -59,30 +60,33 @@ export default function App() {
   const [staffDisplayName, setStaffDisplayName] = useState('');
 
   // App-wide settings (fetched once, passed to all pages — avoids per-component flash)
+  // App-wide settings (fetched once, passed to all pages — avoids per-component flash)
   const [appSettings, setAppSettings] = useState(null);
 
   useEffect(() => {
-    getDoc(doc(db, 'settings', 'config'))
-      .then(async snap => {
-        const data = snap.exists() ? snap.data() : {};
-        // Preload logo so it's in cache before the gate opens — prevents image flash
-        if (data.logoUrl) {
-          const converted = convertLogoUrl(data.logoUrl);
-          await new Promise(resolve => {
-            const img = new Image();
-            img.onload = img.onerror = resolve;
-            img.src = converted;
-          });
-          data.logoUrl = converted; // store converted in appSettings
-        }
-        setAppSettings(data);
-      })
-      .catch(() => setAppSettings({}));
+    console.log("[App] Subscribing to Settings...");
+    const unsub = onSnapshot(doc(db, 'settings', 'config'), async (snap) => {
+      const data = snap.exists() ? snap.data() : {};
+      // Preload logo so it's in cache before the gate opens
+      if (data.logoUrl) {
+        const converted = convertLogoUrl(data.logoUrl);
+        await new Promise(resolve => {
+          const img = new Image();
+          img.onload = img.onerror = resolve;
+          img.src = converted;
+        });
+        data.logoUrl = converted;
+      }
+      console.log("[App] Settings Loaded:", data.storeName || "Kunek");
+      setAppSettings(data);
+    });
+    return () => unsub();
   }, []);
 
-  // ------------------ AUTH BOOTSTRAP ------------------
+  // ------------------ AUTH BOOTSTRAP  // 1. Initial Auth State
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
+      console.log("[App] Auth State Changed:", user ? `UID: ${user.uid}` : "Logged Out");
       try {
         if (!user) {
           // reset everything on sign out

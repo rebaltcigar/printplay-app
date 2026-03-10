@@ -1,0 +1,7 @@
+node_modules/
+# node-windows generates these next to the script
+*.wrapper.js
+*.exe
+*.log
+# Don't commit provisioned config (contains secrets)
+# config.json lives in C:\ProgramData\KunekAgent\, not here

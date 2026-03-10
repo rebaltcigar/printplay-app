@@ -45,7 +45,6 @@ import POSEntryPanel from './pos/POSEntryPanel';
 import POSCartPanel from './pos/POSCartPanel';
 
 // Lazy load dialogs & drawers
-const CustomerDialog = lazy(() => import('./CustomerDialog'));
 const CheckoutDialog = lazy(() => import('./CheckoutDialog'));
 const ExpenseDrawer = lazy(() => import('./pos/ExpenseDrawer'));
 const POSInvoiceLookupDrawer = lazy(() => import('./pos/POSInvoiceLookupDrawer'));

@@ -36,6 +36,11 @@ import PeopleIcon from "@mui/icons-material/People";
 import BadgeIcon from "@mui/icons-material/Badge";
 import EventNoteIcon from "@mui/icons-material/EventNote";
 import ListItemIcon from "@mui/material/ListItemIcon";
+import MonitorIcon from "@mui/icons-material/Monitor";
+import ComputerIcon from "@mui/icons-material/Computer";
+import GridViewIcon from "@mui/icons-material/GridView";
+import TimerIcon from "@mui/icons-material/Timer";
+import LocalOfferIcon from "@mui/icons-material/LocalOffer";
 
 import StoreSettings from "./admin/StoreSettings"; // Used in Settings wrapper? No, replaced by Settings.jsx
 import Settings from "./admin/Settings";
@@ -63,6 +68,11 @@ import Schedule from "./admin/Schedule";
 import ReceivablesReport from "./admin/ReceivablesReport";
 import InvoiceManagement from "./admin/InvoiceManagement";
 import CustomerManagement from "./admin/CustomerManagement";
+import StationMap from "./StationMap";
+import Zones from "./admin/Zones";
+import Rates from "./admin/Rates";
+import Packages from "./admin/Packages";
+import Stations from "./admin/Stations";
 
 export default function AdminDashboard({ user, userRole, onLogout, appSettings }) {
   // Router hooks
@@ -122,6 +132,12 @@ export default function AdminDashboard({ user, userRole, onLogout, appSettings }
     { label: "Schedule", path: "schedule", icon: <EventNoteIcon /> },
     { label: "Payroll", path: "payroll", icon: <BadgeIcon /> },
     { label: "Settings", path: "settings", icon: <SettingsIcon /> },
+    // ── PC Timer ──
+    { label: "PC Map", path: "pcmap", icon: <MonitorIcon />, dividerBefore: true },
+    { label: "Zones", path: "zones", icon: <GridViewIcon /> },
+    { label: "Rates", path: "rates", icon: <TimerIcon /> },
+    { label: "Packages", path: "packages", icon: <LocalOfferIcon /> },
+    { label: "Stations", path: "stations", icon: <ComputerIcon /> },
   ];
 
   // Helper to determine active tab based on path
@@ -177,7 +193,9 @@ export default function AdminDashboard({ user, userRole, onLogout, appSettings }
             {tabs.map((t) => {
               const active = isTabActive(t);
               return (
-                <Tooltip key={t.path} title={!sidebarOpen && !isMobileSidebar ? t.label : ""} placement="right">
+                <React.Fragment key={t.path}>
+                {t.dividerBefore && <Divider sx={{ my: 1 }} />}
+                <Tooltip title={!sidebarOpen && !isMobileSidebar ? t.label : ""} placement="right">
                   <ListItemButton
                     selected={active}
                     onClick={() => handleNavigate(t.path)}
@@ -209,6 +227,7 @@ export default function AdminDashboard({ user, userRole, onLogout, appSettings }
                     {(sidebarOpen || isMobileSidebar) && <ListItemText primary={t.label} primaryTypographyProps={{ variant: 'body2', fontWeight: active ? 600 : 400 }} />}
                   </ListItemButton>
                 </Tooltip>
+                </React.Fragment>
               );
             })}
           </List>
@@ -417,6 +436,34 @@ export default function AdminDashboard({ user, userRole, onLogout, appSettings }
                   <Settings user={user} showSnackbar={showSnackbar} isActive={true} />
                 </Box>
               } />
+
+              {/* ── PC Timer ── */}
+              <Route path="pcmap" element={
+                <Box sx={{ height: '100%', overflow: 'hidden' }}>
+                  <StationMap showSnackbar={showSnackbar} />
+                </Box>
+              } />
+              <Route path="zones" element={
+                <Box sx={{ p: 0, height: '100%', overflow: 'hidden' }}>
+                  <Zones showSnackbar={showSnackbar} />
+                </Box>
+              } />
+              <Route path="rates" element={
+                <Box sx={{ p: 0, height: '100%', overflow: 'hidden' }}>
+                  <Rates showSnackbar={showSnackbar} />
+                </Box>
+              } />
+              <Route path="packages" element={
+                <Box sx={{ p: 0, height: '100%', overflow: 'hidden' }}>
+                  <Packages showSnackbar={showSnackbar} />
+                </Box>
+              } />
+              <Route path="stations" element={
+                <Box sx={{ p: 0, height: '100%', overflow: 'hidden' }}>
+                  <Stations showSnackbar={showSnackbar} />
+                </Box>
+              } />
+
               {/* Fallback */}
               <Route path="*" element={<Navigate to="/admin" replace />} />
             </Routes>

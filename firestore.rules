@@ -228,5 +228,58 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow write: if isAdmin();
     }
+
+    /* ══════════════ PC TIMER SYSTEM ══════════════ */
+
+    /* ---------- PC Timer: Zones ---------- */
+    match /zones/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    /* ---------- PC Timer: Rates ---------- */
+    match /rates/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    /* ---------- PC Timer: Packages ---------- */
+    match /packages/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    /* ---------- PC Timer: Stations ---------- */
+    match /stations/{stationId} {
+      allow read: if isSignedIn();
+      allow create, delete: if isAdmin();
+      // Admin: full update
+      // Agent (email/password user bound to this station via agentUid field): heartbeat fields only
+      allow update: if isAdmin() || isStaff() ||
+        (
+          isSignedIn() &&
+          resource.data.agentUid == request.auth.uid &&
+          request.resource.data.diff(resource.data).changedKeys().hasOnly([
+            'agentLastPing', 'isOnline', 'agentVersion', 'ipAddress'
+          ])
+        );
+    }
+
+    /* ---------- PC Timer: Sessions ---------- */
+    match /sessions/{sessionId} {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin() || isStaff();
+      allow delete: if isAdmin();
+    }
+
+    /* ---------- PC Timer: Station Logs (append-only) ---------- */
+    match /station_logs/{logId} {
+      allow read: if isSignedIn();
+      // Admin, staff, or agent service account can append logs
+      allow create: if isAdmin() || isStaff() ||
+        (isSignedIn() && request.auth.token.stationId != null);
+      // Never modify or delete — audit trail integrity
+      allow update, delete: if false;
+    }
   }
 }

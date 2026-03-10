@@ -64,7 +64,7 @@ import { computeShiftFinancials } from "../utils/shiftFinancials";
 import { useStaffList } from "../hooks/useStaffList";
 import { useServiceList } from "../hooks/useServiceList";
 
-import CustomerDialog from "./CustomerDialog";
+import CustomerSelectionDrawer from "./pos/CustomerSelectionDrawer";
 import ShiftConsolidationDialog from "./ShiftConsolidationDialog";
 import ShiftAuditDebugger from "./ShiftAuditDebugger";
 import DetailDrawer from "./common/DetailDrawer";
@@ -1145,18 +1145,13 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
       </Dialog>
 
       {/* Customer Dialog */}
-      <CustomerDialog
+      <CustomerSelectionDrawer
         open={openCustomerDialog}
         onClose={() => setOpenCustomerDialog(false)}
+        currentCustomer={selectedCustomer}
         onSelectCustomer={handleSelectCustomer}
-        user={{ email: shift.staffEmail }}
       />
 
-      <CustomerDialog
-        open={openCustomerDialog}
-        onClose={() => setOpenCustomerDialog(false)}
-        onSelect={handleSelectCustomer}
-      />
 
       {/* Consolidation Dialog */}
       {consolidationOpen && (
