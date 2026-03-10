@@ -50,8 +50,7 @@ import MeetingRoomIcon from '@mui/icons-material/MeetingRoom';
 import DrawerDialog from "./DrawerDialog";
 import { openDrawer } from "../services/drawerService";
 
-import { auth } from "../firebase";
-import { signOut } from "firebase/auth";
+import { supabase } from "../supabase";
 
 import Shifts from "./Shifts";
 import ExpenseManagement from "./ExpenseManagement";
@@ -152,7 +151,7 @@ export default function AdminDashboard({ user, userRole, onLogout, appSettings }
   const handleLogout = async () => {
     try {
       if (onLogout) await onLogout();
-      else await signOut(auth);
+      else await supabase.auth.signOut();
     } catch (e) {
       console.error("Admin logout failed:", e);
     }

@@ -1,50 +1,41 @@
 'use strict';
 
-const {
-    collection, query, where, getDocs,
-    doc, updateDoc, serverTimestamp,
-    limit
-} = require('firebase/firestore');
-const { getDB } = require('./firebase');
+const { getSupabase } = require('./supabase');
 const logger = require('./logger');
 
 /**
- * Verifies member credentials against Firestore.
+ * Verifies member credentials against Supabase.
  * @returns {Promise<{success: boolean, member?: object, error?: string}>}
  */
 async function authenticateMember(username, password) {
     try {
-        const db = getDB();
+        const supabase = getSupabase();
         const lowerUser = username.trim().toLowerCase();
 
         // Find member by username
-        const q = query(
-            collection(db, 'customers'),
-            where('username', '==', lowerUser),
-            limit(1)
-        );
+        const { data: member, error } = await supabase
+            .from('customers')
+            .select('*')
+            .eq('username', lowerUser)
+            .single();
 
-        const snap = await getDocs(q);
-        if (snap.empty) {
+        if (error || !member) {
             return { success: false, error: 'Invalid username or password' };
         }
 
-        const memberDoc = snap.docs[0];
-        const memberData = memberDoc.data();
-
         // Verify password (plain text check as requested by user)
-        if (memberData.password !== password) {
+        if (member.password !== password) {
             return { success: false, error: 'Invalid username or password' };
         }
 
         return {
             success: true,
             member: {
-                id: memberDoc.id,
-                username: memberData.username,
-                fullName: memberData.fullName,
-                minutesRemaining: memberData.minutesRemaining || 0,
-                forcePasswordChange: !!memberData.forcePasswordChange
+                id: member.id,
+                username: member.username,
+                fullName: member.full_name,
+                minutesRemaining: member.minutes_remaining || 0,
+                forcePasswordChange: !!member.force_password_change
             }
         };
     } catch (err) {
@@ -58,14 +49,16 @@ async function authenticateMember(username, password) {
  */
 async function updateMemberPassword(memberId, newPassword) {
     try {
-        const db = getDB();
-        const memberRef = doc(db, 'customers', memberId);
-
-        await updateDoc(memberRef, {
-            password: newPassword,
-            forcePasswordChange: false,
-            updatedAt: serverTimestamp()
-        });
+        const supabase = getSupabase();
+        
+        await supabase
+            .from('customers')
+            .update({
+                password: newPassword,
+                force_password_change: false,
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', memberId);
 
         return { success: true };
     } catch (err) {

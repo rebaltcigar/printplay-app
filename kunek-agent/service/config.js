@@ -27,7 +27,7 @@ function loadConfig() {
   const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
   _config = JSON.parse(raw);
 
-  const required = ['stationId', 'agentEmail', 'agentPassword', 'firestoreProjectId', 'firebaseApiKey'];
+  const required = ['stationId', 'agentEmail', 'agentPassword', 'supabaseUrl', 'supabaseAnonKey'];
   for (const field of required) {
     if (!_config[field]) throw new Error(`config.json missing required field: ${field}`);
   }

@@ -17,10 +17,7 @@ import StoreIcon from '@mui/icons-material/Store';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
-import {
-  collection, addDoc, updateDoc, deleteDoc, doc, query, where, onSnapshot, writeBatch
-} from 'firebase/firestore';
-import { db } from '../../firebase';
+import { supabase } from '../../supabase';
 import ConfirmationReasonDialog from '../ConfirmationReasonDialog';
 import PageHeader from '../common/PageHeader';
 import SummaryCards from '../common/SummaryCards';
@@ -64,23 +61,41 @@ export default function ServiceCatalog({ showSnackbar }) {
   });
 
   useEffect(() => {
-    const q = query(collection(db, 'services'), where('category', '==', 'Sale'));
-    const unsub = onSnapshot(q, snap => {
-      setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-    return () => unsub();
+    const channel = supabase
+      .channel('products-sale-changes')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'products',
+        filter: 'financial_category=eq.Sale',
+      }, () => {
+        // Reload on any change
+        supabase.from('products').select('*').eq('financial_category', 'Sale')
+          .then(({ data }) => {
+            if (data) setItems(data);
+          });
+      })
+      .subscribe();
+
+    // Initial load
+    supabase.from('products').select('*').eq('financial_category', 'Sale')
+      .then(({ data }) => {
+        if (data) setItems(data);
+      });
+
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
-  // Live view of the editing parent doc (reactive — updates when Firestore changes)
+  // Live view of the editing parent doc (reactive — updates when items changes)
   const editingParent = useMemo(() =>
-    editing && !editing.parentServiceId ? items.find(i => i.id === editing.id) : null,
+    editing && !editing.parent_service_id ? items.find(i => i.id === editing.id) : null,
     [items, editing]
   );
 
   const variantChildren = useMemo(() =>
     editing
-      ? items.filter(i => i.parentServiceId === editing.id)
-        .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+      ? items.filter(i => i.parent_service_id === editing.id)
+        .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
       : [],
     [items, editing]
   );
@@ -97,11 +112,11 @@ export default function ServiceCatalog({ showSnackbar }) {
 
   // Groups for editing a child opened via table Edit button
   const parentGroupsForChild = useMemo(() => {
-    if (!editing?.parentServiceId) return [];
-    const parentDoc = items.find(i => i.id === editing.parentServiceId);
+    if (!editing?.parent_service_id) return [];
+    const parentDoc = items.find(i => i.id === editing.parent_service_id);
     const defined = parentDoc?.variantGroups || [];
     const result = [...defined];
-    items.filter(i => i.parentServiceId === editing.parentServiceId).forEach(s => {
+    items.filter(i => i.parent_service_id === editing.parent_service_id).forEach(s => {
       if (s.variantGroup && !result.includes(s.variantGroup)) result.push(s.variantGroup);
     });
     return result;
@@ -111,15 +126,15 @@ export default function ServiceCatalog({ showSnackbar }) {
 
   const sortedAndGroupedItems = useMemo(() => {
     const source = editOrderMode ? orderedItems : items;
-    const top = source.filter(i => !i.parentServiceId).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+    const top = source.filter(i => !i.parent_service_id).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
     const childMap = source.reduce((acc, item) => {
-      if (item.parentServiceId) {
-        if (!acc[item.parentServiceId]) acc[item.parentServiceId] = [];
-        acc[item.parentServiceId].push(item);
+      if (item.parent_service_id) {
+        if (!acc[item.parent_service_id]) acc[item.parent_service_id] = [];
+        acc[item.parent_service_id].push(item);
       }
       return acc;
     }, {});
-    for (const pid in childMap) childMap[pid].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+    for (const pid in childMap) childMap[pid].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
     const result = [];
     top.forEach(parent => {
       result.push(parent);
@@ -130,8 +145,8 @@ export default function ServiceCatalog({ showSnackbar }) {
 
   const summaryCards = useMemo(() => {
     const total = items.length;
-    const services = items.filter(i => i.type === 'service').length;
-    const retail = items.filter(i => i.type === 'retail').length;
+    const services = items.filter(i => i.category === 'service').length;
+    const retail = items.filter(i => i.category === 'retail').length;
     const inactive = items.filter(i => !i.active).length;
     return [
       { label: 'Total Items', value: String(total), icon: <CategoryIcon />, color: 'primary.main', highlight: true },
@@ -143,7 +158,7 @@ export default function ServiceCatalog({ showSnackbar }) {
 
   const onChange = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
 
-  const isEditingChild = Boolean(editing?.parentServiceId);
+  const isEditingChild = Boolean(editing?.parent_service_id);
   // Two-pane layout only when editing an existing variant parent
   const isTwoPane = form.hasVariants && !isEditingChild && Boolean(editing);
 
@@ -171,22 +186,22 @@ export default function ServiceCatalog({ showSnackbar }) {
   const startEdit = (item) => {
     setEditing(item);
     setForm({
-      serviceName: item.serviceName || '',
+      serviceName: item.name || '',
       price: Number(item.price || 0),
       active: Boolean(item.active ?? true),
-      adminOnly: Boolean(item.adminOnly ?? false),
-      type: item.type || 'service',
-      costPrice: item.costPrice || '',
-      trackStock: Boolean(item.trackStock),
-      stockCount: item.stockCount || 0,
-      lowStockThreshold: item.lowStockThreshold || 5,
+      adminOnly: Boolean(item.admin_only ?? false),
+      type: item.category || 'service',
+      costPrice: item.cost_price || '',
+      trackStock: Boolean(item.track_stock),
+      stockCount: item.stock_count || 0,
+      lowStockThreshold: item.low_stock_threshold || 5,
       hasVariants: Boolean(item.hasVariants),
       posIcon: item.posIcon || '',
       priceType: item.priceType || (item.price > 0 ? 'fixed' : 'variable'),
       pricingNote: item.pricingNote || '',
       variantGroup: item.variantGroup || '',
       posLabel: item.posLabel || '',
-      parentServiceId: item.parentServiceId || null,
+      parent_service_id: item.parent_service_id || null,
       consumables: item.consumables || [],
     });
     setVariantAddOpen(false);
@@ -207,7 +222,8 @@ export default function ServiceCatalog({ showSnackbar }) {
       return;
     }
     try {
-      await updateDoc(doc(db, 'services', editing.id), { variantGroups: [...current, trimmed] });
+      const { error } = await supabase.from('products').update({ variantGroups: [...current, trimmed] }).eq('id', editing.id);
+      if (error) throw error;
       setNewGroupName('');
     } catch (e) {
       showSnackbar?.('Failed to add group.', 'error');
@@ -222,7 +238,8 @@ export default function ServiceCatalog({ showSnackbar }) {
     }
     const current = editingParent?.variantGroups || [];
     try {
-      await updateDoc(doc(db, 'services', editing.id), { variantGroups: current.filter(g => g !== name) });
+      const { error } = await supabase.from('products').update({ variantGroups: current.filter(g => g !== name) }).eq('id', editing.id);
+      if (error) throw error;
     } catch (e) {
       showSnackbar?.('Failed to remove group.', 'error');
     }
@@ -233,17 +250,17 @@ export default function ServiceCatalog({ showSnackbar }) {
   const save = async () => {
     const isVariantParent = Boolean(form.hasVariants) && !isEditingChild;
     const payload = {
-      serviceName: String(form.serviceName).trim(),
+      name: String(form.serviceName).trim(),
       price: isVariantParent ? 0 : Number(form.price || 0),
       active: Boolean(form.active),
-      category: 'Sale',
-      parentServiceId: isEditingChild ? editing.parentServiceId : null,
-      adminOnly: Boolean(form.adminOnly),
-      type: form.type,
-      costPrice: Number(form.costPrice || 0),
-      trackStock: Boolean(form.trackStock),
-      stockCount: Number(form.stockCount || 0),
-      lowStockThreshold: Number(form.lowStockThreshold || 0),
+      financial_category: 'Sale',
+      parent_service_id: isEditingChild ? editing.parent_service_id : null,
+      admin_only: Boolean(form.adminOnly),
+      category: form.type,
+      cost_price: Number(form.costPrice || 0),
+      track_stock: Boolean(form.trackStock),
+      stock_count: Number(form.stockCount || 0),
+      low_stock_threshold: Number(form.lowStockThreshold || 0),
       hasVariants: isVariantParent,
       posIcon: isEditingChild ? '' : (form.posIcon || ''),
       priceType: form.priceType || 'fixed',
@@ -252,7 +269,7 @@ export default function ServiceCatalog({ showSnackbar }) {
       posLabel: isEditingChild ? (form.posLabel?.trim() || '') : '',
       consumables: form.consumables || [],
     };
-    if (!payload.serviceName) {
+    if (!payload.name) {
       showSnackbar?.('Item name is required.', 'error');
       return;
     }
@@ -262,16 +279,19 @@ export default function ServiceCatalog({ showSnackbar }) {
     }
     try {
       if (editing) {
-        await updateDoc(doc(db, 'services', editing.id), payload);
+        const { error } = await supabase.from('products').update(payload).eq('id', editing.id);
+        if (error) throw error;
       } else {
-        const topLevel = items.filter(i => !i.parentServiceId);
-        const maxSort = topLevel.reduce((m, i) => Math.max(m, i.sortOrder || 0), 0);
-        payload.sortOrder = maxSort + 1;
+        const topLevel = items.filter(i => !i.parent_service_id);
+        const maxSort = topLevel.reduce((m, i) => Math.max(m, i.sort_order || 0), 0);
+        payload.sort_order = maxSort + 1;
         if (isVariantParent) payload.variantGroups = [];
-        const newDoc = await addDoc(collection(db, 'services'), payload);
+        const newId = crypto.randomUUID();
+        const { data: newData, error } = await supabase.from('products').insert([{ id: newId, ...payload }]).select().single();
+        if (error) throw error;
         if (isVariantParent) {
           // Reopen in edit mode — two-pane activates so admin can add groups + variants
-          setEditing({ id: newDoc.id, ...payload });
+          setEditing({ id: newId, ...payload });
           showSnackbar?.('Item saved! Define groups and add variants.', 'success');
           return;
         }
@@ -295,26 +315,28 @@ export default function ServiceCatalog({ showSnackbar }) {
       showSnackbar?.('Fixed price must be greater than 0.', 'error');
       return;
     }
-    const siblings = items.filter(i => i.parentServiceId === editing.id);
-    const maxSort = siblings.reduce((m, i) => Math.max(m, i.sortOrder || 0), 0);
+    const siblings = items.filter(i => i.parent_service_id === editing.id);
+    const maxSort = siblings.reduce((m, i) => Math.max(m, i.sort_order || 0), 0);
     try {
-      await addDoc(collection(db, 'services'), {
-        serviceName: variantAddForm.serviceName.trim(),
+      const { error } = await supabase.from('products').insert([{
+        id: crypto.randomUUID(),
+        name: variantAddForm.serviceName.trim(),
         price: variantAddForm.priceType === 'variable' ? 0 : Number(variantAddForm.price || 0),
         active: variantAddForm.active,
-        category: 'Sale',
-        parentServiceId: editing.id,
-        adminOnly: false,
-        type: editing.type || 'service',
-        costPrice: 0, trackStock: false, stockCount: 0, lowStockThreshold: 5,
+        financial_category: 'Sale',
+        parent_service_id: editing.id,
+        admin_only: false,
+        category: editing.category || 'service',
+        cost_price: 0, track_stock: false, stock_count: 0, low_stock_threshold: 5,
         hasVariants: false,
         variantGroup: variantAddForm.variantGroup,
         posLabel: variantAddForm.posLabel.trim(),
         posIcon: '',
         priceType: variantAddForm.priceType,
         pricingNote: variantAddForm.pricingNote.trim(),
-        sortOrder: maxSort + 1,
-      });
+        sort_order: maxSort + 1,
+      }]);
+      if (error) throw error;
       setVariantAddForm(BLANK_VARIANT_FORM);
       setVariantAddOpen(false);
       showSnackbar?.('Variant added!', 'success');
@@ -329,15 +351,16 @@ export default function ServiceCatalog({ showSnackbar }) {
       return;
     }
     try {
-      await updateDoc(doc(db, 'services', editingVariantId), {
-        serviceName: variantEditForm.serviceName.trim(),
+      const { error } = await supabase.from('products').update({
+        name: variantEditForm.serviceName.trim(),
         price: variantEditForm.priceType === 'variable' ? 0 : Number(variantEditForm.price || 0),
         active: variantEditForm.active,
         variantGroup: variantEditForm.variantGroup,
         posLabel: variantEditForm.posLabel.trim(),
         priceType: variantEditForm.priceType,
         pricingNote: variantEditForm.pricingNote.trim(),
-      });
+      }).eq('id', editingVariantId);
+      if (error) throw error;
       setEditingVariantId(null);
       setVariantEditForm({});
       showSnackbar?.('Variant updated!', 'success');
@@ -349,7 +372,7 @@ export default function ServiceCatalog({ showSnackbar }) {
   const startEditVariant = (child) => {
     setEditingVariantId(child.id);
     setVariantEditForm({
-      serviceName: child.serviceName || '',
+      serviceName: child.name || '',
       variantGroup: child.variantGroup || '',
       posLabel: child.posLabel || '',
       priceType: child.priceType || 'fixed',
@@ -363,11 +386,12 @@ export default function ServiceCatalog({ showSnackbar }) {
   const removeVariant = (variant) => {
     setConfirmDialog({
       open: true, title: 'Delete Variant',
-      message: `Delete "${variant.serviceName}"? This cannot be undone.`,
+      message: `Delete "${variant.name}"? This cannot be undone.`,
       requireReason: false, confirmText: 'Delete', confirmColor: 'error',
       onConfirm: async () => {
         try {
-          await deleteDoc(doc(db, 'services', variant.id));
+          const { error } = await supabase.from('products').delete().eq('id', variant.id);
+          if (error) throw error;
           if (editingVariantId === variant.id) setEditingVariantId(null);
           showSnackbar?.('Variant deleted.', 'success');
         } catch (e) {
@@ -378,18 +402,17 @@ export default function ServiceCatalog({ showSnackbar }) {
   };
 
   const remove = (item) => {
-    const children = items.filter(i => i.parentServiceId === item.id);
-    let message = `Delete "${item.serviceName}"?`;
+    const children = items.filter(i => i.parent_service_id === item.id);
+    let message = `Delete "${item.name}"?`;
     if (children.length > 0) message += ` This will also delete its ${children.length} variant(s).`;
     setConfirmDialog({
       open: true, title: 'Delete Item', message,
       requireReason: false, confirmText: 'Delete Permanently', confirmColor: 'error',
       onConfirm: async () => {
         try {
-          const batch = writeBatch(db);
-          batch.delete(doc(db, 'services', item.id));
-          children.forEach(c => batch.delete(doc(db, 'services', c.id)));
-          await batch.commit();
+          const idsToDelete = [item.id, ...children.map(c => c.id)];
+          const { error } = await supabase.from('products').delete().in('id', idsToDelete);
+          if (error) throw error;
           showSnackbar?.('Item deleted.', 'success');
         } catch (e) {
           showSnackbar?.('Failed to delete item.', 'error');
@@ -405,8 +428,8 @@ export default function ServiceCatalog({ showSnackbar }) {
     reordered.splice(result.destination.index, 0, removed);
     const movedItem = reordered[result.destination.index];
     const itemBefore = reordered[result.destination.index - 1];
-    if (movedItem.parentServiceId !== (itemBefore?.parentServiceId || null)) {
-      if (itemBefore?.parentServiceId && !movedItem.parentServiceId) {
+    if (movedItem.parent_service_id !== (itemBefore?.parent_service_id || null)) {
+      if (itemBefore?.parent_service_id && !movedItem.parent_service_id) {
         showSnackbar?.('Cannot move a parent item into a child group.', 'warning');
         return;
       }
@@ -417,15 +440,14 @@ export default function ServiceCatalog({ showSnackbar }) {
   const startReorder = () => { setOrderedItems(sortedAndGroupedItems); setEditOrderMode(true); };
 
   const saveReorder = async () => {
-    const batch = writeBatch(db);
     const counters = {};
-    orderedItems.forEach(item => {
-      const gid = item.parentServiceId || 'toplevel';
+    const updates = orderedItems.map(item => {
+      const gid = item.parent_service_id || 'toplevel';
       counters[gid] = (counters[gid] || 0) + 1;
-      batch.update(doc(db, 'services', item.id), { sortOrder: counters[gid] });
+      return supabase.from('products').update({ sort_order: counters[gid] }).eq('id', item.id);
     });
     try {
-      await batch.commit();
+      await Promise.all(updates);
       showSnackbar?.('New order saved!', 'success');
       setEditOrderMode(false);
     } catch (e) {
@@ -638,7 +660,7 @@ export default function ServiceCatalog({ showSnackbar }) {
               const baseItem = items.find(i => i.id === cons.itemId);
               return (
                 <Stack key={cons.itemId} direction="row" spacing={1} alignItems="center">
-                  <Typography variant="body2" sx={{ flex: 1 }}>{baseItem?.serviceName || 'Unknown Item'}</Typography>
+                  <Typography variant="body2" sx={{ flex: 1 }}>{baseItem?.name || 'Unknown Item'}</Typography>
                   <TextField
                     size="small"
                     label="Qty used"
@@ -676,8 +698,8 @@ export default function ServiceCatalog({ showSnackbar }) {
                   }}
                 >
                   {items
-                    .filter(i => i.type === 'retail' && i.id !== editing?.id)
-                    .map(i => <MenuItem key={i.id} value={i.id}>{i.serviceName}</MenuItem>)
+                    .filter(i => i.category === 'retail' && i.id !== editing?.id)
+                    .map(i => <MenuItem key={i.id} value={i.id}>{i.name}</MenuItem>)
                   }
                 </Select>
               </FormControl>
@@ -835,7 +857,7 @@ export default function ServiceCatalog({ showSnackbar }) {
                       borderRadius: 1, '&:hover': { bgcolor: 'action.hover' }
                     }}>
                       <Box flex={1} minWidth={0}>
-                        <Typography variant="body2" noWrap>{child.serviceName}</Typography>
+                        <Typography variant="body2" noWrap>{child.name}</Typography>
                         {child.posLabel && (
                           <Typography variant="caption" color="text.secondary" noWrap>{child.posLabel}</Typography>
                         )}
@@ -925,12 +947,12 @@ export default function ServiceCatalog({ showSnackbar }) {
   // ── Dialog title ──
   const dialogTitle = editing
     ? (isEditingChild
-      ? `Edit Variant — ${itemMap.get(editing.parentServiceId)?.serviceName ?? ''}`
-      : `Edit: ${editing.serviceName}`)
+      ? `Edit Variant — ${itemMap.get(editing.parent_service_id)?.name ?? ''}`
+      : `Edit: ${editing.name}`)
     : 'Add New Catalog Item';
   const dialogSubtitle = editing
     ? (isEditingChild
-      ? `Variant of: ${itemMap.get(editing.parentServiceId)?.serviceName ?? '—'}`
+      ? `Variant of: ${itemMap.get(editing.parent_service_id)?.name ?? '—'}`
       : isTwoPane ? 'Item settings on the left · Groups and variants on the right' : 'Service or retail product')
     : 'Configure a new service or retail product';
 
@@ -988,15 +1010,15 @@ export default function ServiceCatalog({ showSnackbar }) {
                               hover
                             >
                               {editOrderMode && <TableCell><ReorderIcon sx={{ cursor: 'grab', opacity: 0.5 }} /></TableCell>}
-                              <TableCell sx={{ pl: item.parentServiceId ? 4 : 2, fontWeight: item.parentServiceId ? 400 : 600 }}>
+                              <TableCell sx={{ pl: item.parent_service_id ? 4 : 2, fontWeight: item.parent_service_id ? 400 : 600 }}>
                                 <Box display="flex" alignItems="center" gap={1}>
-                                  {item.serviceName}
+                                  {item.name}
                                   {item.hasVariants && (
-                                    <Tooltip title={`${sortedAndGroupedItems.filter(i => i.parentServiceId === item.id).length} variant(s) — click Edit to manage`}>
+                                    <Tooltip title={`${sortedAndGroupedItems.filter(i => i.parent_service_id === item.id).length} variant(s) — click Edit to manage`}>
                                       <Chip
                                         size="small"
                                         icon={<AccountTreeIcon sx={{ fontSize: '0.75rem !important' }} />}
-                                        label={sortedAndGroupedItems.filter(i => i.parentServiceId === item.id).length}
+                                        label={sortedAndGroupedItems.filter(i => i.parent_service_id === item.id).length}
                                         sx={{ height: 18, fontSize: '0.7rem', '& .MuiChip-label': { px: 0.75 } }}
                                         variant="outlined" color="primary"
                                       />
@@ -1014,10 +1036,10 @@ export default function ServiceCatalog({ showSnackbar }) {
                                 <span style={{
                                   textTransform: 'uppercase', fontSize: '0.75rem',
                                   padding: '2px 6px', borderRadius: 4,
-                                  background: item.type === 'retail' ? '#e8f5e9' : '#e3f2fd',
-                                  color: item.type === 'retail' ? '#2e7d32' : '#1565c0'
+                                  background: item.category === 'retail' ? '#e8f5e9' : '#e3f2fd',
+                                  color: item.category === 'retail' ? '#2e7d32' : '#1565c0'
                                 }}>
-                                  {item.type || 'service'}
+                                  {item.category || 'service'}
                                 </span>
                               </TableCell>
                               <TableCell>
@@ -1029,15 +1051,15 @@ export default function ServiceCatalog({ showSnackbar }) {
                                 }
                               </TableCell>
                               <TableCell>
-                                {item.trackStock
-                                  ? <span style={{ color: item.stockCount <= (item.lowStockThreshold || 0) ? 'red' : 'inherit', fontWeight: 'bold' }}>{item.stockCount}</span>
+                                {item.track_stock
+                                  ? <span style={{ color: item.stock_count <= (item.low_stock_threshold || 0) ? 'red' : 'inherit', fontWeight: 'bold' }}>{item.stock_count}</span>
                                   : <span style={{ opacity: 0.5 }}>—</span>
                                 }
                               </TableCell>
                               <TableCell align="center" sx={{ fontWeight: 'bold' }}>{item.active ? '✓' : ''}</TableCell>
                               <TableCell align="center">
                                 {editOrderMode
-                                  ? <Typography variant="caption">{item.sortOrder}</Typography>
+                                  ? <Typography variant="caption">{item.sort_order}</Typography>
                                   : (
                                     <>
                                       <IconButton size="small" onClick={() => startEdit(item)}><EditIcon fontSize="small" /></IconButton>

@@ -1,32 +1,42 @@
 // src/hooks/useServiceList.js
-// Single Firestore subscription for the services collection.
-// Replaces duplicate onSnapshot(collection(db, 'services')) in:
-//   Shifts.jsx, ShiftDetailView.jsx, Transactions.jsx
-//
-// Returns:
-//   allServices         - Raw array of all service docs (id + data)
-//   serviceMeta         - [{ name, category }] for aggregateShiftTransactions (Shifts.jsx)
-//   parentServices      - Parent service objects with id/serviceName/price (ShiftDetailView.jsx)
-//   parentServiceNames  - [string] parent names (Transactions.jsx edit dialog)
-//   expenseServiceNames - [string] expense sub-service names (ShiftDetailView, Transactions)
-//   variantChildren     - All items with a parentServiceId (non-expense). Used by admin dropdowns.
-//   loading             - true until first snapshot arrives
-
 import { useEffect, useMemo, useState } from 'react';
-import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
-import { db } from '../firebase';
+import { supabase } from '../supabase';
 
 export function useServiceList() {
     const [allServices, setAllServices] = useState([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const q = query(collection(db, 'services'), orderBy('sortOrder'));
-        const unsub = onSnapshot(q, (snap) => {
-            setAllServices(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        const fetchServices = async () => {
+            const { data, error } = await supabase
+                .from('products')
+                .select('*')
+                .order('sort_order', { ascending: true });
+
+            if (data) {
+                const mapped = data.map(d => ({
+                    id: d.id,
+                    ...d,
+                    serviceName: d.name,
+                    parentServiceId: d.parent_service_id,
+                    sortOrder: d.sort_order,
+                    adminOnly: d.admin_only,
+                    financialCategory: d.financial_category,
+                    costPrice: d.cost_price
+                }));
+                setAllServices(mapped);
+            }
+            if (error) console.error("Error fetching services:", error);
             setLoading(false);
-        });
-        return () => unsub();
+        };
+
+        fetchServices();
+
+        const channel = supabase.channel('public:products:useServiceList')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, fetchServices)
+            .subscribe();
+
+        return () => supabase.removeChannel(channel);
     }, []);
 
     // { name, category } for aggregateShiftTransactions (Shifts.jsx)

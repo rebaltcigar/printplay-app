@@ -1,8 +1,7 @@
 'use strict';
 
-const { doc, updateDoc, serverTimestamp } = require('firebase/firestore');
-const { getDB } = require('./firebase');
 const { getConfig } = require('./config');
+const { updateStationPing } = require('./supabaseService');
 const logger = require('./logger');
 
 const HEARTBEAT_INTERVAL_MS = 60 * 1000; // 60 seconds
@@ -12,10 +11,9 @@ let intervalId = null;
 async function writeHeartbeat() {
   try {
     const { stationId } = getConfig();
-    await updateDoc(doc(getDB(), 'stations', stationId), {
-      agentLastPing: serverTimestamp(),
-      isOnline: true,
-    });
+    const agentVersion = require('../package.json').version || '1.0.0';
+    
+    await updateStationPing(stationId, true, agentVersion);
     logger.debug('Heartbeat written');
   } catch (err) {
     // Expected to fail when offline — that's OK

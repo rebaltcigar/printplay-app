@@ -5,7 +5,6 @@ import {
     TableRow, TableCell, Stack, IconButton, Divider
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
-import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import PrintIcon from '@mui/icons-material/Print';
 import SaveIcon from '@mui/icons-material/Save';
 
@@ -13,10 +12,7 @@ import SaveIcon from '@mui/icons-material/Save';
 import EditTransactionDialog from './EditTransactionDialog';
 import CustomerSelectionDrawer from './pos/CustomerSelectionDrawer';
 
-// Firebase
-import { db } from '../firebase';
-import { collection, query, where, getDocs, doc, updateDoc, writeBatch, serverTimestamp, orderBy } from 'firebase/firestore';
-
+import { supabase } from '../supabase';
 import { fmtCurrency, fmtDateTime } from '../utils/formatters';
 const currency = fmtCurrency;
 
@@ -30,27 +26,25 @@ export default function OrderDetailsDialog({ open, onClose, order, onUpdate, onP
     // Order-level overrides (customer info)
     const [currentCustomer, setCurrentCustomer] = useState(null);
 
-    // Fetch Transactions Live
+    // Fetch order items
     useEffect(() => {
-        if (open && order?.orderNumber) {
+        if (open && order?.id) {
             setLoading(true);
-            const q = query(
-                collection(db, 'transactions'),
-                where('orderNumber', '==', order.orderNumber)
-            );
-            getDocs(q).then(snap => {
-                const docs = snap.docs
-                    .map(d => ({ id: d.id, ...d.data() }))
-                    .filter(d => d.isDeleted !== true);
-                setTransactions(docs);
-                setLoading(false);
-            });
+            supabase
+                .from('order_items')
+                .select('*')
+                .eq('parent_order_id', order.id)
+                .eq('is_deleted', false)
+                .then(({ data }) => {
+                    if (data) setTransactions(data);
+                    setLoading(false);
+                });
             setCurrentCustomer({
-                customerName: order.customerName,
-                customerPhone: order.customerPhone,
-                customerAddress: order.customerAddress,
-                customerTin: order.customerTin,
-                customerId: order.customerId
+                customerName: order.customer_name,
+                customerPhone: order.customer_phone,
+                customerAddress: order.customer_address,
+                customerTin: order.customer_tin,
+                customerId: order.customer_id
             });
         }
     }, [open, order]);
@@ -61,14 +55,21 @@ export default function OrderDetailsDialog({ open, onClose, order, onUpdate, onP
     };
 
     const handleSaveTx = async (id, updates) => {
-        // Save to DB immediately (Transaction Level)
+        // Map old field names (item, total) to Supabase snake_case (name, amount)
+        const payload = {
+            name: updates.item || updates.name,
+            quantity: updates.quantity,
+            price: updates.price,
+            amount: updates.total ?? updates.amount,
+            is_edited: true,
+        };
         try {
-            await updateDoc(doc(db, 'transactions', id), updates);
-            // Refresh
-            setTransactions(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
+            const { error } = await supabase.from('order_items').update(payload).eq('id', id);
+            if (error) throw error;
+            setTransactions(prev => prev.map(t => t.id === id ? { ...t, ...payload } : t));
             setEditTxDialog(false);
         } catch (e) {
-            console.error("Error updating tx:", e);
+            console.error("Error updating order item:", e);
             showSnackbar?.("Failed to update transaction", 'error');
         }
     };
@@ -85,40 +86,19 @@ export default function OrderDetailsDialog({ open, onClose, order, onUpdate, onP
         setCustomerDialog(false);
     };
 
-    const total = transactions.reduce((sum, t) => sum + (t.total || 0), 0);
-    const canConfirm = transactions.length > 0; // Check something?
+    const total = transactions.reduce((sum, t) => sum + Number(t.amount || 0), 0);
 
     const syncOrderDoc = async () => {
-        // Sync the 'orders' doc with latest transaction data and customer info
-        const orderRef = doc(db, 'orders', order.id);
-
-        // Reconstruct items list for the order doc (snapshot)
-        const items = transactions.map(t => ({
-            name: t.item,
-            serviceName: t.item, // Compatibility
-            quantity: t.quantity,
-            price: t.price,
-            total: t.total,
-            subtotal: t.total,
-            notes: t.notes
-        }));
-
-        await updateDoc(orderRef, {
-            items: items,
-            total: total,
+        const { error } = await supabase.from('orders').update({
+            customer_name: currentCustomer.customerName,
+            customer_phone: currentCustomer.customerPhone || null,
+            customer_address: currentCustomer.customerAddress || null,
+            customer_tin: currentCustomer.customerTin || null,
+            customer_id: currentCustomer.customerId || null,
+            total,
             subtotal: total,
-            customerName: currentCustomer.customerName,
-            customerPhone: currentCustomer.customerPhone || null,
-            customerAddress: currentCustomer.customerAddress || null,
-            customerTin: currentCustomer.customerTin || null,
-            customerId: currentCustomer.customerId || null,
-            updatedAt: serverTimestamp(),
-            // Ensure payment fields are present even if not changed here
-            paymentMethod: order.paymentMethod || 'Cash',
-            amountTendered: order.amountTendered || 0,
-            change: order.change || 0,
-            paymentDetails: order.paymentDetails || {}
-        });
+        }).eq('id', order.id);
+        if (error) throw error;
     };
 
     const handleConfirm = async () => {
@@ -129,25 +109,24 @@ export default function OrderDetailsDialog({ open, onClose, order, onUpdate, onP
 
     const handlePrintConfirm = async () => {
         await syncOrderDoc();
-        // Construct print object
         const fullOrder = {
             ...order,
-            items: transactions.map(t => ({ // Use latest items
-                name: t.item,
-                serviceName: t.item,
+            items: transactions.map(t => ({
+                name: t.name,
+                serviceName: t.name,
                 quantity: t.quantity,
                 price: t.price,
-                subtotal: t.total,
-                total: t.total
+                subtotal: t.amount,
+                total: t.amount
             })),
-            total: total,
+            total,
             subtotal: total,
             customerName: currentCustomer.customerName,
             customerPhone: currentCustomer.customerPhone,
             customerAddress: currentCustomer.customerAddress,
             customerTin: currentCustomer.customerTin,
         };
-        onPrint(fullOrder); // callback to print
+        onPrint(fullOrder);
         onClose();
     };
 
@@ -155,7 +134,7 @@ export default function OrderDetailsDialog({ open, onClose, order, onUpdate, onP
         <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
             <DialogTitle>
                 <Box display="flex" justifyContent="space-between" alignItems="center">
-                    <Typography variant="h6">Order #{order?.orderNumber}</Typography>
+                    <Typography variant="h6">Order #{order?.order_number}</Typography>
                     <Typography variant="body2" color="text.secondary">
                         {order?.timestamp ? fmtDateTime(order.timestamp) : ''}
                     </Typography>
@@ -200,12 +179,11 @@ export default function OrderDetailsDialog({ open, onClose, order, onUpdate, onP
                         {transactions.map(tx => (
                             <TableRow key={tx.id}>
                                 <TableCell>
-                                    <Typography variant="body2">{tx.item}</Typography>
-                                    {tx.notes && <Typography variant="caption" color="text.secondary" display="block">{tx.notes}</Typography>}
+                                    <Typography variant="body2">{tx.name}</Typography>
                                 </TableCell>
                                 <TableCell align="right">{tx.quantity}</TableCell>
                                 <TableCell align="right">{currency(tx.price)}</TableCell>
-                                <TableCell align="right">{currency(tx.total)}</TableCell>
+                                <TableCell align="right">{currency(tx.amount)}</TableCell>
                                 <TableCell align="center">
                                     <IconButton size="small" onClick={() => handleEditTx(tx)}>
                                         <EditIcon fontSize="small" />
@@ -231,17 +209,12 @@ export default function OrderDetailsDialog({ open, onClose, order, onUpdate, onP
                 </Button>
             </DialogActions>
 
-            {/* Sub-Dialogs */}
             <EditTransactionDialog
                 open={editTxDialog}
                 onClose={() => setEditTxDialog(false)}
                 transaction={editingTx}
                 onSave={handleSaveTx}
             />
-            {/* Reuse OrderCustomerDialog. NOTE: It expects `onSelect` and `onClose`. 
-                It's designed for selecting a customer from a list or creating one.
-                If we use `OrderCustomerDialog`, passing `onSelect` handles the returned data.
-            */}
             <CustomerSelectionDrawer
                 open={customerDialog}
                 onClose={() => setCustomerDialog(false)}

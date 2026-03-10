@@ -1,5 +1,24 @@
 ---
-
+ 
+ ## v0.9.0 — Supabase Migration Complete (2026-03-11)
+ Branch: `main`
+ 
+ **Goal**: Full migration of the primary data layer from Firebase to Supabase.
+ 
+ **Why**: To leverage a robust relational database (Postgres), improve real-time performance, and consolidate the infrastructure under Supabase.
+ 
+ **New Infrastructure:**
+ - **Supabase Database (Postgres)**: Migrated all collections (stations, sessions, customers, services, etc.) to relational tables.
+ - **Kunek Agent v2.0**: Re-engineered client agent with native Supabase Realtime support and improved state machine logic.
+ - **Real-time Subscriptions**: Standardized on Supabase Postgres changes for sub-second UI updates across the POS and Admin dashboards.
+ 
+ **Features:**
+ - **Unified PC Timer UI**: Professionalized PC Map dashboard with high-density table views and Pondo-style tiles.
+ - **Full Firebase Removal**: Scrubbed all `firebase` SDKs, config files, and Cloud Functions from the main app and agent.
+ - **Optimized Boot Sequence**: Faster app initialization by pre-fetching critical settings and auth state via Supabase.
+ 
+ ---
+ 
  ## v0.7.4 — PC Timer UI Overhaul & Unified Logic (2026-03-10)
  Branch: `main`
 

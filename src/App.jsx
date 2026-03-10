@@ -15,25 +15,8 @@ import ForcePasswordReset from "./components/common/ForcePasswordReset.jsx";
 import { AnalyticsProvider } from "./contexts/AnalyticsContext";
 import { GlobalUIProvider } from "./contexts/GlobalUIContext.jsx";
 
-import { auth, db } from "./firebase";
-import {
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  signOut,
-} from "firebase/auth";
-import {
-  doc,
-  getDoc,
-  getDocs,
-  setDoc,
-  addDoc,
-  updateDoc,
-  onSnapshot,
-  collection,
-  query,
-  where,
-  serverTimestamp,
-} from "firebase/firestore";
+import { supabase } from "./supabase";
+
 import { generateDisplayId } from "./services/orderService";
 import { convertLogoUrl } from "./services/brandingService";
 import { canAccessAdmin } from "./utils/permissions";
@@ -60,33 +43,84 @@ export default function App() {
   const [staffDisplayName, setStaffDisplayName] = useState('');
 
   // App-wide settings (fetched once, passed to all pages — avoids per-component flash)
-  // App-wide settings (fetched once, passed to all pages — avoids per-component flash)
   const [appSettings, setAppSettings] = useState(null);
 
   useEffect(() => {
     console.log("[App] Subscribing to Settings...");
-    const unsub = onSnapshot(doc(db, 'settings', 'config'), async (snap) => {
-      const data = snap.exists() ? snap.data() : {};
-      // Preload logo so it's in cache before the gate opens
-      if (data.logoUrl) {
-        const converted = convertLogoUrl(data.logoUrl);
-        await new Promise(resolve => {
-          const img = new Image();
-          img.onload = img.onerror = resolve;
-          img.src = converted;
-        });
-        data.logoUrl = converted;
+
+    const fetchSettings = async () => {
+      const { data, error } = await supabase.from('settings').select('*').eq('id', 'config').maybeSingle();
+      let mappedData = {
+        storeName: "Kunek",
+        pcRentalEnabled: true,
+        currencySymbol: "₱",
+        paymentMethods: {}
+      };
+
+      if (data) {
+        mappedData = {
+          storeName: data.store_name,
+          logoUrl: data.logo_url,
+          address: data.address,
+          phone: data.phone,
+          mobile: data.mobile,
+          email: data.email,
+          tin: data.tin,
+          currencySymbol: data.currency_symbol,
+          taxRate: data.tax_rate,
+          receiptFooter: data.receipt_footer,
+          showTaxBreakdown: data.show_tax_breakdown,
+          drawerHotkey: data.drawer_hotkey,
+          checkoutHotkey: data.checkout_hotkey,
+          idPrefixes: data.id_prefixes,
+          shiftDurationHours: data.shift_duration_hours,
+          shiftAlertMinutes: data.shift_alert_minutes,
+          schedulePostingFrequency: data.schedule_posting_frequency,
+          pcRentalEnabled: data.pc_rental_enabled,
+          pcRentalMode: data.pc_rental_mode,
+          pcRentalServiceId: data.pc_rental_service_id,
+          invoiceDueDays: data.invoice_due_days,
+          paymentMethods: data.payment_methods,
+          drawerSignalType: data.drawer_signal_type
+        };
+
+        // Preload logo so it's in cache before the gate opens
+        if (mappedData.logoUrl) {
+          const converted = convertLogoUrl(mappedData.logoUrl);
+          await new Promise(resolve => {
+            const img = new Image();
+            img.onload = img.onerror = resolve;
+            img.src = converted;
+          });
+          mappedData.logoUrl = converted;
+        }
       }
-      console.log("[App] Settings Loaded:", data.storeName || "Kunek");
-      setAppSettings(data);
-    });
-    return () => unsub();
+      
+      console.log("[App] Settings Loaded:", mappedData.storeName);
+      setAppSettings(mappedData);
+    };
+
+    fetchSettings();
+
+    const channel = supabase.channel('public:settings')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'settings', filter: 'id=eq.config' }, fetchSettings)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
   // ------------------ AUTH BOOTSTRAP  // 1. Initial Auth State
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (user) => {
-      console.log("[App] Auth State Changed:", user ? `UID: ${user.uid}` : "Logged Out");
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      const user = session?.user || null;
+      console.log(`[App] Auth Event: ${event}`, user ? `(User: ${user.email})` : "(No User)");
+
+      // Sticky recovery flag for this event cycle
+      const isRecovery = (event === "PASSWORD_RECOVERY");
+      if (isRecovery) {
+        setRequiresPasswordReset(true);
+      }
+
       try {
         if (!user) {
           // reset everything on sign out
@@ -99,56 +133,59 @@ export default function App() {
           setClockInMode(false);
           setClockInLogId(null);
           setStaffDisplayName('');
-          return;
-        }
-
-        // Look up user role
-        const userRef = doc(db, "users", user.uid);
-        const userSnap = await getDoc(userRef);
-        if (!userSnap.exists()) {
-          // Unknown user — sign out for safety
-          await signOut(auth);
-          return;
-        }
-
-        const userData = userSnap.data();
-        const role = userData?.role || null;
-        setCurrentUser(user);
-        setUserRole(role);
-        setRequiresPasswordReset(userData?.requiresPasswordReset || false);
-        setStaffDisplayName(userData?.fullName || userData?.name || userData?.displayName || user.displayName || user.email || '');
-
-        if (role === "staff") {
-          // If staff, fetch current active shift if any
-          const statusRef = doc(db, "app_status", "current_shift");
-          const statusSnap = await getDoc(statusRef);
-          if (
-            statusSnap.exists() &&
-            statusSnap.data()?.activeShiftId &&
-            statusSnap.data()?.staffEmail === user.email
-          ) {
-            const shiftId = statusSnap.data().activeShiftId;
-            setActiveShiftId(shiftId);
-
-            // Fetch period and start time to display
-            const shiftRef = doc(db, "shifts", shiftId);
-            const shiftSnap = await getDoc(shiftRef);
-            if (shiftSnap.exists()) {
-              const shiftData = shiftSnap.data();
-              setActiveShiftPeriod(shiftData?.shiftPeriod || "");
-              const st = shiftData?.startTime;
-              if (st?.seconds) setShiftStartTime(new Date(st.seconds * 1000));
-              else if (st instanceof Date) setShiftStartTime(st);
-            }
-          } else {
-            setActiveShiftId(null);
-            setActiveShiftPeriod("");
-          }
         } else {
-          // Superadmin: no shift state needed
-          setActiveShiftId(null);
-          setActiveShiftPeriod("");
+          // Look up user role
+          const { data: userData, error } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle();
+
+          if (error || !userData) {
+            // Unknown user — sign out for safety
+            await supabase.auth.signOut();
+          } else {
+            const role = userData?.role || null;
+            setCurrentUser(user);
+            setUserRole(role);
+            
+            // Only set from profile if not currently in a recovery flow
+            if (isRecovery) {
+              setRequiresPasswordReset(true);
+            } else {
+              setRequiresPasswordReset(userData?.requires_password_reset || false);
+            }
+            
+            setStaffDisplayName(userData?.full_name || userData?.email || user.email || '');
+
+            if (role === "staff") {
+              // If staff, fetch current active shift if any
+              const { data: statusData } = await supabase.from('app_status').select('*').eq('id', 'current_shift').maybeSingle();
+
+              if (
+                statusData &&
+                statusData.active_shift_id &&
+                statusData.staff_email === user.email
+              ) {
+                const shiftId = statusData.active_shift_id;
+                setActiveShiftId(shiftId);
+
+                // Fetch period and start time to display
+                const { data: shiftData } = await supabase.from('shifts').select('*').eq('id', shiftId).maybeSingle();
+                if (shiftData) {
+                  setActiveShiftPeriod(shiftData.shift_period || "");
+                  if (shiftData.start_time) {
+                    setShiftStartTime(new Date(shiftData.start_time));
+                  }
+                }
+              } else {
+                setActiveShiftId(null);
+                setActiveShiftPeriod("");
+              }
+            } else {
+              // Superadmin: no shift state needed
+              setActiveShiftId(null);
+              setActiveShiftPeriod("");
+            }
+          }
         }
+
       } catch (err) {
         console.warn("Auth bootstrap error:", err);
       } finally {
@@ -156,7 +193,9 @@ export default function App() {
       }
     });
 
-    return () => unsub();
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   // ------------------ HANDLERS ------------------
@@ -173,99 +212,124 @@ export default function App() {
    * Throws on auth failure, suspension, or shift conflict.
    */
   const handleLogin = async (email, password) => {
-    // Firebase sign-in
-    const cred = await signInWithEmailAndPassword(auth, email, password);
+    // Supabase sign-in
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email, password });
 
-    // Fetch user doc for role
-    const userSnap = await getDoc(doc(db, "users", cred.user.uid));
-    if (!userSnap.exists()) {
-      await signOut(auth).catch(() => { });
-      const e = new Error("No account record found. Contact your administrator.");
+    if (authError || !authData.user) {
+      throw authError;
+    }
+
+    const { user } = authData;
+
+    // 1. Try finding by ID (standard Supabase way)
+    let { data: userData } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle();
+
+    // 2. If not found by ID, try finding by Email (Migration Fallback)
+    if (!userData) {
+      console.log(`[App] Profile not found by ID, attempting Email lookup for: ${user.email}`);
+      const { data: emailMatch, error: emailErr } = await supabase.from('profiles').select('*').eq('email', user.email).maybeSingle();
+      
+      if (emailMatch) {
+        console.log(`[App] Found profile by email! Bridging the session for: ${user.email}`);
+        
+        // Attempt to heal the link, but don't block login if RLS stops us
+        supabase.from('profiles').update({ id: user.id }).eq('email', user.email).then(({ error }) => {
+          if (error) console.error("[App] Link repair blocked by RLS (Expected):", error.message);
+          else console.log("[App] Link repair successful.");
+        });
+
+        // Use the profile found by email
+        userData = { ...emailMatch };
+      }
+    }
+
+    if (!userData) {
+      console.error("[App] Login blocked: No profile found for", user.email);
+      await supabase.auth.signOut().catch(() => { });
+      const e = new Error(`Access Denied: No profile found for ${user.email}. Please ensure your email is correct in the database.`);
       e.code = "auth/user-not-found";
       throw e;
     }
 
-    const userData = userSnap.data();
-
-    if (userData?.suspended === true) {
-      await signOut(auth).catch(() => { });
+    if (userData.suspended === true) {
+      await supabase.auth.signOut().catch(() => { });
       const e = new Error("This account has been suspended. Please contact your administrator.");
       e.code = "auth/account-suspended";
       throw e;
     }
 
-    const role = userData?.role || null;
+    const role = userData.role || null;
     // ── Admin path — bypasses shift lock entirely ──
     if (canAccessAdmin(role)) {
-      setCurrentUser(cred.user);
+      setCurrentUser(user);
       setUserRole(role);
       return { type: "admin" };
     }
 
     // ── Staff path ──
     if (role !== "staff") {
-      await signOut(auth).catch(() => { });
+      await supabase.auth.signOut().catch(() => { });
       const e = new Error("Unrecognized account role. Contact your administrator.");
       e.code = "auth/user-disabled";
       throw e;
     }
 
     // Check shift lock only for staff
-    const statusRef = doc(db, "app_status", "current_shift");
-    const statusSnap = await getDoc(statusRef);
-    const lock = statusSnap.exists() ? statusSnap.data() : null;
+    const { data: statusSnap } = await supabase.from('app_status').select('*').eq('id', 'current_shift').single();
+    const lock = statusSnap || null;
 
-    if (lock?.activeShiftId && lock.staffEmail !== email) {
+    if (lock?.active_shift_id && lock.staff_email !== email) {
       // Another staff owns this shift — offer clock-in instead of blocking
-      const shiftSnap = await getDoc(doc(db, "shifts", lock.activeShiftId));
-      const shiftPeriod = shiftSnap.exists() ? shiftSnap.data()?.shiftPeriod || "" : "";
+      const { data: shiftSnap } = await supabase.from('shifts').select('shift_period').eq('id', lock.active_shift_id).single();
+      const shiftPeriod = shiftSnap ? shiftSnap.shift_period || "" : "";
 
       // Try to get the cashier's display name
-      let cashierName = lock.staffEmail;
+      let cashierName = lock.staff_email;
       try {
-        const cashierSnap = await getDocs(query(collection(db, "users"), where("email", "==", lock.staffEmail)));
-        if (!cashierSnap.empty) {
-          const d = cashierSnap.docs[0].data();
-          cashierName = d.fullName || d.name || lock.staffEmail;
+        const { data: cashierSnap } = await supabase.from('profiles').select('*').eq('email', lock.staff_email).single();
+        if (cashierSnap) {
+          cashierName = cashierSnap.full_name || cashierSnap.email;
         }
       } catch { }
 
       return {
         type: "clockin",
         cashierName,
-        cashierEmail: lock.staffEmail,
-        activeShiftId: lock.activeShiftId,
+        cashierEmail: lock.staff_email,
+        activeShiftId: lock.active_shift_id,
         shiftPeriod,
       };
     }
 
     // Re-login: same staff has active shift
-    if (lock?.activeShiftId && lock.staffEmail === email) {
-      const shiftSnap = await getDoc(doc(db, "shifts", lock.activeShiftId));
-      const shiftPeriod = shiftSnap.exists() ? shiftSnap.data()?.shiftPeriod || "" : "";
+    if (lock?.active_shift_id && lock.staff_email === email) {
+      const { data: shiftSnap } = await supabase.from('shifts').select('shift_period').eq('id', lock.active_shift_id).single();
+      const shiftPeriod = shiftSnap ? shiftSnap.shift_period || "" : "";
       return { type: "relogin", shiftPeriod };
     }
 
     // Query today's own scheduled entry
     const today = todayPHT();
-    const ownSnap = await getDocs(query(
-      collection(db, "schedules"),
-      where("staffEmail", "==", email),
-    ));
-    const ownEntry = ownSnap.docs
-      .map(d => ({ id: d.id, ...d.data() }))
-      .find(e => e.date === today && (e.status === "scheduled" || e.status === "in-progress"));
-    if (ownEntry) return { type: "scheduled", scheduleEntry: ownEntry };
+    const { data: ownSnap } = await supabase.from('schedules').select('*').eq('staff_email', email);
+    const ownEntry = (ownSnap || []).find(e => e.date === today && (e.status === "scheduled" || e.status === "in-progress"));
+    if (ownEntry) return {
+      type: "scheduled", scheduleEntry: {
+        id: ownEntry.id,
+        shiftLabel: ownEntry.shift_label,
+        ...ownEntry
+      }
+    };
 
     // Query coverage entries (where this staff is covering someone)
-    const coverSnap = await getDocs(query(
-      collection(db, "schedules"),
-      where("coveredByEmail", "==", email),
-    ));
-    const coverEntry = coverSnap.docs
-      .map(d => ({ id: d.id, ...d.data() }))
-      .find(e => e.date === today && e.status === "covered");
-    if (coverEntry) return { type: "covered", scheduleEntry: coverEntry };
+    const { data: coverSnap } = await supabase.from('schedules').select('*').eq('covered_by_email', email);
+    const coverEntry = (coverSnap || []).find(e => e.date === today && e.status === "covered");
+    if (coverEntry) return {
+      type: "covered", scheduleEntry: {
+        id: coverEntry.id,
+        shiftLabel: coverEntry.shift_label,
+        ...coverEntry
+      }
+    };
 
     return { type: "fallback" };
   };
@@ -275,18 +339,18 @@ export default function App() {
    * type: 'scheduled' | 'covered' | 'relogin' | 'fallback'
    */
   const handleStartShift = async (type, scheduleEntry, shiftPeriod, notes) => {
-    const user = auth.currentUser;
+    const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Not authenticated.");
 
     // Re-login: restore state from existing lock
     if (type === "relogin") {
-      const statusSnap = await getDoc(doc(db, "app_status", "current_shift"));
-      const lock = statusSnap.data();
-      const shiftSnap = await getDoc(doc(db, "shifts", lock.activeShiftId));
+      const { data: lock } = await supabase.from('app_status').select('*').eq('id', 'current_shift').single();
+      const { data: shiftSnap } = await supabase.from('shifts').select('*').eq('id', lock.active_shift_id).single();
+
       setCurrentUser(user);
       setUserRole("staff");
-      setActiveShiftId(lock.activeShiftId);
-      setActiveShiftPeriod(shiftSnap.exists() ? shiftSnap.data()?.shiftPeriod || "" : "");
+      setActiveShiftId(lock.active_shift_id);
+      setActiveShiftPeriod(shiftSnap ? shiftSnap.shift_period || "" : "");
       return;
     }
 
@@ -294,64 +358,70 @@ export default function App() {
 
     // Create shift doc
     const displayId = await generateDisplayId("shifts", "SHIFT");
-    const shiftDocRef = await addDoc(collection(db, "shifts"), {
-      displayId,
-      staffEmail: user.email,
-      shiftPeriod: shiftLabel,
-      scheduleId: scheduleEntry?.id || null,
+
+    // Instead of auto-generating ID, let Postgres generate a UUID and return it
+    const { data: shiftDoc, error: shiftError } = await supabase.from('shifts').insert([{
+      id: crypto.randomUUID(),
+      display_id: displayId,
+      staff_email: user.email,
+      shift_period: shiftLabel,
+      schedule_id: scheduleEntry?.id || null,
       notes: notes || "",
-      startTime: serverTimestamp(),
-      endTime: null,
-    });
+      start_time: new Date().toISOString(),
+    }]).select().single();
+
+    if (shiftError) throw shiftError;
 
     // Link schedule entry → in-progress
     if (scheduleEntry?.id) {
-      await updateDoc(doc(db, "schedules", scheduleEntry.id), {
+      await supabase.from('schedules').update({
         status: "in-progress",
-        shiftId: shiftDocRef.id,
-        updatedAt: serverTimestamp(),
-      });
+        shift_id: shiftDoc.id,
+        updated_at: new Date().toISOString()
+      }).eq('id', scheduleEntry.id);
     }
 
     // Write shift lock
-    await setDoc(doc(db, "app_status", "current_shift"), {
-      activeShiftId: shiftDocRef.id,
-      staffEmail: user.email,
+    await supabase.from('app_status').upsert({
+      id: 'current_shift',
+      active_shift_id: shiftDoc.id,
+      staff_email: user.email,
     });
 
     // Update App state → triggers route to /pos
     setCurrentUser(user);
     setUserRole("staff");
-    setActiveShiftId(shiftDocRef.id);
+    setActiveShiftId(shiftDoc.id);
     setActiveShiftPeriod(shiftLabel);
   };
 
   /** Cancel pending login (sign out, Login.jsx resets phase) */
   const handleCancelLogin = async () => {
-    try { await signOut(auth); } catch { }
+    try { await supabase.auth.signOut(); } catch { }
   };
 
   /** Clock in as non-cashier staff to an existing active shift */
   const handleClockIn = async () => {
-    const user = auth.currentUser;
+    const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Not authenticated.");
 
-    const userSnap = await getDoc(doc(db, "users", user.uid));
-    const userData = userSnap.exists() ? userSnap.data() : {};
+    const { data: userData } = await supabase.from('profiles').select('*').eq('id', user.id).single();
 
     // Fetch the active shift id from the lock
-    const statusSnap = await getDoc(doc(db, "app_status", "current_shift"));
-    const lock = statusSnap.exists() ? statusSnap.data() : null;
+    const { data: lock } = await supabase.from('app_status').select('*').eq('id', 'current_shift').single();
 
     // Write clock-in log
-    const logRef = await addDoc(collection(db, "payroll_logs"), {
-      staffUid: user.uid,
-      staffEmail: user.email,
-      staffName: userData.fullName || userData.name || user.email,
-      clockIn: serverTimestamp(),
-      shiftId: lock?.activeShiftId || null,
+    const { data: logRef, error: logError } = await supabase.from('payroll_logs').insert([{
+      id: crypto.randomUUID(),
+      staff_uid: user.id,
+      staff_email: user.email,
+      staff_name: userData?.full_name || user.email,
+      clock_in: new Date().toISOString(),
+      shift_id: lock?.active_shift_id || null,
       type: "clock_in",
-    });
+    }]).select().single();
+
+    if (logError) throw logError;
 
     setCurrentUser(user);
     setUserRole("staff");
@@ -363,21 +433,21 @@ export default function App() {
   const handleClockOut = async () => {
     try {
       if (clockInLogId) {
-        await updateDoc(doc(db, "payroll_logs", clockInLogId), {
-          clockOut: serverTimestamp(),
-        });
+        await supabase.from('payroll_logs').update({
+          clock_out: new Date().toISOString(),
+        }).eq('id', clockInLogId);
       }
     } catch (err) {
       console.warn("Clock-out log update failed:", err);
     }
-    try { await signOut(auth); } catch { }
+    try { await supabase.auth.signOut(); } catch { }
     setClockInMode(false);
     setClockInLogId(null);
   };
 
   const handleAdminLogout = async () => {
     try {
-      await signOut(auth);
+      await supabase.auth.signOut();
     } catch {
       // ignore
     } finally {
@@ -389,18 +459,11 @@ export default function App() {
 
   // ------------------ RENDER ------------------
 
-  // Block rendering routes until Firebase auth state is known.
-  // On /login → blank black screen (no flash, no loader).
-  // On any other path (already-logged-in page refresh) → show loader.
   if (!authReady || !appSettings) {
-    const isLoginPage = window.location.pathname === '/login' || window.location.pathname === '/';
     return (
       <ThemeProvider theme={darkTheme}>
         <CssBaseline />
-        {isLoginPage
-          ? <Box sx={{ height: '100vh', bgcolor: 'background.default' }} />
-          : <Box sx={{ height: '100vh' }}><LoadingScreen message="Initializing..." /></Box>
-        }
+        <LoadingScreen message="Initializing Setup..." />
       </ThemeProvider>
     );
   }

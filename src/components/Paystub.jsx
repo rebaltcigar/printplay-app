@@ -17,8 +17,7 @@ import {
 } from "@mui/material";
 import DetailDrawer from "./common/DetailDrawer";
 import DownloadIcon from "@mui/icons-material/Download";
-import { db } from "../firebase";
-import { collection, getDocs, doc, getDoc } from "firebase/firestore";
+import { supabase } from "../supabase";
 import html2canvas from "html2canvas";
 import { fmtCurrency, fmtDate, fmtTime } from "../utils/formatters";
 
@@ -40,8 +39,8 @@ export function Paystub({ stub }) {
   const paystubRef = useRef(null);
   const [storeName, setStoreName] = useState('Kunek');
   useEffect(() => {
-    getDoc(doc(db, 'settings', 'config')).then(snap => {
-      if (snap.exists() && snap.data().storeName) setStoreName(snap.data().storeName);
+    supabase.from('settings').select('value').eq('id', 'config').single().then(({ data }) => {
+      if (data?.value?.storeName) setStoreName(data.value.storeName);
     }).catch(() => { });
   }, []);
 
@@ -59,14 +58,12 @@ export function Paystub({ stub }) {
       return;
     }
 
-    const payDate = stub.payDate?.seconds
-      ? new Date(stub.payDate.seconds * 1000)
-      : new Date();
+    const payDate = stub.pay_date || stub.payDate ? new Date(stub.pay_date || stub.payDate) : new Date();
     const mm = String(payDate.getMonth() + 1).padStart(2, "0");
     const dd = String(payDate.getDate()).padStart(2, "0");
     const yyyy = payDate.getFullYear();
     const dateString = `${mm}${dd}${yyyy} `;
-    const staffName = (stub.staffName || "Employee").replace(/\s+/g, "_");
+    const staffName = (stub.staff_name || stub.staffName || "Employee").replace(/\s+/g, "_");
     const fileName = `Pay_Stub_${staffName}_${dateString}.png`;
 
     html2canvas(paystubRef.current, {
@@ -136,17 +133,17 @@ export function Paystub({ stub }) {
         {/* Employee and Pay Date Info */}
         <Box sx={{ mb: 3 }}>
           <Typography variant="body1">
-            <strong>Employee Name:</strong> {stub.staffName || "N/A"}
+            <strong>Employee Name:</strong> {stub.staff_name || stub.staffName || "N/A"}
           </Typography>
           <Typography variant="body1">
             <strong>Pay Date:</strong>{" "}
-            {stub.payDate ? fmtDate(stub.payDate) : "N/A"}
+            {stub.pay_date || stub.payDate ? fmtDate(stub.pay_date || stub.payDate) : "N/A"}
           </Typography>
           {/* optional: period */}
-          {stub.periodStart?.seconds && stub.periodEnd?.seconds && (
+          {(stub.period_start || stub.periodStart) && (stub.period_end || stub.periodEnd) && (
             <Typography variant="body1">
               <strong>Period:</strong>{" "}
-              {fmtDate(stub.periodStart)} – {fmtDate(stub.periodEnd)}
+              {fmtDate(stub.period_start || stub.periodStart)} – {fmtDate(stub.period_end || stub.periodEnd)}
             </Typography>
           )}
         </Box>
@@ -337,13 +334,32 @@ export default function PaystubDialog({ open, onClose, runId }) {
       return;
     }
     (async () => {
-      const snap = await getDocs(
-        collection(db, "payrollRuns", runId, "paystubs")
-      );
-      const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() || {}) }));
-      list.sort((a, b) => (a.staffName || "").localeCompare(b.staffName || ""));
-      setStubs(list);
-      setActive(list[0]?.id || null);
+      const { data, error } = await supabase
+        .from('payroll_stubs')
+        .select('*')
+        .eq('run_id', runId);
+
+      if (data) {
+        const list = data.map((d) => ({
+          ...d,
+          staffName: d.staff_name,
+          payDate: d.pay_date,
+          periodStart: d.period_start,
+          periodEnd: d.period_end,
+          grossPay: d.gross_pay,
+          netPay: d.net_pay,
+          totalHours: d.total_hours,
+          totalAdditions: d.total_additions,
+          totalDeductions: d.total_deductions,
+          additionItems: d.addition_items || [],
+          deductionItems: d.deduction_items || [],
+          shifts: d.shifts || []
+        }));
+        list.sort((a, b) => (a.staffName || "").localeCompare(b.staffName || ""));
+        setStubs(list);
+        setActive(list[0]?.id || null);
+      }
+      if (error) console.error("Error fetching paystubs:", error);
     })();
   }, [open, runId]);
 

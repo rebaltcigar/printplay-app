@@ -33,11 +33,7 @@ import {
   AccountBalanceWallet as WalletIcon,
   Assignment as LogsIcon,
 } from '@mui/icons-material';
-import {
-  collection, onSnapshot, query, where, orderBy, limit,
-  doc, updateDoc, addDoc, serverTimestamp,
-} from 'firebase/firestore';
-import { auth, db } from '../firebase';
+import { supabase } from '../supabase';
 import { fmtCurrency } from '../utils/formatters';
 import StartSessionDialog from './stations/StartSessionDialog';
 import EndSessionDialog from './stations/EndSessionDialog';
@@ -69,7 +65,7 @@ function secondsToHMS(seconds) {
 
 function getTimeRemaining(session, nowMs) {
   if (!session || session.type === 'postpaid') return null;
-  const startMs = session.startedAt?.toMillis?.() || 0;
+  const startMs = session.startedAt ? new Date(session.startedAt).getTime() : 0;
   const pausedMs = (session.minutesPaused || 0) * 60000;
   const elapsedMs = nowMs - startMs - pausedMs;
   const allottedMs = (session.minutesAllotted || 0) * 60000;
@@ -78,7 +74,7 @@ function getTimeRemaining(session, nowMs) {
 
 function getElapsedMinutes(session, nowMs) {
   if (!session) return 0;
-  const startMs = session.startedAt?.toMillis?.() || 0;
+  const startMs = session.startedAt ? new Date(session.startedAt).getTime() : 0;
   const pausedMs = (session.minutesPaused || 0) * 60000;
   return Math.max(0, (nowMs - startMs - pausedMs) / 60000);
 }
@@ -194,11 +190,28 @@ function GlobalActivityTable({ stations, onLogClick }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const q = query(collection(db, 'station_logs'), orderBy('timestamp', 'desc'), limit(50));
-    return onSnapshot(q, snap => {
-      setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    const fetchLogs = async () => {
+      const { data } = await supabase
+        .from('station_logs')
+        .select('*')
+        .order('timestamp', { ascending: false })
+        .limit(50);
+      if (data) {
+        setLogs(data.map(d => ({
+          ...d,
+          stationId: d.station_id,
+          stationName: d.station_name
+        })));
+      }
       setLoading(false);
-    });
+    };
+    fetchLogs();
+
+    const channel = supabase.channel('public:station_logs:map')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'station_logs' }, fetchLogs)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
   const getStationName = (id, fallback) => {
@@ -236,7 +249,7 @@ function GlobalActivityTable({ stations, onLogClick }) {
                   sx={{ cursor: 'pointer', '& td': { fontSize: '0.75rem', py: 0.8 } }}
                 >
                   <TableCell color="text.secondary">
-                    {log.timestamp?.toDate?.()?.toLocaleTimeString() || '—'}
+                    {log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : '—'}
                   </TableCell>
                   <TableCell sx={{ fontWeight: 600, color: 'primary.main' }}>
                     {getStationName(log.stationId, log.stationName)}
@@ -280,7 +293,7 @@ function LogDetailDrawer({ log, stations, onClose }) {
             <Typography variant="body1" fontWeight={700} sx={{ textTransform: 'capitalize' }}>{log.event?.replace(/-/g, ' ')}</Typography>
           </Box>
           <Box>
-            <Typography variant="body2">{log.timestamp?.toDate?.()?.toLocaleString() || '—'}</Typography>
+            <Typography variant="body2">{log.timestamp ? new Date(log.timestamp).toLocaleString() : '—'}</Typography>
           </Box>
           <Divider />
           <Box>
@@ -319,17 +332,53 @@ export default function StationMap({ showSnackbar }) {
   const selectedSession = selectedStation ? sessionByStation[selectedStation.id] : null;
 
   useEffect(() => {
-    const unsub1 = onSnapshot(collection(db, 'stations'), snap => {
-      setStations(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.name.localeCompare(b.name)));
+    const fetchData = async () => {
+      const [stationsRes, sessionsRes, zonesRes] = await Promise.all([
+        supabase.from('stations').select('*'),
+        supabase.from('sessions').select('*').eq('status', 'active'),
+        supabase.from('zones').select('*').order('sort_order', { ascending: true })
+      ]);
+
+      if (stationsRes.data) {
+        setStations(stationsRes.data.map(d => ({
+          ...d,
+          zoneId: d.zone_id,
+          isOnline: d.is_online,
+          tamperAlert: d.tamper_alert,
+          ipAddress: d.ip_address,
+          isPaused: d.is_paused
+        })).sort((a, b) => a.name.localeCompare(b.name)));
+      }
+      if (sessionsRes.data) {
+        setSessions(sessionsRes.data.map(d => ({
+          ...d,
+          stationId: d.station_id,
+          customerId: d.customer_id,
+          customerName: d.customer_name,
+          startedAt: d.started_at,
+          minutesAllotted: d.minutes_allotted,
+          minutesPaused: d.minutes_paused,
+          amountPaid: d.amount_paid
+        })));
+      }
+      if (zonesRes.data) {
+        setZones(zonesRes.data.map(d => ({
+          ...d,
+          sortOrder: d.sort_order
+        })));
+      }
       setLoading(false);
-    });
-    const unsub2 = onSnapshot(query(collection(db, 'sessions'), where('status', '==', 'active')), snap => {
-      setSessions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-    const unsub3 = onSnapshot(query(collection(db, 'zones'), orderBy('sortOrder')), snap => {
-      setZones(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-    return () => { unsub1(); unsub2(); unsub3(); };
+    };
+
+    fetchData();
+
+    const channel = supabase.channel('public:stations_map_data')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'stations' }, fetchData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions' }, fetchData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'zones' }, fetchData)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
   const stats = {
@@ -357,45 +406,45 @@ export default function StationMap({ showSnackbar }) {
         return;
       case 'maintenance':
         try {
-          await updateDoc(doc(db, 'stations', station.id), { status: 'maintenance', updatedAt: serverTimestamp() });
+          await supabase.from('stations').update({ status: 'maintenance', updated_at: new Date().toISOString() }).eq('id', station.id);
           showSnackbar(`${station.name} set to maintenance`);
         } catch (e) { showSnackbar(e.message, 'error'); }
         break;
       case 'guest-start':
         try {
-          // Trigger guest start logic (implemented via StartSessionDialog prop or just custom here)
+          // Trigger guest start logic
           setStartDialog({ open: true, station, isQuickGuest: true, activeSession: null });
         } catch (e) { showSnackbar(e.message, 'error'); }
         break;
       case 'pause-session':
-        await updateDoc(doc(db, 'stations', station.id), { isPaused: true, updatedAt: serverTimestamp() });
+        await supabase.from('stations').update({ is_paused: true, updated_at: new Date().toISOString() }).eq('id', station.id);
         showSnackbar(`Station ${station.name} paused`);
         break;
       case 'resume-session':
-        await updateDoc(doc(db, 'stations', station.id), { isPaused: false, updatedAt: serverTimestamp() });
+        await supabase.from('stations').update({ is_paused: false, updated_at: new Date().toISOString() }).eq('id', station.id);
         showSnackbar(`Station ${station.name} resumed`);
         break;
       case 'remote-lock':
-        await updateDoc(doc(db, 'stations', station.id), { command: { type: 'lock', timestamp: Date.now() } });
+        await supabase.from('stations').update({ command: { type: 'lock', timestamp: Date.now() } }).eq('id', station.id);
         showSnackbar(`Lock command sent to ${station.name}`);
         break;
       case 'remote-unlock':
-        await updateDoc(doc(db, 'stations', station.id), { command: { type: 'unlock', timestamp: Date.now() } });
+        await supabase.from('stations').update({ command: { type: 'unlock', timestamp: Date.now() } }).eq('id', station.id);
         showSnackbar(`Unlock command sent to ${station.name}`);
         break;
       case 'send-message':
         const msg = window.prompt(`Send message to ${station.name}:`);
         if (msg) {
-          await updateDoc(doc(db, 'stations', station.id), { command: { type: 'message', text: msg, timestamp: Date.now() } });
+          await supabase.from('stations').update({ command: { type: 'message', text: msg, timestamp: Date.now() } }).eq('id', station.id);
           showSnackbar(`Message sent to ${station.name}`);
         }
         break;
       case 'power-restart':
-        await updateDoc(doc(db, 'stations', station.id), { 'command': { type: 'restart', timestamp: Date.now() } });
+        await supabase.from('stations').update({ command: { type: 'restart', timestamp: Date.now() } }).eq('id', station.id);
         showSnackbar(`Restart command sent to ${station.name}`);
         break;
       case 'power-shutdown':
-        await updateDoc(doc(db, 'stations', station.id), { 'command': { type: 'shutdown', timestamp: Date.now() } });
+        await supabase.from('stations').update({ command: { type: 'shutdown', timestamp: Date.now() } }).eq('id', station.id);
         showSnackbar(`Shutdown command sent to ${station.name}`);
         break;
       default: break;
@@ -503,7 +552,7 @@ export default function StationMap({ showSnackbar }) {
                         </TableCell>
                         <TableCell>{sess?.customerId ? sess.customerName : (s.status === 'in-use' ? 'Walk-in' : '—')}</TableCell>
                         <TableCell>Member</TableCell>
-                        <TableCell>{sess?.startedAt?.toDate?.()?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '—'}</TableCell>
+                        <TableCell>{sess?.startedAt ? new Date(sess.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</TableCell>
                         <TableCell>{sess ? (sess.type === 'prepaid' ? 'Normal Billing' : 'Postpaid') : '—'}</TableCell>
                         <TableCell sx={{ fontFamily: 'monospace' }}>
                           {sess ? (sess.type === 'postpaid' ? secondsToHMS(getElapsedMinutes(sess, now) * 60) : secondsToHMS(getTimeRemaining(sess, now))) : '—'}

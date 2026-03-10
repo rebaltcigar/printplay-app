@@ -49,10 +49,9 @@ function extractCustomer(order) {
 
 function resolveTimestamp(ts) {
     if (!ts) return new Date();
-    if (typeof ts.toDate === 'function') return ts.toDate();
-    if (ts.seconds) return new Date(ts.seconds * 1000);
     if (ts instanceof Date) return ts;
-    return new Date(ts);
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? new Date() : d;
 }
 
 /**

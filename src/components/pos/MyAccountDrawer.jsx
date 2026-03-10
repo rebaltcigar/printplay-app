@@ -5,24 +5,27 @@ import React, { useState, useEffect } from 'react';
 import {
   Box, Stack, Typography, Divider,
 } from '@mui/material';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { supabase } from '../../supabase';
 import DetailDrawer from '../common/DetailDrawer';
 
 export default function MyAccountDrawer({ open, onClose, user }) {
   const [profile, setProfile] = useState(null);
 
   useEffect(() => {
-    if (!open || !user?.uid) return;
+    if (!open || !user?.id) return;
     (async () => {
       try {
-        const snap = await getDoc(doc(db, 'users', user.uid));
-        if (snap.exists()) setProfile(snap.data());
+        const { data } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single();
+        if (data) setProfile(data);
       } catch (e) { console.error(e); }
     })();
-  }, [open, user?.uid]);
+  }, [open, user?.id]);
 
-  const name  = profile?.fullName || profile?.name || profile?.displayName || '—';
+  const name  = profile?.full_name || profile?.email || '—';
   const email = profile?.email || user?.email || '—';
   const role  = profile?.role || '—';
 

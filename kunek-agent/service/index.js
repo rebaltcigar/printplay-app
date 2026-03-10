@@ -17,11 +17,11 @@
 
 const { loadConfig }             = require('./config');
 const { initDB }                 = require('./sqlite');
-const { initFirebase }           = require('./firebase');
+const { initSupabase }           = require('./supabase');
 const { startIPCServer, sendMessage, messageTypes } = require('./ipc');
 const { startHeartbeat }         = require('./heartbeat');
 const { startWatchdog }          = require('./watchdog');
-const { setupFirestoreListener } = require('./firestore');
+const { setupStationListener }   = require('./supabaseService');
 const { bootRecovery, handleStationSnapshot } = require('./session');
 const logger                     = require('./logger');
 
@@ -36,8 +36,8 @@ async function main() {
   initDB();
   logger.info('SQLite initialized');
 
-  // ── 3. Firebase ──────────────────────────────────────────────────────────
-  await initFirebase();
+  // ── 3. Supabase ──────────────────────────────────────────────────────────
+  await initSupabase();
 
   // ── 4. IPC pipe server ───────────────────────────────────────────────────
   startIPCServer();
@@ -49,9 +49,9 @@ async function main() {
   // ── 6. Reboot recovery ───────────────────────────────────────────────────
   await bootRecovery();
 
-  // ── 7. Firestore listener ────────────────────────────────────────────────
-  setupFirestoreListener(config.stationId, handleStationSnapshot);
-  logger.info('Firestore station listener active');
+  // ── 7. Station listener ────────────────────────────────────────────────
+  setupStationListener(config.stationId, handleStationSnapshot);
+  logger.info('Supabase station listener active');
 
   // ── 8. Heartbeat ─────────────────────────────────────────────────────────
   startHeartbeat();

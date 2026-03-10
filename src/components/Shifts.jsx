@@ -51,23 +51,7 @@ import LoadingScreen from "./common/LoadingScreen"; // NEW IMPORT
 import ShiftDetailView from "./ShiftDetailView";
 import ShiftConsolidationDialog from "./ShiftConsolidationDialog";
 import PageHeader from "./common/PageHeader";
-import { db } from "../firebase";
-import {
-  collection,
-  query,
-  orderBy,
-  where,
-  Timestamp,
-  onSnapshot,
-  addDoc,
-  doc,
-  deleteDoc,
-  getDocs,
-  writeBatch,
-  updateDoc,
-  setDoc,
-  serverTimestamp,
-} from "firebase/firestore";
+import { supabase } from '../supabase';
 import SummaryCards from "./common/SummaryCards";
 import {
   calculateOnHand,
@@ -152,65 +136,112 @@ const Shifts = ({ isActive = true }) => {
 
 
   useEffect(() => {
-    const ref = doc(db, "app_status", "current_shift");
-    const unsub = onSnapshot(ref,
-      (snap) => setCurrentShift(snap.exists() ? { id: snap.id, ...snap.data() } : null),
-      (e) => console.warn("current_shift listener failed", e)
-    );
-    return () => unsub();
+    const fetchCurrentShift = async () => {
+      const { data } = await supabase.from('app_status').select('*').eq('id', 'current_shift').maybeSingle();
+      if (data) {
+        setCurrentShift({ id: data.id, activeShiftId: data.active_shift_id, staffEmail: data.staff_email });
+      } else {
+        setCurrentShift(null);
+      }
+    };
+
+    fetchCurrentShift();
+
+    const channel = supabase.channel('current-shift-shifts')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_status', filter: 'id=eq.current_shift' }, (payload) => {
+        if (payload.new && Object.keys(payload.new).length > 0) {
+          setCurrentShift({ id: payload.new.id, activeShiftId: payload.new.active_shift_id, staffEmail: payload.new.staff_email });
+        } else {
+          setCurrentShift(null);
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   useEffect(() => {
     setLoading(true);
-    let qRef = query(collection(db, "shifts"), orderBy("startTime", "desc"));
-    if (startDate) qRef = query(qRef, where("startTime", ">=", Timestamp.fromDate(new Date(startDate))));
-    if (endDate) {
-      const eod = new Date(endDate);
-      eod.setHours(23, 59, 59, 999);
-      qRef = query(qRef, where("startTime", "<=", Timestamp.fromDate(eod)));
-    }
-    const unsub = onSnapshot(qRef,
-      (snap) => {
-        setShifts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setLoading(false);
-      },
-      (err) => {
+
+    const fetchShifts = async () => {
+      try {
+        let q = supabase.from('shifts').select('*').order('start_time', { ascending: false });
+
+        if (startDate) {
+          q = q.gte('start_time', new Date(startDate).toISOString());
+        }
+        if (endDate) {
+          const eod = new Date(endDate);
+          eod.setHours(23, 59, 59, 999);
+          q = q.lte('start_time', eod.toISOString());
+        }
+
+        const { data, error } = await q;
+
+        if (error) throw error;
+
+        const formatted = data.map(d => ({
+          ...d,
+          startTime: d.start_time,
+          endTime: d.end_time,
+          staffEmail: d.staff_email,
+          shiftPeriod: d.shift_period,
+          pcRentalTotal: Number(d.pc_rental_total || 0),
+          systemTotal: Number(d.system_total || 0)
+        }));
+
+        setShifts(formatted);
+      } catch (err) {
         console.error("Error fetching shifts:", err);
+        showSnackbar("Failed to fetch shifts.", 'error');
+      } finally {
         setLoading(false);
-        if (err.code === "failed-precondition") showSnackbar("Firestore needs an index.", 'error');
       }
-    );
-    return () => unsub();
+    };
+
+    fetchShifts();
+
+    // Re-fetch when dependencies change; complex filtering via realtime is hard.
   }, [startDate, endDate]);
 
   useEffect(() => {
     const desired = new Set(shifts.map((s) => s.id));
     for (const id of Object.keys(txUnsubsRef.current)) {
       if (!desired.has(id)) {
-        try { txUnsubsRef.current[id](); } catch { }
+        // We will just clear our cache, no unsubs needed for simple fetches
         delete txUnsubsRef.current[id];
       }
     }
 
     shifts.forEach((s) => {
       if (txUnsubsRef.current[s.id]) return;
-      const q1 = query(collection(db, "transactions"), where("shiftId", "==", s.id));
-      const unsub = onSnapshot(q1,
-        (snap) => {
-          const txs = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((t) => t && t.isDeleted !== true);
-          const aggregated = aggregateShiftTransactions(txs, serviceMeta);
-          setTxAggByShift((prev) => ({
-            ...prev,
-            [s.id]: { ...aggregated, fullTransactions: txs }
-          }));
-        },
-        (e) => console.warn("transactions listener failed for shift", s.id, e)
-      );
-      txUnsubsRef.current[s.id] = unsub;
+      txUnsubsRef.current[s.id] = true; // Mark as fetching
+
+      // Fetch from both new tables
+      Promise.all([
+        supabase.from('order_items').select('*').eq('shift_id', s.id),
+        supabase.from('pc_transactions').select('*').eq('shift_id', s.id),
+        supabase.from('expenses').select('*').eq('shift_id', s.id)
+      ]).then(([resOrders, resPc, resEx]) => {
+        const txs = [
+          ...(resOrders.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount) })),
+          ...(resPc.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount) })),
+          ...(resEx.data || []).map(d => ({ ...d, item: 'Expenses', paymentMethod: 'Cash', isDeleted: false, amount: Number(d.amount), total: Number(d.amount) }))
+        ];
+
+        const aggregated = aggregateShiftTransactions(txs, serviceMeta);
+        setTxAggByShift((prev) => ({
+          ...prev,
+          [s.id]: { ...aggregated, fullTransactions: txs }
+        }));
+      }).catch(e => {
+        console.warn("transactions fetch failed for shift", s.id, e);
+      });
     });
 
     return () => {
-      for (const id of Object.keys(txUnsubsRef.current)) try { txUnsubsRef.current[id](); } catch { }
       txUnsubsRef.current = {};
     };
   }, [shifts, serviceMeta]);

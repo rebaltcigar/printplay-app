@@ -1,6 +1,6 @@
 {
   "name": "kunek-agent",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Client agent for the PC Timer System",
   "main": "service/index.js",
   "scripts": {
@@ -10,7 +10,7 @@
     "provision": "node scripts/provision.js"
   },
   "dependencies": {
-    "firebase": "^11.0.0",
+    "@supabase/supabase-js": "^2.39.0",
     "node-windows": "^0.1.14"
   },
   "devDependencies": {
@@ -21,7 +21,7 @@
     "node",
     "service",
     "ipc",
-    "firestore"
+    "supabase"
   ],
   "author": "Your Name",
   "license": "MIT"

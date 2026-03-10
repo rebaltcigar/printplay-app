@@ -32,22 +32,7 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
 import AddIcon from "@mui/icons-material/Add";
 import TrendingDownIcon from "@mui/icons-material/TrendingDown";
-import {
-  collection,
-  addDoc,
-  query,
-  where,
-  orderBy,
-  updateDoc,
-  doc,
-  serverTimestamp,
-  onSnapshot,
-  getDocs,
-  deleteDoc,
-  limit,
-  startAfter,
-} from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import { useGlobalUI } from "../contexts/GlobalUIContext";
 import LoadingScreen from "./common/LoadingScreen";
 import PageHeader from "./common/PageHeader";
@@ -125,19 +110,18 @@ export default function ExpenseManagement({ user }) {
   useEffect(() => {
     const fetchExpenseServices = async () => {
       try {
-        const qServices = query(
-          collection(db, "services"),
-          where("category", "==", "Expense")
-        );
-        const snap = await getDocs(qServices);
-        const servicesData = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            serviceName: data.serviceName,
-            price: data.price || 0,
-          };
-        });
-        setCreditServices(servicesData);
+        const { data, error } = await supabase
+          .from("services")
+          .select("service_name, price")
+          .eq("category", "Expense");
+
+        if (data) {
+          const servicesData = data.map((d) => ({
+            serviceName: d.service_name,
+            price: d.price || 0,
+          }));
+          setCreditServices(servicesData);
+        }
       } catch (e) {
         console.warn("Failed to load expense services for expenses dropdown.", e);
       }
@@ -182,21 +166,28 @@ export default function ExpenseManagement({ user }) {
       const start = new Date(filterStart); start.setHours(0, 0, 0, 0);
       const end = new Date(filterEnd); end.setHours(23, 59, 59, 999);
 
-      let constraints = [
-        where("item", "==", "Expenses"),
-        where("timestamp", ">=", start),
-        where("timestamp", "<=", end),
-        orderBy("timestamp", "desc"),
-        limit(50)
-      ];
+      const { data, error } = await supabase
+        .from("expenses")
+        .select("*")
+        .gte("timestamp", start.toISOString())
+        .lte("timestamp", end.toISOString())
+        .order("timestamp", { ascending: false });
 
-      if (!isReset && lastDoc) {
-        constraints.push(startAfter(lastDoc));
-      }
+      if (error) throw error;
 
-      const q = query(collection(db, "transactions"), ...constraints);
-      const snap = await getDocs(q);
-      const newRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const newRows = (data || []).map((d) => ({
+        ...d,
+        id: d.id,
+        expenseType: d.expense_type,
+        expenseStaffId: d.expense_staff_id,
+        expenseStaffName: d.staff_name,
+        expenseStaffEmail: d.staff_email,
+        financialCategory: d.financial_category,
+        isDeleted: d.is_deleted,
+        isEdited: d.is_edited,
+        editedBy: d.edited_by,
+        qty: d.quantity,
+      }));
 
       if (isReset) {
         setExpenses(newRows);
@@ -204,8 +195,8 @@ export default function ExpenseManagement({ user }) {
         setExpenses(prev => [...prev, ...newRows]);
       }
 
-      setLastDoc(snap.docs[snap.docs.length - 1] || null);
-      setHasMore(snap.docs.length === 50);
+      setLastDoc(null);
+      setHasMore(false);
 
     } catch (err) {
       console.error("Pagination error", err);
@@ -234,24 +225,38 @@ export default function ExpenseManagement({ user }) {
       const start = new Date(filterStart); start.setHours(0, 0, 0, 0);
       const end = new Date(filterEnd); end.setHours(23, 59, 59, 999);
 
-      const qTx = query(
-        collection(db, "transactions"),
-        where("item", "==", "Expenses"),
-        where("timestamp", ">=", start),
-        where("timestamp", "<=", end),
-        orderBy("timestamp", "desc"),
-        limit(200)
-      );
+      const fetchExpenses = async () => {
+        try {
+          const { data, error } = await supabase
+            .from("expenses")
+            .select("*")
+            .gte("timestamp", start.toISOString())
+            .lte("timestamp", end.toISOString())
+            .order("timestamp", { ascending: false });
 
-      const unsub = onSnapshot(qTx, (snap) => {
-        const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        setExpenses(rows);
-        setLoading(false);
-      }, (err) => {
-        console.error("Stream error", err);
-        setLoading(false);
-      });
-      unsubRef.current = unsub;
+          if (data) {
+            const rows = data.map((d) => ({
+              ...d,
+              id: d.id,
+              expenseType: d.expense_type,
+              expenseStaffId: d.expense_staff_id,
+              expenseStaffName: d.staff_name,
+              expenseStaffEmail: d.staff_email,
+              financialCategory: d.financial_category,
+              isDeleted: d.is_deleted,
+              isEdited: d.is_edited,
+              editedBy: d.edited_by,
+              qty: d.quantity,
+            }));
+            setExpenses(rows);
+          }
+        } catch (err) {
+          console.error("Stream error", err);
+        } finally {
+          setLoading(false);
+        }
+      };
+      fetchExpenses();
     }
   };
 
@@ -272,22 +277,30 @@ export default function ExpenseManagement({ user }) {
     }
 
     try {
-      let constraints = [
-        where("item", "==", "Expenses"),
-        orderBy("timestamp", "desc"),
-      ];
+      let q = supabase.from("expenses").select("*").order("timestamp", { ascending: false });
 
       if (!forceAllTime) {
         const s = new Date(filterStart); s.setHours(0, 0, 0, 0);
         const e = new Date(filterEnd); e.setHours(23, 59, 59, 999);
-        constraints.push(where("timestamp", ">=", s));
-        constraints.push(where("timestamp", "<=", e));
+        q = q.gte("timestamp", s.toISOString()).lte("timestamp", e.toISOString());
       }
 
-      const q = query(collection(db, "transactions"), ...constraints);
-      const snap = await getDocs(q);
+      const { data, error } = await q;
+      if (error) throw error;
 
-      const newRows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const newRows = (data || []).map((d) => ({
+        ...d,
+        id: d.id,
+        expenseType: d.expense_type,
+        expenseStaffId: d.expense_staff_id,
+        expenseStaffName: d.staff_name,
+        expenseStaffEmail: d.staff_email,
+        financialCategory: d.financial_category,
+        isDeleted: d.is_deleted,
+        isEdited: d.is_edited,
+        editedBy: d.edited_by,
+        qty: d.quantity,
+      }));
 
       setExpenses(newRows);
       setLastDoc(null);
@@ -307,9 +320,7 @@ export default function ExpenseManagement({ user }) {
   /** ===================== DERIVED ROWS + FILTERS ===================== */
   const tableRows = useMemo(() => {
     return expenses.map((e) => {
-      const tsDate = e.timestamp?.seconds
-        ? new Date(e.timestamp.seconds * 1000)
-        : new Date(e.timestamp);
+      const tsDate = new Date(e.timestamp);
       return {
         ...e,
         _dateOnly: toDateOnlyString(tsDate),
@@ -435,38 +446,27 @@ export default function ExpenseManagement({ user }) {
     const selectedStaff = staffOptions.find((s) => s.id === formStaffId) || null;
 
     // 1. Create the base document
-    const displayId = await generateDisplayId("expenses", "EXP");
     const expenseDoc = {
-      displayId,
-      item: "Expenses",
-      expenseType: formType,
-      expenseStaffId: selectedStaff ? selectedStaff.id : null,
-      expenseStaffName: selectedStaff ? selectedStaff.fullName : null,
-      expenseStaffEmail: selectedStaff ? selectedStaff.email : null,
+      expense_type: formType,
+      expense_staff_id: selectedStaff ? selectedStaff.id : null,
+      staff_name: selectedStaff ? selectedStaff.fullName : null,
+      staff_email: selectedStaff ? selectedStaff.email : null,
       quantity: qty,
-      price,
+      amount: price,
       total,
       notes: formNotes || "",
-      shiftId: null, // Default for admin-added expenses
-      startShiftId: null, // Legacy field
+      shift_id: null, // Default for admin-added expenses
       source: "admin_manual",
-      financialCategory: financialCategory || "OPEX", // NEW FIELD
-      timestamp: transactionDate,
-      staffEmail: user?.email || "admin",
-      isDeleted: false,
-      isEdited: false,
+      financial_category: financialCategory || "OPEX", // NEW FIELD
+      timestamp: transactionDate.toISOString(),
+      is_deleted: false,
+      is_edited: false,
     };
-
-    // 2. Conditionally add fields required by security rules
-    if (formType === "Salary") {
-      expenseDoc.payrollRunId = "admin_manual_add"; // Add default string
-      expenseDoc.voided = false; // Add default boolean
-    }
 
     try {
       startBusy("Adding expense...");
       // 3. Add the complete document
-      await addDoc(collection(db, "transactions"), expenseDoc);
+      await supabase.from("expenses").insert(expenseDoc);
 
       setFormType("");
       setFinancialCategory("OPEX");
@@ -549,36 +549,28 @@ export default function ExpenseManagement({ user }) {
           const selectedStaff = staffOptions.find((s) => s.id === formStaffId) || null;
 
           const updateData = {
-            item: "Expenses",
-            expenseType: formType,
-            financialCategory,
-            expenseStaffId: selectedStaff ? selectedStaff.id : null,
-            expenseStaffName: selectedStaff ? selectedStaff.fullName : null,
-            expenseStaffEmail: selectedStaff ? selectedStaff.email : null,
+            expense_type: formType,
+            financial_category: financialCategory,
+            expense_staff_id: selectedStaff ? selectedStaff.id : null,
+            staff_name: selectedStaff ? selectedStaff.fullName : null,
+            staff_email: selectedStaff ? selectedStaff.email : null,
             quantity: qty,
-            price,
+            amount: price,
             total,
             notes: formNotes || "",
-            timestamp: transactionDate,
-            isEdited: true,
-            adminEdited: true,
-            editedBy: user?.email || "admin",
-            editReason: reason,
-            lastUpdatedAt: serverTimestamp(),
+            timestamp: transactionDate.toISOString(),
+            is_edited: true,
+            edited_by: user?.email || "admin",
+            edit_reason: reason,
+            last_updated_at: new Date().toISOString(),
           };
 
-          if (formType === "Salary") {
-            updateData.payrollRunId = row.payrollRunId || "admin_manual_edit";
-            updateData.voided = typeof row.voided === 'boolean' ? row.voided : false;
-          }
-          if (formType === "Salary Advance") {
-            updateData.shiftId = row.shiftId || null;
-          }
-
-          await updateDoc(doc(db, "transactions", row.id), updateData);
+          await supabase.from("expenses").update(updateData).eq("id", row.id);
           showSnackbar("Expense has been updated.", 'success');
           cancelEdit();
           setFormDrawerOpen(false);
+          // Auto-refresh the list
+          attachStream();
         } catch (err) {
           console.error("Failed to update expense", err);
           showSnackbar(`Failed to update expense: ${err.message}`, 'error');
@@ -600,13 +592,14 @@ export default function ExpenseManagement({ user }) {
       onConfirm: async (reason) => {
         try {
           startBusy("Deleting (soft)...");
-          await updateDoc(doc(db, "transactions", row.id), {
-            isDeleted: true,
-            deletedReason: reason,
-            deletedBy: user?.email || "admin",
-            deletedAt: serverTimestamp(),
-          });
+          await supabase.from("expenses").update({
+            is_deleted: true,
+            delete_reason: reason,
+            deleted_by: user?.email || "admin",
+            deleted_at: new Date().toISOString(),
+          }).eq("id", row.id);
           showSnackbar("Expense has been marked as deleted.", 'success');
+          attachStream();
         } catch (err) {
           console.error("Failed to soft delete expense:", err);
           showSnackbar("Failed to delete expense.", 'error');
@@ -628,8 +621,9 @@ export default function ExpenseManagement({ user }) {
       onConfirm: async () => {
         try {
           startBusy("Permanently deleting...");
-          await deleteDoc(doc(db, "transactions", row.id));
+          await supabase.from("expenses").delete().eq("id", row.id);
           showSnackbar("Expense has been permanently deleted.", 'success');
+          attachStream();
         } catch (err) {
           console.error("Failed to permanently delete expense:", err);
           showSnackbar("Failed to permanently delete expense.", 'error');

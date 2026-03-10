@@ -5,10 +5,8 @@ import {
   InputLabel, MenuItem, Select, Stack, TextField, Typography, Paper
 } from '@mui/material';
 import StopIcon from '@mui/icons-material/Stop';
-import {
-  addDoc, collection, doc, serverTimestamp, updateDoc, increment, getDoc
-} from 'firebase/firestore';
-import { auth, db } from '../../firebase';
+import { supabase } from '../../supabase';
+import { pcSessionService } from '../../services/pcSessionService';
 import { fmtCurrency } from '../../utils/formatters';
 
 const PAYMENT_METHODS = ['Cash', 'GCash', 'Card', 'Other'];
@@ -65,71 +63,53 @@ export default function EndSessionDialog({ open, station, session, onClose, show
     if (!station || !session) return;
     setSaving(true);
     try {
-      console.log('[DEBUG] Ending session:', session?.id, '@ station:', station?.id);
-      const staffUser = auth.currentUser;
-      const now = serverTimestamp();
+      const { data: { user: staffUser } } = await supabase.auth.getUser();
+      const now = new Date().toISOString();
       const minutesUsed = Math.round(elapsedMin);
 
-      // Update session
-      await updateDoc(doc(db, 'sessions', session.id), {
-        status: 'ended',
-        endedAt: serverTimestamp(),
-        minutesUsed,
+      // Centralized End Session Logic
+      await pcSessionService.endSession({
+        sessionId: session.id,
+        stationId: station.id,
+        stationName: station.name,
         amountCharged: billAmount,
-        amountPaid: isPostpaid ? parseFloat(amountPaid) : session.amountPaid,
-        paymentMethod: isPostpaid ? paymentMethod : session.paymentMethod,
-        updatedAt: serverTimestamp(),
-      });
-
-      // Update station
-      await updateDoc(doc(db, 'stations', station.id), {
-        status: 'available',
-        currentSessionId: null,
-        isLocked: true,
-        updatedAt: serverTimestamp(),
+        status: 'ended',
+        reason: 'manual-end',
+        staffId: staffUser?.id
       });
 
       // Write transaction for postpaid (payment collected now)
       if (isPostpaid) {
-        await addDoc(collection(db, 'transactions'), {
+        await supabase.from('transactions').insert([{
           item: `PC Session — ${station.label || station.name}`,
           type: 'pc-session',
           price: billAmount,
           qty: 1,
-          paymentMethod,
-          staffEmail: staffUser?.email || null,
-          shiftId: null,
-          sessionId: session.id,
-          stationId: station.id,
-          customerId: session.customerId || null,
-          customerName: session.customerName || 'Walk-in',
+          payment_method: paymentMethod,
+          staff_email: staffUser?.email || null,
+          session_id: session.id,
+          station_id: station.id,
+          customer_id: session.customerId || null,
+          customer_name: session.customerName || 'Walk-in',
           notes: `Postpaid · ${fmtDuration(billableMinutes)} · ${session.rateSnapshot?.name || ''}`,
-          createdAt: now,
-        });
+          created_at: now,
+        }]);
       }
 
       // Save time to account if requested
       if (saveToAccount && session.customerId && unusedMin > 1) {
-        const custRef = doc(db, 'customers', session.customerId);
-        await updateDoc(custRef, {
-          minutesRemaining: increment(Math.floor(unusedMin))
-        });
+        const { data: cust } = await supabase.from('customers')
+          .select('minutes_remaining')
+          .eq('id', session.customerId)
+          .single();
+          
+        if (cust) {
+          await supabase.from('customers').update({
+            minutes_remaining: (cust.minutes_remaining || 0) + Math.floor(unusedMin),
+            updated_at: now
+          }).eq('id', session.customerId);
+        }
       }
-
-      // Audit log
-      await addDoc(collection(db, 'station_logs'), {
-        stationId: station.id,
-        sessionId: session.id,
-        event: 'session-end',
-        severity: 'info',
-        timestamp: now,
-        staffId: staffUser?.uid || null,
-        metadata: {
-          minutesUsed,
-          amountCharged: billAmount,
-          sessionType: session.type,
-        },
-      });
 
       showSnackbar(`Session ended on ${station.name}${saveToAccount && unusedMin > 1 ? ` · ${Math.floor(unusedMin)} min saved` : ''}`);
       onClose();
@@ -161,7 +141,7 @@ export default function EndSessionDialog({ open, station, session, onClose, show
             <Box>
               <Typography variant="body2" color="text.secondary">Started</Typography>
               <Typography variant="body2">
-                {session.startedAt?.toDate?.()?.toLocaleTimeString() || '—'}
+                {session.startedAt ? new Date(session.startedAt).toLocaleTimeString() : '—'}
               </Typography>
             </Box>
             <Box>

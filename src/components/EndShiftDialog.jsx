@@ -3,8 +3,7 @@ import {
     Dialog, DialogTitle, DialogContent, DialogActions,
     Button, TextField, Box, Typography, Divider, Stack
 } from '@mui/material';
-import { updateDoc, doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../firebase';
+import { supabase } from '../supabase';
 import { useGlobalUI } from '../contexts/GlobalUIContext';
 import ErrorIcon from '@mui/icons-material/Error'; // ADDED
 
@@ -74,17 +73,31 @@ export default function EndShiftDialog({
             totalCash,
             totalDigital,
             totalAr,
-            arPaymentsTotal: arPaymentsTotal || 0,
-            endTime: serverTimestamp()
+        };
+
+        const summaryDbEntry = {
+            total_sales_pc: pcRentalNum,
+            total_sales_services: servicesTotal,
+            total_expenses: expensesTotal,
+            system_total: finalTotal,
+            total_cash: totalCash,
+            total_digital: totalDigital,
+            total_ar: totalAr,
+            ar_payments: arPaymentsTotal || 0,
+            end_time: new Date().toISOString()
         };
 
         try {
             // 1. Close Shift in DB
-            await updateDoc(doc(db, 'shifts', activeShiftId), summary);
+            await supabase.from('shifts').update(summaryDbEntry).eq('id', activeShiftId);
 
             // 2. Clear App Status
-            const statusRef = doc(db, 'app_status', 'current_shift');
-            await setDoc(statusRef, { activeShiftId: null, staffEmail: user.email }, { merge: true });
+            await supabase.from('app_status').upsert({
+                id: 'current_shift',
+                active_shift_id: null,
+                staff_email: user.email,
+                updated_at: new Date().toISOString()
+            });
 
             // 3. Callback to parent (to show receipt or logout)
             // PASS THE BREAKDOWN

@@ -8,8 +8,7 @@ import {
 import PaymentsIcon from '@mui/icons-material/Payments';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import ReceiptIcon from '@mui/icons-material/Receipt';
-import { doc, updateDoc, writeBatch } from 'firebase/firestore';
-import { db } from '../firebase';
+import { supabase } from '../supabase';
 import { sumDenominations, computeShiftFinancials } from '../utils/shiftFinancials';
 import { fmtCurrency, fmtTime } from '../utils/formatters';
 import { useGlobalUI } from '../contexts/GlobalUIContext';
@@ -35,6 +34,7 @@ export default function ShiftConsolidationDialog({
     const [tab, setTab] = useState(0);
 
     // --- CASE 1: Cash ---
+    const [saving, setSaving] = useState(false);
     const [recon, setRecon] = useState({});
 
     useEffect(() => {
@@ -81,7 +81,7 @@ export default function ShiftConsolidationDialog({
         if (open && digitalTransactions) {
             const initial = {};
             digitalTransactions.forEach(t => {
-                initial[t.id] = t.reconciliationStatus || 'Verified';
+                initial[t.id] = t.reconciliation_status || t.reconciliationStatus || 'Verified';
             });
             setDigitalStatuses(initial);
         }
@@ -112,27 +112,45 @@ export default function ShiftConsolidationDialog({
     // --- ACTION: SAVE ALL ---
     const handleSave = async () => {
         try {
-            const batch = writeBatch(db);
+            setSaving(true);
+            const now = new Date().toISOString();
 
             // 1. Update Shift Denominations
-            const shiftRef = doc(db, 'shifts', shift.id);
-            batch.update(shiftRef, {
-                denominations: recon,
-                lastConsolidatedAt: new Date()
+            const { error: shiftError } = await supabase
+                .from('shifts')
+                .update({
+                    denominations: recon,
+                    last_consolidated_at: now
+                })
+                .eq('id', shift.id);
+
+            if (shiftError) throw shiftError;
+
+            // 2. Update Digital Transaction Statuses (in parallel)
+            const txUpdates = Object.entries(digitalStatuses).map(async ([txId, status]) => {
+                // Determine which table the transaction might be in based on ID prefix
+                // The consolidated transactions array mixes order_items and pc_transactions
+                // But generally, digital transactions shown here are mostly order_items or pc_transactions
+                const isPcTxn = txId.startsWith('TXN');
+                const table = isPcTxn ? 'pc_transactions' : 'order_items';
+
+                const { error } = await supabase
+                    .from(table)
+                    .update({ reconciliation_status: status })
+                    .eq('id', txId);
+
+                if (error) throw error;
             });
 
-            // 2. Update Digital Transaction Statuses
-            Object.entries(digitalStatuses).forEach(([txId, status]) => {
-                const txRef = doc(db, 'transactions', txId);
-                batch.update(txRef, { reconciliationStatus: status });
-            });
+            await Promise.all(txUpdates);
 
-            await batch.commit();
             showSnackbar("Consolidation saved.", 'success');
             onClose();
         } catch (e) {
             console.error(e);
-            showSnackbar("Failed to save consolidation.", 'error');
+            showSnackbar("Failed to save consolidation: " + e.message, 'error');
+        } finally {
+            setSaving(false);
         }
     };
 
@@ -330,8 +348,8 @@ export default function ShiftConsolidationDialog({
             </DialogContent>
             <DialogActions>
                 <Button onClick={onClose}>Cancel</Button>
-                <Button onClick={handleSave} variant="contained" color="primary">
-                    Save Consolidation
+                <Button onClick={handleSave} variant="contained" color="primary" disabled={saving}>
+                    {saving ? 'Saving...' : 'Save Consolidation'}
                 </Button>
             </DialogActions>
         </Dialog>

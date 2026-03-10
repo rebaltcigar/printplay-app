@@ -1,6 +1,5 @@
 // src/services/invoiceService.js
-import { db } from '../firebase';
-import { collection, addDoc, updateDoc, doc, serverTimestamp, arrayUnion } from 'firebase/firestore';
+import { supabase } from '../supabase';
 import { generateDisplayId } from './orderService';
 
 // ---------------------------------------------------------------------------
@@ -17,8 +16,11 @@ export const calcInvoiceStatus = (total, amountPaid) => {
 /** Display-only: is the invoice overdue? */
 export const isOverdue = (invoice) => {
     if (!invoice || invoice.status === 'paid' || invoice.status === 'written_off') return false;
-    if (!invoice.dueDate) return false;
-    const due = invoice.dueDate?.toDate ? invoice.dueDate.toDate() : new Date(invoice.dueDate);
+    if (!invoice.due_date && !invoice.dueDate) return false;
+
+    // Fallback between legacy and Supabase schema
+    const rawDueDate = invoice.due_date || invoice.dueDate;
+    const due = new Date(rawDueDate);
     return due < new Date();
 };
 
@@ -36,11 +38,11 @@ export const normalizeInvoiceData = (order, options = {}) => {
 
     const { staffName = 'Staff', isReprint = false } = options;
 
-    const custName = order.customerName || order.customer?.fullName || '';
-    const custPhone = order.customerPhone || order.customer?.phone || '';
-    const custAddress = order.customerAddress || order.customer?.address || '';
-    const custTin = order.customerTin || order.customer?.tin || '';
-    const custBusinessStyle = order.customerBusinessStyle || order.customer?.businessStyle || '';
+    const custName = order.customerName || order.customer_name || order.customer?.fullName || '';
+    const custPhone = order.customerPhone || order.customer_phone || order.customer?.phone || '';
+    const custAddress = order.customerAddress || order.customer_address || order.customer?.address || '';
+    const custTin = order.customerTin || order.customer_tin || order.customer?.tin || '';
+    const custBusinessStyle = order.customerBusinessStyle || order.customer_business_style || order.customer?.businessStyle || '';
 
     const items = (order.items || []).map(item => {
         const qty = Number(item.quantity) || 0;
@@ -61,22 +63,14 @@ export const normalizeInvoiceData = (order, options = {}) => {
     const orderTotal = Number(order.total) || items.reduce((sum, i) => sum + i.total, 0);
 
     let timestamp = new Date();
-    if (isReprint && order.timestamp) {
-        if (order.timestamp.toDate) {
-            timestamp = order.timestamp.toDate();
-        } else if (order.timestamp.seconds) {
-            timestamp = new Date(order.timestamp.seconds * 1000);
-        } else if (order.timestamp instanceof Date) {
-            timestamp = order.timestamp;
-        } else {
-            timestamp = new Date(order.timestamp);
-        }
+    if (isReprint && (order.timestamp || order.created_at)) {
+        timestamp = new Date(order.timestamp || order.created_at);
     }
 
     return {
         ...order,
-        orderNumber: order.orderNumber || order.id || '---',
-        staffName: order.staffName || staffName,
+        orderNumber: order.orderNumber || order.order_number || order.id || '---',
+        staffName: order.staffName || order.staff_name || staffName,
         timestamp: timestamp,
         customerName: custName,
         customerPhone: custPhone,
@@ -85,9 +79,9 @@ export const normalizeInvoiceData = (order, options = {}) => {
         customerBusinessStyle: custBusinessStyle,
         items: items,
         total: orderTotal,
-        amountTendered: Number(order.amountTendered) || 0,
+        amountTendered: Number(order.amountTendered || order.amount_tendered) || 0,
         change: Number(order.change) || 0,
-        paymentMethod: order.paymentMethod || 'Cash'
+        paymentMethod: order.paymentMethod || order.payment_method || 'Cash'
     };
 };
 
@@ -100,9 +94,10 @@ export const normalizeInvoiceData = (order, options = {}) => {
  */
 export const createInvoice = async (order, { staffEmail, shiftId, dueDate }) => {
     const invoiceNumber = await generateDisplayId('invoices', 'INV');
+    const newId = crypto.randomUUID();
 
     const normalized = normalizeInvoiceData(order);
-    const itemsForFirestore = normalized.items.map(i => ({
+    const itemsForPg = normalized.items.map(i => ({
         description: i.name,
         quantity: i.quantity,
         price: i.price,
@@ -111,35 +106,36 @@ export const createInvoice = async (order, { staffEmail, shiftId, dueDate }) => 
 
     const total = normalized.total;
 
+    // Mapping payload to Supabase schema v2.0
     const invoiceDoc = {
-        invoiceNumber,
-        orderId: order.id || null,
-        orderNumber: normalized.orderNumber || null,
+        id: newId,
+        invoice_number: invoiceNumber,
+        order_id: order.id || null,
 
-        customerId: normalized.customerId || null,
-        customerName: normalized.customerName,
-        customerAddress: normalized.customerAddress,
-        customerTin: normalized.customerTin,
+        customer_id: normalized.customerId || normalized.customer_id || null,
+        customer_name: normalized.customerName,
 
-        items: itemsForFirestore,
+        items: itemsForPg,
         subtotal: total,
         total,
-        amountPaid: 0,
+        amount_paid: 0,
         balance: total,
 
         status: 'unpaid',
-        dueDate: dueDate instanceof Date ? dueDate : (dueDate ? new Date(dueDate) : null),
+        due_date: dueDate instanceof Date ? dueDate.toISOString() : (dueDate ? new Date(dueDate).toISOString() : null),
 
         notes: '',
-        createdAt: serverTimestamp(),
-        staffEmail,
-        shiftId,
+        created_at: new Date().toISOString(),
+        staff_email: staffEmail,
+        shift_id: shiftId,
 
         payments: [],
     };
 
-    const ref = await addDoc(collection(db, 'invoices'), invoiceDoc);
-    return ref.id;
+    const { error } = await supabase.from('invoices').insert([invoiceDoc]);
+    if (error) throw error;
+
+    return newId;
 };
 
 /**
@@ -150,38 +146,54 @@ export const recordPayment = async (invoiceId, { amount, method, note = '', staf
         paymentId: crypto.randomUUID(),
         amount: Number(amount),
         method,
-        date: new Date(),
+        date: new Date().toISOString(),
         staffEmail,
         note,
     };
 
-    const newAmountPaid = Number(current.amountPaid || 0) + Number(amount);
+    const currentPayments = Array.isArray(current.payments) ? current.payments : [];
+    const newPayments = [...currentPayments, entry];
+
+    const currentAmountPaid = Number(current.amountPaid || current.amount_paid || 0);
+    const newAmountPaid = currentAmountPaid + Number(amount);
     const newBalance = Math.max(0, Number(current.total) - newAmountPaid);
     const newStatus = calcInvoiceStatus(current.total, newAmountPaid);
 
-    await updateDoc(doc(db, 'invoices', invoiceId), {
-        payments: arrayUnion(entry),
-        amountPaid: newAmountPaid,
-        balance: newBalance,
-        status: newStatus,
-    });
+    const { error: invErr } = await supabase
+        .from('invoices')
+        .update({
+            payments: newPayments,
+            amount_paid: newAmountPaid,
+            balance: newBalance,
+            status: newStatus,
+            updated_at: new Date().toISOString()
+        })
+        .eq('id', invoiceId);
+
+    if (invErr) throw invErr;
 
     if (shiftId) {
         const tx = {
+            id: `TX-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
             price: Number(amount),
             quantity: 1,
-            total: Number(amount),
-            item: 'AR Payment',
-            notes: `Payment for Invoice #${current.invoiceNumber || invoiceId.slice(-6).toUpperCase()}${note ? ` - ${note}` : ''}`,
-            paymentMethod: method === 'gcash' ? 'GCash' : 'Cash',
-            customerId: current.customerId || null,
-            customerName: current.customerName || 'Walk-in',
-            staffEmail,
-            shiftId,
-            timestamp: serverTimestamp(),
-            isDeleted: false
+            amount: Number(amount),
+            name: 'AR Payment',
+            metadata: {
+                note: `Payment for Invoice #${current.invoiceNumber || current.invoice_number || invoiceId.slice(-6).toUpperCase()}${note ? ` - ${note}` : ''}`,
+            },
+            payment_method: method === 'gcash' ? 'GCash' : 'Cash',
+            customer_id: current.customerId || current.customer_id || null,
+            customer_name: current.customerName || current.customer_name || 'Walk-in',
+            staff_email: staffEmail,
+            shift_id: shiftId,
+            timestamp: new Date().toISOString(),
+            is_deleted: false,
+            financial_category: 'Revenue',
+            category: 'Revenue'
         };
-        await addDoc(collection(db, 'transactions'), tx);
+        const { error: txErr } = await supabase.from('order_items').insert([tx]);
+        if (txErr) console.error("Failed to insert AR Payment tx:", txErr);
     }
 };
 
@@ -193,17 +205,26 @@ export const writeOffInvoice = async (invoiceId, { reason, staffEmail }, current
         paymentId: crypto.randomUUID(),
         amount: Number(current.balance),
         method: 'write_off',
-        date: new Date(),
+        date: new Date().toISOString(),
         staffEmail,
         note: reason,
     };
 
-    await updateDoc(doc(db, 'invoices', invoiceId), {
-        payments: arrayUnion(entry),
-        amountPaid: Number(current.total),
-        balance: 0,
-        status: 'written_off',
-    });
+    const currentPayments = Array.isArray(current.payments) ? current.payments : [];
+    const newPayments = [...currentPayments, entry];
+
+    const { error } = await supabase
+        .from('invoices')
+        .update({
+            payments: newPayments,
+            amount_paid: Number(current.total),
+            balance: 0,
+            status: 'written_off',
+            updated_at: new Date().toISOString()
+        })
+        .eq('id', invoiceId);
+
+    if (error) throw error;
 };
 
 // ---------------------------------------------------------------------------

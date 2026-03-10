@@ -38,24 +38,7 @@ import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import PrintIcon from "@mui/icons-material/Print";
 import VisibilityIcon from "@mui/icons-material/Visibility";
-import {
-  collection,
-  onSnapshot,
-  orderBy,
-  query,
-  where,
-  doc,
-  updateDoc,
-  serverTimestamp,
-  writeBatch,
-  deleteDoc,
-  getDoc,
-  limit,
-  startAfter,
-  getDocs,
-} from "firebase/firestore";
-import { generateDisplayId, generateBatchIds } from "../services/orderService";
-import { db, auth } from "../firebase";
+import { supabase } from "../supabase";
 import { SimpleReceipt } from "./SimpleReceipt";
 import { ServiceInvoice } from "./ServiceInvoice";
 import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice } from "../services/printService";
@@ -144,8 +127,8 @@ const Transactions = ({ isActive = true }) => {
   const [systemSettings, setSystemSettings] = useState({});
 
   useEffect(() => {
-    getDoc(doc(db, 'settings', 'config')).then(snap => {
-      if (snap.exists()) setSystemSettings(snap.data());
+    supabase.from('settings').select('*').eq('id', 'config').single().then(({ data }) => {
+      if (data) setSystemSettings(data);
     });
   }, []);
 
@@ -197,56 +180,41 @@ const Transactions = ({ isActive = true }) => {
       const s = new Date(start); s.setHours(0, 0, 0, 0);
       const e = new Date(end); e.setHours(23, 59, 59, 999);
 
-      const qRef = query(
-        collection(db, "transactions"),
-        where("timestamp", ">=", s),
-        where("timestamp", "<=", e),
-        orderBy("timestamp", "desc"),
-        limit(200)
-      );
+      const fetchLive = async () => {
+        // Because we have multiple tables in supabase, we cannot use a simple realtime query with limits easily
+        // for all three tables merged. We will perform a fetch on mount and not use realtime for now.
+        try {
+          const [resOrders, resPc, resEx] = await Promise.all([
+            supabase.from('order_items').select('*').gte('timestamp', s.toISOString()).lte('timestamp', e.toISOString()).order('timestamp', { ascending: false }).limit(200),
+            supabase.from('pc_transactions').select('*').gte('timestamp', s.toISOString()).lte('timestamp', e.toISOString()).order('timestamp', { ascending: false }).limit(200),
+            supabase.from('expenses').select('*').gte('timestamp', s.toISOString()).lte('timestamp', e.toISOString()).order('timestamp', { ascending: false }).limit(200)
+          ]);
 
-      const unsub = onSnapshot(qRef, (snap) => {
-        setTx(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setInitLoading(false);
-      }, (err) => {
-        console.error("Stream error", err);
-        setInitLoading(false);
-      });
-      unsubRef.current = unsub;
+          const combined = [
+            ...(resOrders.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name, addedByAdmin: d.added_by_admin, editedBy: d.edited_by, isEdited: d.is_edited, staffEmail: d.staff_email, shiftId: d.shift_id, source: d.source })),
+            ...(resPc.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name, addedByAdmin: d.added_by_admin, editedBy: d.edited_by, isEdited: d.is_edited, staffEmail: d.staff_email, shiftId: d.shift_id, source: d.source })),
+            ...(resEx.data || []).map(d => ({ ...d, item: 'Expenses', paymentMethod: 'Cash', isDeleted: false, amount: Number(d.amount), total: Number(d.amount), expenseType: d.expense_type, expenseStaffName: d.staff_name, editedBy: d.edited_by, isEdited: d.is_edited, staffEmail: d.staff_email, shiftId: d.shift_id, source: d.source }))
+          ];
+
+          combined.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+          setTx(combined.slice(0, 200));
+          setInitLoading(false);
+        } catch (err) {
+          console.error("Fetch error", err);
+          setInitLoading(false);
+        }
+      };
+      fetchLive();
     }
   };
 
   const fetchNextPage = async (isReset = false, forceAll = false) => {
     setLoadingMore(true);
     try {
-      let constraints = [
-        orderBy("timestamp", "desc"),
-        limit(50)
-      ];
-
-      if (!forceAll && liveMode !== "all" && liveMode !== "archive_all") {
-        const s = new Date(start); s.setHours(0, 0, 0, 0);
-        const e = new Date(end); e.setHours(23, 59, 59, 999);
-        constraints.push(where("timestamp", ">=", s));
-        constraints.push(where("timestamp", "<=", e));
-      }
-
-      if (!isReset && lastDoc) {
-        constraints.push(startAfter(lastDoc));
-      }
-
-      const q = query(collection(db, "transactions"), ...constraints);
-      const snap = await getDocs(q);
-
-      const newRows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      if (isReset) {
-        setTx(newRows);
-      } else {
-        setTx(prev => [...prev, ...newRows]);
-      }
-
-      setLastDoc(snap.docs[snap.docs.length - 1] || null);
-      setHasMore(snap.docs.length === 50);
+      // Not implemented for Supabase yet as merging 3 tables with cursors is non-trivial.
+      // Will just show a snackbar for now.
+      showSnackbar("Pagination not yet supported for merged tables.", 'info');
 
     } catch (err) {
       console.error("Pagination error", err);
@@ -268,25 +236,38 @@ const Transactions = ({ isActive = true }) => {
     }
 
     try {
-      let constraints = [orderBy("timestamp", "desc")];
-
+      let [resOrders, resPc, resEx] = [[], [], []];
       if (!forceAllTime) {
         const s = new Date(start); s.setHours(0, 0, 0, 0);
         const e = new Date(end); e.setHours(23, 59, 59, 999);
-        constraints.push(where("timestamp", ">=", s));
-        constraints.push(where("timestamp", "<=", e));
+        const [r1, r2, r3] = await Promise.all([
+          supabase.from('order_items').select('*').gte('timestamp', s.toISOString()).lte('timestamp', e.toISOString()).order('timestamp', { ascending: false }),
+          supabase.from('pc_transactions').select('*').gte('timestamp', s.toISOString()).lte('timestamp', e.toISOString()).order('timestamp', { ascending: false }),
+          supabase.from('expenses').select('*').gte('timestamp', s.toISOString()).lte('timestamp', e.toISOString()).order('timestamp', { ascending: false })
+        ]);
+        resOrders = r1; resPc = r2; resEx = r3;
+      } else {
+        const [r1, r2, r3] = await Promise.all([
+          supabase.from('order_items').select('*').order('timestamp', { ascending: false }),
+          supabase.from('pc_transactions').select('*').order('timestamp', { ascending: false }),
+          supabase.from('expenses').select('*').order('timestamp', { ascending: false })
+        ]);
+        resOrders = r1; resPc = r2; resEx = r3;
       }
 
-      const q = query(collection(db, "transactions"), ...constraints);
-      const snap = await getDocs(q);
+      const combined = [
+        ...(resOrders.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name, addedByAdmin: d.added_by_admin, editedBy: d.edited_by, isEdited: d.is_edited, staffEmail: d.staff_email, shiftId: d.shift_id, source: d.source })),
+        ...(resPc.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name, addedByAdmin: d.added_by_admin, editedBy: d.edited_by, isEdited: d.is_edited, staffEmail: d.staff_email, shiftId: d.shift_id, source: d.source })),
+        ...(resEx.data || []).map(d => ({ ...d, item: 'Expenses', paymentMethod: 'Cash', isDeleted: false, amount: Number(d.amount), total: Number(d.amount), expenseType: d.expense_type, expenseStaffName: d.staff_name, editedBy: d.edited_by, isEdited: d.is_edited, staffEmail: d.staff_email, shiftId: d.shift_id, source: d.source }))
+      ];
 
-      const newRows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      combined.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-      setTx(newRows);
+      setTx(combined);
       setLastDoc(null);
       setHasMore(false);
 
-      showSnackbar(`Loaded ${newRows.length} transactions.`, 'success');
+      showSnackbar(`Loaded ${combined.length} transactions.`, 'success');
     } catch (err) {
       console.error("Fetch All error", err);
       showSnackbar("Failed to load all transactions.", "error");
@@ -414,11 +395,10 @@ const Transactions = ({ isActive = true }) => {
   const handleReprint = async (row) => {
     try {
       let rawOrder;
-      if (row.orderId) {
-        const orderRef = doc(db, 'orders', row.orderId);
-        const snap = await getDoc(orderRef);
-        if (snap.exists()) {
-          rawOrder = { id: snap.id, ...snap.data() };
+      if (row.order_id) {
+        const { data } = await supabase.from('orders').select('*').eq('id', row.order_id).single();
+        if (data) {
+          rawOrder = { id: data.id, orderNumber: data.order_number, items: data.items, total: data.total, staffName: data.staff_name, customerName: data.customer_name };
         } else {
           showSnackbar("Order record not found (deleted?).", 'error');
           return;
@@ -476,11 +456,10 @@ const Transactions = ({ isActive = true }) => {
   const handlePrintInvoice = async (row) => {
     try {
       let rawOrder;
-      if (row.orderId) {
-        const orderRef = doc(db, 'orders', row.orderId);
-        const snap = await getDoc(orderRef);
-        if (snap.exists()) {
-          rawOrder = { id: snap.id, ...snap.data() };
+      if (row.order_id) {
+        const { data } = await supabase.from('orders').select('*').eq('id', row.order_id).single();
+        if (data) {
+          rawOrder = { id: data.id, orderNumber: data.order_number, items: data.items, total: data.total, staffName: data.staff_name, customerName: data.customer_name };
         } else {
           showSnackbar("Order record not found.", 'error');
           return;
@@ -544,12 +523,9 @@ const Transactions = ({ isActive = true }) => {
       confirmColor: "error",
       onConfirm: async (reason) => {
         try {
-          await updateDoc(doc(db, "transactions", row.id), {
-            isDeleted: true,
-            deletedAt: new Date(),
-            deletedBy: auth.currentUser?.email || "admin",
-            deleteReason: reason,
-          });
+          // Identify table
+          const table = row.item === 'Expenses' ? 'expenses' : (row.id.startsWith('TXN') ? 'pc_transactions' : 'order_items');
+          await supabase.from(table).delete().eq('id', row.id);
           setSelectedIds((prev) => prev.filter((id) => id !== row.id));
           showSnackbar("Transaction deleted.", 'success');
         } catch (e) {
@@ -570,7 +546,8 @@ const Transactions = ({ isActive = true }) => {
       confirmColor: "error",
       onConfirm: async () => {
         try {
-          await deleteDoc(doc(db, "transactions", row.id));
+          const table = row.item === 'Expenses' ? 'expenses' : (row.id.startsWith('TXN') ? 'pc_transactions' : 'order_items');
+          await supabase.from(table).delete().eq('id', row.id);
           setSelectedIds((prev) => prev.filter((id) => id !== row.id));
           showSnackbar("Transaction permanently deleted.", 'success');
         } catch (e) {
@@ -593,12 +570,7 @@ const Transactions = ({ isActive = true }) => {
   const openBulkDateDialog = () => {
     if (selectedIds.length === 1) {
       const r = rows.find((x) => x.id === selectedIds[0]);
-      const d =
-        r?.timestamp?.seconds
-          ? new Date(r.timestamp.seconds * 1000)
-          : r?.timestamp instanceof Date
-            ? r.timestamp
-            : new Date();
+      const d = r?.timestamp ? new Date(r.timestamp) : new Date();
       setBulkDT(toDatetimeLocal(d));
     } else {
       setBulkDT(toDatetimeLocal(new Date()));
@@ -619,17 +591,29 @@ const Transactions = ({ isActive = true }) => {
       onConfirm: async (reason) => {
         const when = fromDatetimeLocal(bulkDT);
         try {
-          const batch = writeBatch(db);
-          selectedIds.forEach((id) => {
-            batch.update(doc(db, "transactions", id), {
-              timestamp: when,
-              isEdited: true,
-              editedBy: auth.currentUser?.email || "admin",
-              editReason: reason,
-              lastUpdatedAt: serverTimestamp(),
-            });
-          });
-          await batch.commit();
+          const isoWhen = when.toISOString();
+          const authUser = (await supabase.auth.getSession()).data.session?.user;
+          const editorEmail = authUser?.email || "admin";
+
+          const ordersToUpdate = rows.filter(t => selectedIds.includes(t.id) && t.item !== 'Expenses' && !t.id.startsWith('TXN')).map(t => t.id);
+          const pcsToUpdate = rows.filter(t => selectedIds.includes(t.id) && t.id.startsWith('TXN')).map(t => t.id);
+          const expensesToUpdate = rows.filter(t => selectedIds.includes(t.id) && t.item === 'Expenses').map(t => t.id);
+
+          const payload = {
+            timestamp: isoWhen,
+            is_edited: true,
+            edited_by: editorEmail,
+            edit_reason: reason,
+            last_updated_at: new Date().toISOString()
+          };
+
+          const promises = [];
+          if (ordersToUpdate.length > 0) promises.push(supabase.from('order_items').update(payload).in('id', ordersToUpdate));
+          if (pcsToUpdate.length > 0) promises.push(supabase.from('pc_transactions').update(payload).in('id', pcsToUpdate));
+          if (expensesToUpdate.length > 0) promises.push(supabase.from('expenses').update(payload).in('id', expensesToUpdate));
+
+          await Promise.all(promises);
+
           setBulkOpen(false);
           clearSelection();
           showSnackbar(`${selectedIds.length} transaction(s) updated.`, 'success');
@@ -654,16 +638,17 @@ const Transactions = ({ isActive = true }) => {
       confirmColor: "error",
       onConfirm: async (reason) => {
         try {
-          const batch = writeBatch(db);
-          selectedIds.forEach((id) => {
-            batch.update(doc(db, "transactions", id), {
-              isDeleted: true,
-              deletedAt: new Date(),
-              deletedBy: auth.currentUser?.email || "admin",
-              deleteReason: reason,
-            });
-          });
-          await batch.commit();
+          const ordersToDelete = rows.filter(t => selectedIds.includes(t.id) && t.item !== 'Expenses' && !t.id.startsWith('TXN')).map(t => t.id);
+          const pcsToDelete = rows.filter(t => selectedIds.includes(t.id) && t.id.startsWith('TXN')).map(t => t.id);
+          const expensesToDelete = rows.filter(t => selectedIds.includes(t.id) && t.item === 'Expenses').map(t => t.id);
+
+          const promises = [];
+          if (ordersToDelete.length > 0) promises.push(supabase.from('order_items').delete().in('id', ordersToDelete));
+          if (pcsToDelete.length > 0) promises.push(supabase.from('pc_transactions').delete().in('id', pcsToDelete));
+          if (expensesToDelete.length > 0) promises.push(supabase.from('expenses').delete().in('id', expensesToDelete));
+
+          await Promise.all(promises);
+
           setSelectedIds([]);
           showSnackbar(`${selectedIds.length} transaction(s) deleted.`, 'success');
         } catch (e) {
@@ -687,9 +672,17 @@ const Transactions = ({ isActive = true }) => {
       confirmColor: "error",
       onConfirm: async () => {
         try {
-          const batch = writeBatch(db);
-          selectedIds.forEach((id) => batch.delete(doc(db, "transactions", id)));
-          await batch.commit();
+          const ordersToDelete = rows.filter(t => selectedIds.includes(t.id) && t.item !== 'Expenses' && !t.id.startsWith('TXN')).map(t => t.id);
+          const pcsToDelete = rows.filter(t => selectedIds.includes(t.id) && t.id.startsWith('TXN')).map(t => t.id);
+          const expensesToDelete = rows.filter(t => selectedIds.includes(t.id) && t.item === 'Expenses').map(t => t.id);
+
+          const promises = [];
+          if (ordersToDelete.length > 0) promises.push(supabase.from('order_items').delete().in('id', ordersToDelete));
+          if (pcsToDelete.length > 0) promises.push(supabase.from('pc_transactions').delete().in('id', pcsToDelete));
+          if (expensesToDelete.length > 0) promises.push(supabase.from('expenses').delete().in('id', expensesToDelete));
+
+          await Promise.all(promises);
+
           setSelectedIds([]);
           showSnackbar(`${selectedIds.length} transaction(s) permanently deleted.`, 'success');
         } catch (e) {
@@ -710,9 +703,7 @@ const Transactions = ({ isActive = true }) => {
     setEditQuantity(String(row.quantity ?? ""));
     setEditPrice(String(row.price ?? ""));
     setEditNotes(row.notes || "");
-    let dt = new Date();
-    if (row.timestamp?.seconds) dt = new Date(row.timestamp.seconds * 1000);
-    else if (row.timestamp instanceof Date) dt = row.timestamp;
+    const dt = row.timestamp ? new Date(row.timestamp) : new Date();
     setEditDate(toDateInput(dt));
     setEditTime(toTimeInput(dt));
     setEditOpen(true);
@@ -749,22 +740,19 @@ const Transactions = ({ isActive = true }) => {
       const [HH, MM] = editTime.split(":").map(Number);
       newTimestamp = new Date(yyyy, (mm || 1) - 1, dd || 1, HH || 0, MM || 0, 0, 0);
     } else {
-      if (editing.timestamp?.seconds)
-        newTimestamp = new Date(editing.timestamp.seconds * 1000);
-      else if (editing.timestamp instanceof Date)
-        newTimestamp = editing.timestamp;
-      else newTimestamp = new Date();
+      newTimestamp = editing.timestamp ? new Date(editing.timestamp) : new Date();
     }
 
+    const authUser = await supabase.auth.getSession();
+    const editorEmail = authUser.data.session?.user?.email || "admin";
+
     const update = {
-      item: editItem,
-      quantity: qty,
       price,
       total,
       notes: editNotes || "",
       timestamp: newTimestamp,
-      isEdited: true,
-      editedBy: auth.currentUser?.email || "admin",
+      is_edited: true,
+      edited_by: editorEmail,
     };
     try {
       setConfirmDialog({
@@ -775,9 +763,19 @@ const Transactions = ({ isActive = true }) => {
         confirmText: "Save Changes",
         confirmColor: "primary",
         onConfirm: async (reason) => {
-          update.editReason = reason;
+          update.edit_reason = reason;
+          update.last_updated_at = new Date().toISOString();
           try {
-            await updateDoc(doc(db, "transactions", editing.id), update);
+            const table = editing.item === 'Expenses' ? 'expenses' : (editing.id.startsWith('TXN') ? 'pc_transactions' : 'order_items');
+
+            if (table === 'expenses') {
+              update.expense_type = editExpenseType;
+            } else {
+              update.item = editItem;
+              update.quantity = qty;
+            }
+
+            await supabase.from(table).update(update).eq('id', editing.id);
             closeEdit();
             showSnackbar("Transaction updated.", 'success');
           } catch (e) {

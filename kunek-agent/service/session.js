@@ -13,14 +13,13 @@
  *  - Session extension via Firestore session doc listener
  */
 
-const { doc, getDoc } = require('firebase/firestore');
-const { getDB: getFirestoreDB } = require('./firebase');
 const {
+  setupStationListener,
   listenToSession,
   getSession,
   updateSessionMinutes,
-  endSessionOnFirestore,
-} = require('./firestore');
+  endSessionOnSupabase,
+} = require('./supabaseService');
 const {
   getActiveSession,
   upsertSession,
@@ -88,25 +87,25 @@ async function bootRecovery() {
   sendMessage(messageTypes.SESSION_UPDATE, { session: _session });
   logger.info(`Session state recovered (id=${row.id}) — waiting for Firestore sync to verify status before unlock`);
 
-  // Reconcile with Firestore
+  // Reconcile with Supabase
   try {
     const snap = await getSession(row.id);
     if (!snap.exists()) {
-      logger.warn(`Recovery: session ${row.id} not found in Firestore — clearing local state`);
+      logger.warn(`Recovery: session ${row.id} not found in Supabase — clearing local state`);
       _clearSession();
       return;
     }
     const remote = snap.data();
     if (remote.status !== 'active') {
-      logger.info(`Recovery: session ${row.id} is ${remote.status} on Firestore — clearing local state`);
+      logger.info(`Recovery: session ${row.id} is ${remote.status} on Supabase — clearing local state`);
       _clearSession();
       return;
     }
-    if ((remote.minutesUsed || 0) > _session.minutesUsed) {
-      const diff = remote.minutesUsed - _session.minutesUsed;
-      _session.minutesUsed = remote.minutesUsed;
+    if ((remote.minutes_used || 0) > _session.minutesUsed) {
+      const diff = remote.minutes_used - _session.minutesUsed;
+      _session.minutesUsed = remote.minutes_used;
       _secondsRemaining = Math.max(0, _secondsRemaining - diff * 60);
-      logger.info(`Reconciliation: remote minutesUsed higher — adjusted to ${_secondsRemaining}s remaining`);
+      logger.info(`Reconciliation: remote minutes_used higher — adjusted to ${_secondsRemaining}s remaining`);
     }
   } catch (err) {
     logger.warn(`Boot reconciliation failed (offline?): ${err.message}`);
@@ -123,12 +122,12 @@ async function handleStationSnapshot(snap) {
 
   // ── Session/Lock State ──────────────────────────────────────────────────
 
-  const isUnlockTarget = data.status === 'in-use' && !data.isLocked && !!data.currentSessionId;
+  const isUnlockTarget = data.status === 'in-use' && !data.is_locked && !!data.current_session_id;
 
   if (isUnlockTarget) {
-    const sessionId = data.currentSessionId;
+    const sessionId = data.current_session_id;
     if (!_session || _session.id !== sessionId) {
-      logger.info(`Station snapshot: UNLOCK TARGET (station: in-use, session: ${sessionId}, isLocked: false)`);
+      logger.info(`Station snapshot: UNLOCK TARGET (station: in-use, session: ${sessionId}, is_locked: false)`);
       await _loadAndStartSession(sessionId, stationId);
     } else {
       // Already tracking locally (e.g. from recovery or already in-progress)
@@ -140,9 +139,9 @@ async function handleStationSnapshot(snap) {
       }
     }
   } else {
-    // LOCK TARGET: available, manually locked, OR status in-use but isLocked=true (expired prepaid)
+    // LOCK TARGET: available, manually locked, OR status in-use but is_locked=true (expired prepaid)
     if (_session) {
-      logger.info(`Station snapshot: LOCK TARGET (status: ${data.status}, isLocked: ${data.isLocked}, session: ${data.currentSessionId}) — clearing local session`);
+      logger.info(`Station snapshot: LOCK TARGET (status: ${data.status}, is_locked: ${data.is_locked}, session: ${data.current_session_id}) — clearing local session`);
       _clearSession();
       sendMessage(messageTypes.SESSION_EXPIRED, {});
     }
@@ -152,7 +151,7 @@ async function handleStationSnapshot(snap) {
   // ── Power Management ──────────────────────────────────────────────────
   if (data.command) {
     const { type, timestamp } = data.command;
-    const cmdTime = timestamp?.toMillis?.() || 0;
+    const cmdTime = new Date(timestamp).getTime() || 0;
     const now = Date.now();
 
     // Only execute if command is fresh (within last 30 seconds)
@@ -176,7 +175,8 @@ async function handleStationSnapshot(snap) {
 
       // Clear the command after execution to avoid loops
       try {
-        await updateDoc(snap.ref, { command: null });
+        const { getSupabase } = require('./supabase');
+        await getSupabase().from('stations').update({ command: null }).eq('id', stationId);
       } catch (err) {
         logger.error(`Failed to clear command: ${err.message}`);
       }
@@ -199,12 +199,12 @@ async function _loadAndStartSession(sessionId, stationId) {
     const session = {
       id: sessionId,
       stationId,
-      minutesAllotted: data.minutesAllotted ?? null,
-      minutesUsed: data.minutesUsed ?? 0,
-      ratePerMinute: data.rateSnapshot?.ratePerMinute ?? 0,
-      openEnded: data.openEnded ?? false,
-      customerName: data.customerName ?? null,
-      startedAt: data.startedAt?.toMillis?.() ?? Date.now(),
+      minutesAllotted: data.minutes_allotted ?? null,
+      minutesUsed: data.minutes_used ?? 0,
+      ratePerMinute: data.rate_per_minute ?? 0,
+      openEnded: data.open_ended ?? false,
+      customerName: data.customer_name ?? null,
+      startedAt: new Date(data.started_at).getTime() ?? Date.now(),
     };
 
     const secondsRemaining = session.openEnded
@@ -256,8 +256,8 @@ function _handleSessionSnapshot(snap) {
     return;
   }
 
-  const newAllotted = data.minutesAllotted;
-  const remoteUsed = data.minutesUsed || 0;
+  const newAllotted = data.minutes_allotted;
+  const remoteUsed = data.minutes_used || 0;
 
   // Use the larger of local vs remote used to ensure we don't jump backwards
   const effectiveUsed = Math.max(_session.minutesUsed, remoteUsed);
@@ -412,10 +412,10 @@ async function _expireSession(reason = 'time-expired') {
   logger.info('IPC SESSION_EXPIRED + LOCK sent (local/remote expiry)');
 
   try {
-    await endSessionOnFirestore(id, stationId, reason);
-    logger.info(`Firestore updated: session ${id} ended (reason: ${reason})`);
+    await endSessionOnSupabase(id, stationId, reason);
+    logger.info(`Supabase updated: session ${id} ended (reason: ${reason})`);
   } catch (err) {
-    logger.error(`Firestore end-session write failed (sessionId=${id}, stationId=${stationId}): ${err.message}`);
+    logger.error(`Supabase end-session write failed (sessionId=${id}, stationId=${stationId}): ${err.message}`);
   }
 
   // Note: we still have _session and its listener until handleStationSnapshot 

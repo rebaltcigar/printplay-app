@@ -1,8 +1,4 @@
-import { db } from "../firebase";
-import {
-    collection, addDoc, serverTimestamp, writeBatch,
-    doc, increment
-} from "firebase/firestore";
+import { supabase } from "../supabase";
 import { generateOrderNumber, createOrderObject, generateBatchIds } from "./orderService";
 import { createInvoice } from "./invoiceService";
 
@@ -11,27 +7,24 @@ import { createInvoice } from "./invoiceService";
 // ---------------------------------------------------------------------------
 const resolveCustomer = async (customer, userEmail) => {
     if (!customer || !customer.isNew) return customer || null;
-    const custRef = await addDoc(collection(db, 'customers'), {
-        fullName: customer.fullName,
-        createdAt: serverTimestamp(),
-        createdBy: userEmail || 'system_checkout',
-        lifetimeValue: 0,
-        outstandingBalance: 0,
-        totalOrders: 0
-    });
-    return { id: custRef.id, fullName: customer.fullName };
+
+    const newCustId = crypto.randomUUID();
+    const { error } = await supabase.from('customers').insert([{
+        id: newCustId,
+        full_name: customer.fullName,
+        created_at: new Date().toISOString()
+    }]);
+
+    if (error) {
+        console.error("Error creating customer:", error);
+        throw error;
+    }
+
+    return { id: newCustId, fullName: customer.fullName };
 };
 
 /**
  * Handles the complete checkout process for a new order.
- *
- * @param {Object} params
- * @param {Object} params.currentOrder The order object from POS state
- * @param {Object} params.paymentData Payment details (method, tendered, etc.)
- * @param {Object} params.user Current user object
- * @param {string} params.activeShiftId The ID of the current shift
- * @param {number} params.currentTotal Pre-calculated total
- * @returns {Promise<Object>} The completed order data
  */
 export const saveCheckout = async ({ currentOrder, paymentData, user, activeShiftId, currentTotal }) => {
     const { discount, subtotal } = paymentData;
@@ -41,13 +34,14 @@ export const saveCheckout = async ({ currentOrder, paymentData, user, activeShif
 
     const isUnpaid = paymentData.paymentMethod === 'Charge' || paymentData.paymentMethod === 'Pay Later';
     const orderNum = await generateOrderNumber();
+    const orderId = crypto.randomUUID();
 
     // 2. Prepare Order Object
     const fullOrder = {
-        orderNumber: orderNum,
-        shiftId: activeShiftId,
-        invoiceStatus: isUnpaid ? 'UNPAID' : 'PAID',
-        isDeleted: false,
+        id: orderId,
+        order_number: orderNum,
+        shift_id: activeShiftId,
+        invoice_status: isUnpaid ? 'UNPAID' : 'PAID',
         ...createOrderObject(
             currentOrder.items,
             currentTotal,
@@ -63,8 +57,8 @@ export const saveCheckout = async ({ currentOrder, paymentData, user, activeShif
     };
 
     // 3. Add Order to DB
-    const orderRef = await addDoc(collection(db, 'orders'), fullOrder);
-    const orderId = orderRef.id;
+    const { error: orderErr } = await supabase.from('orders').insert([fullOrder]);
+    if (orderErr) throw orderErr;
 
     // 4. Create AR Invoice if Charge
     if (paymentData.paymentMethod === 'Charge') {
@@ -74,78 +68,75 @@ export const saveCheckout = async ({ currentOrder, paymentData, user, activeShif
         );
     }
 
-    // 5. Process Line Items (Transactions)
+    // 5. Process Line Items (Bulk Insert to order_items)
     const txIds = await generateBatchIds("transactions", "TX", currentOrder.items.length);
-    const batch = writeBatch(db);
-
-    currentOrder.items.forEach((item, index) => {
-        const txRef = doc(collection(db, 'transactions'));
-        batch.set(txRef, {
-            displayId: txIds[index],
-            item: item.serviceName || item.name,
+    const orderItemsPayload = currentOrder.items.map((item, index) => ({
+        id: txIds[index] || `TX-${Date.now()}-${index}`,
+        parent_order_number: orderNum,
+        name: item.serviceName || item.name,
+        product_id: item.serviceId || null,
+        price: Number(item.price),
+        cost_price: Number(item.costPrice || 0),
+        quantity: Number(item.quantity),
+        amount: Number(item.price) * Number(item.quantity),
+        timestamp: new Date().toISOString(),
+        staff_email: user.email,
+        customer_name: finalCustomer?.fullName || 'Walk-in',
+        customer_id: finalCustomer?.id || null,
+        shift_id: activeShiftId,
+        category: 'Revenue',
+        payment_method: paymentData.paymentMethod,
+        invoice_status: isUnpaid ? 'UNPAID' : 'PAID',
+        financial_category: 'Revenue',
+        is_deleted: false,
+        metadata: {
             note: item.note || '',
-            serviceId: item.serviceId || null,
             parentServiceId: item.parentServiceId || null,
             variantGroup: item.variantGroup || null,
             variantLabel: item.variantLabel || null,
-            price: Number(item.price),
-            unitCost: Number(item.costPrice || 0),
-            quantity: Number(item.quantity),
-            total: Number(item.price) * Number(item.quantity),
-            timestamp: serverTimestamp(),
-            staffEmail: user.email,
-            customerName: finalCustomer?.fullName || 'Walk-in',
-            customerId: finalCustomer?.id || null,
-            shiftId: activeShiftId,
-            orderNumber: orderNum,
-            category: 'Revenue',
-            financialCategory: 'Revenue',
-            paymentMethod: paymentData.paymentMethod,
             paymentDetails: paymentData.paymentDetails || {},
-            invoiceStatus: isUnpaid ? 'UNPAID' : 'PAID',
-            isDeleted: false,
             consumables: item.consumables || []
-        });
+        }
+    }));
 
-        // 6. Inventory Deduction
-        const deductStock = (svcId, q) => {
-            if (!svcId) return;
-            batch.update(doc(db, 'services', svcId), { stockCount: increment(-q) });
-        };
+    if (orderItemsPayload.length > 0) {
+        const { error: txErr } = await supabase.from('order_items').insert(orderItemsPayload);
+        if (txErr) throw txErr;
+    }
 
+    // 6. Inventory Deduction (Sequential)
+    const deductStock = async (svcId, q) => {
+        if (!svcId) return;
+        const { data } = await supabase.from('products').select('stockCount').eq('id', svcId).single();
+        if (data && data.stockCount !== undefined) {
+            await supabase.from('products').update({ stockCount: Number(data.stockCount) - q }).eq('id', svcId);
+        }
+    };
+
+    for (const item of currentOrder.items) {
         if (item.trackStock && item.serviceId) {
-            deductStock(item.serviceId, Number(item.quantity));
+            await deductStock(item.serviceId, Number(item.quantity));
         }
-
         if (item.consumables && item.consumables.length > 0) {
-            item.consumables.forEach(c => {
-                deductStock(c.itemId, Number(c.qty) * Number(item.quantity));
-            });
+            for (const c of item.consumables) {
+                await deductStock(c.itemId, Number(c.qty) * Number(item.quantity));
+            }
         }
-    });
-
-    await batch.commit();
+    }
 
     return { ...fullOrder, id: orderId };
 };
 
 /**
  * Updates an existing order (re-checkout/edit).
- *
- * @param {Object} params
- * @param {Object} params.order The current tab/order object being edited
- * @param {Object} params.paymentData New payment details
- * @param {Object} params.user Current user
- * @param {string} params.activeShiftId
- * @param {number} params.currentTotal
- * @returns {Promise<Object>}
  */
 export const updateCheckout = async ({ order, paymentData, user, activeShiftId, currentTotal }) => {
-    // 1. Resolve customer (create if new)
+    // 1. Resolve customer
     const finalCustomer = await resolveCustomer(order.customer, user?.email);
 
-    const batch = writeBatch(db);
     const finalItems = [];
+    const newItemsToInsert = [];
+    const itemsToUpdate = [];
 
     // 2. Pre-generate IDs for new items
     const newItemsCount = order.items.filter(i => !i.transactionId).length;
@@ -155,56 +146,79 @@ export const updateCheckout = async ({ order, paymentData, user, activeShiftId, 
     }
     let newIdIndex = 0;
 
-    // 3. Process Items (Add & Update)
+    // 3. Process Items
     for (const item of order.items) {
-        const itemData = {
-            item: item.name || item.serviceName,
-            note: item.note || '',
-            price: Number(item.price),
-            quantity: Number(item.quantity),
-            total: Number(item.price) * Number(item.quantity),
-        };
-        if (item.editReason) itemData.editReason = item.editReason;
+        const itemAmount = Number(item.price) * Number(item.quantity);
 
         if (item.transactionId) {
-            const ref = doc(db, 'transactions', item.transactionId);
-            batch.update(ref, {
-                ...itemData,
-                paymentMethod: paymentData.paymentMethod,
-                paymentDetails: paymentData.paymentDetails || {}
+            itemsToUpdate.push({
+                id: item.transactionId,
+                payment_method: paymentData.paymentMethod,
+                amount: itemAmount,
+                quantity: Number(item.quantity),
+                price: Number(item.price)
             });
         } else {
-            const ref = doc(collection(db, 'transactions'));
-            const displayId = newIds[newIdIndex++] || `TEMP-${Date.now()}`;
-            batch.set(ref, {
-                ...itemData,
-                displayId,
-                timestamp: serverTimestamp(),
-                staffEmail: user.email,
-                customerName: finalCustomer?.fullName || 'Walk-in',
-                customerId: finalCustomer?.id || null,
-                shiftId: activeShiftId,
-                orderNumber: order.orderNumber,
+            const displayId = newIds[newIdIndex++] || `TX-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+            newItemsToInsert.push({
+                id: displayId,
+                parent_order_number: order.orderNumber, // Assume it maps from original order
+                name: item.name || item.serviceName,
+                product_id: item.serviceId || null,
+                price: Number(item.price),
+                quantity: Number(item.quantity),
+                amount: itemAmount,
+                timestamp: new Date().toISOString(),
+                staff_email: user.email,
+                customer_name: finalCustomer?.fullName || 'Walk-in',
+                customer_id: finalCustomer?.id || null,
+                shift_id: activeShiftId,
                 category: 'Revenue',
-                financialCategory: 'Revenue',
-                paymentMethod: paymentData.paymentMethod,
-                paymentDetails: paymentData.paymentDetails || {},
-                isDeleted: false
+                payment_method: paymentData.paymentMethod,
+                financial_category: 'Revenue',
+                is_deleted: false,
+                metadata: {
+                    note: item.note || '',
+                    paymentDetails: paymentData.paymentDetails || {}
+                }
             });
         }
-        finalItems.push({ ...itemData, name: itemData.item });
+        finalItems.push({
+            itemId: item.id || item.itemId,
+            name: item.name || item.serviceName,
+            price: Number(item.price),
+            quantity: Number(item.quantity),
+            subtotal: itemAmount
+        });
+    }
+
+    // Insert new items
+    if (newItemsToInsert.length > 0) {
+        const { error: insErr } = await supabase.from('order_items').insert(newItemsToInsert);
+        if (insErr) throw insErr;
+    }
+
+    // Update existing items sequentially in order_items
+    for (const upItem of itemsToUpdate) {
+        const payload = {
+            payment_method: upItem.payment_method,
+            amount: upItem.amount,
+            quantity: upItem.quantity,
+            price: upItem.price,
+            updated_at: new Date().toISOString()
+        };
+        await supabase.from('order_items').update(payload).eq('id', upItem.id);
     }
 
     // 4. Process Deletions
-    if (order.deletedItems) {
-        order.deletedItems.forEach(delItem => {
-            batch.update(doc(db, 'transactions', delItem.transactionId), {
-                isDeleted: true,
-                deletedBy: user.email,
-                deleteReason: delItem.deleteReason,
-                deletedAt: serverTimestamp()
-            });
-        });
+    if (order.deletedItems && order.deletedItems.length > 0) {
+        const delIds = order.deletedItems.map(d => d.transactionId);
+        await supabase.from('order_items')
+            .update({
+                is_deleted: true,
+                metadata: { deleted_by: user.email, deleted_at: new Date().toISOString() }
+            })
+            .in('id', delIds);
     }
 
     // 5. Update Order Doc
@@ -213,20 +227,20 @@ export const updateCheckout = async ({ order, paymentData, user, activeShiftId, 
         subtotal: paymentData.subtotal || currentTotal,
         discount: paymentData.discount || { type: 'none', value: 0, amount: 0 },
         total: paymentData.total || currentTotal,
-        paymentMethod: paymentData.paymentMethod,
-        paymentDetails: paymentData.paymentDetails || {},
-        amountTendered: Number(paymentData.amountTendered),
+        payment_method: paymentData.paymentMethod,
+        payment_details: paymentData.paymentDetails || {},
+        amount_tendered: Number(paymentData.amountTendered),
         change: Number(paymentData.change),
-        customerId: finalCustomer?.id || 'walk-in',
-        customerName: finalCustomer?.fullName || 'Walk-in Customer',
-        customerPhone: finalCustomer?.phone || '',
-        customerAddress: finalCustomer?.address || '',
-        customerTin: finalCustomer?.tin || '',
-        updatedAt: serverTimestamp()
+        customer_id: finalCustomer?.id || 'walk-in',
+        customer_name: finalCustomer?.fullName || 'Walk-in Customer',
+        customer_phone: finalCustomer?.phone || '',
+        customer_address: finalCustomer?.address || '',
+        customer_tin: finalCustomer?.tin || '',
+        updated_at: new Date().toISOString()
     };
 
-    batch.update(doc(db, 'orders', order.originalId), updateObj);
-    await batch.commit();
+    const { error: ordErr } = await supabase.from('orders').update(updateObj).eq('id', order.originalId);
+    if (ordErr) throw ordErr;
 
-    return { ...updateObj, id: order.originalId, orderNumber: order.orderNumber };
+    return { ...updateObj, id: order.originalId, order_number: order.orderNumber };
 };

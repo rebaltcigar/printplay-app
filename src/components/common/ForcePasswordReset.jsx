@@ -9,13 +9,11 @@ import {
     Alert,
     CircularProgress
 } from '@mui/material';
-import { updatePassword } from 'firebase/auth';
-import { doc, updateDoc } from 'firebase/firestore';
-import { auth, db } from '../../firebase';
+import { supabase } from '../../supabase';
 import LockResetIcon from '@mui/icons-material/LockReset';
 
 /**
- * A full-screen overlay component shown to users who log in with a temporary password (requiresPasswordReset: true).
+ * A full-screen overlay component shown to users who log in with a temporary password (requires_password_reset: true).
  * Blocks access to the rest of the application until they set their own permanent password.
  */
 export default function ForcePasswordReset({ onComplete }) {
@@ -41,22 +39,25 @@ export default function ForcePasswordReset({ onComplete }) {
         setLoading(true);
 
         try {
-            const user = auth.currentUser;
+            const { data: { user }, error: authErr } = await supabase.auth.getUser();
             if (!user) throw new Error("No authenticated user found.");
 
-            // 1. Update password in Firebase Auth
-            await updatePassword(user, password);
+            // 1. Update password via Supabase Auth
+            const { error: updateErr } = await supabase.auth.updateUser({ password });
+            if (updateErr) throw updateErr;
 
-            // 2. Clear the flag in Firestore
-            const userRef = doc(db, 'users', user.uid);
-            await updateDoc(userRef, { requiresPasswordReset: false });
+            // 2. Clear the flag in profiles
+            const { error: profileErr } = await supabase
+                .from('profiles')
+                .update({ requires_password_reset: false })
+                .eq('id', user.id);
+            if (profileErr) throw profileErr;
 
-            // 3. Notify parent app.jsx to unblock routing
+            // 3. Notify parent App.jsx to unblock routing
             if (onComplete) onComplete();
 
         } catch (err) {
             console.error("Failed to reset password:", err);
-            // Firebase re-auth might be required if session is old, but since they literally just logged in, it should be fine.
             setError(err.message || "Failed to update password. Please try again.");
         } finally {
             setLoading(false);

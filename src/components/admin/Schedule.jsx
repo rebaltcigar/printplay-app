@@ -8,11 +8,7 @@ import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   Card, CircularProgress, Alert,
 } from '@mui/material';
-import {
-  collection, query, where, getDocs, addDoc, updateDoc, deleteDoc,
-  doc, serverTimestamp, onSnapshot, writeBatch,
-} from 'firebase/firestore';
-import { db } from '../../firebase';
+import { supabase } from '../../supabase';
 import { useStaffList } from '../../hooks/useStaffList';
 import { fmtShortDate, fmtDayOfWeek, fmtDate } from '../../utils/formatters';
 import { getFriendlyErrorMessage } from '../../services/errorService';
@@ -80,15 +76,15 @@ const STATUS_CFG = {
 };
 
 const TEMPLATE_SEEDS = [
-  { name: 'Morning', startTime: '08:00', endTime: '14:00' },
-  { name: 'Afternoon', startTime: '14:00', endTime: '20:00' },
-  { name: 'Evening', startTime: '20:00', endTime: '02:00' },
+  { name: 'Morning', start_time: '08:00', end_time: '14:00' },
+  { name: 'Afternoon', start_time: '14:00', end_time: '20:00' },
+  { name: 'Evening', start_time: '20:00', end_time: '02:00' },
 ];
 
 const BLANK_ENTRY = { staffEmail: '', date: '', shiftLabel: '', startTime: '', endTime: '', notes: '', status: 'scheduled' };
 const BLANK_TPL = { name: '', startTime: '', endTime: '' };
 
-// ---------- Staff chip (calendar cell — shows staff name, shift is the row label) ----------
+// ---------- Staff chip ----------
 function StaffChip({ entry, onEdit, onDelete, onAbsent, onCoverage }) {
   const cfg = STATUS_CFG[entry.status] || STATUS_CFG.scheduled;
   return (
@@ -104,11 +100,11 @@ function StaffChip({ entry, onEdit, onDelete, onAbsent, onCoverage }) {
       <Stack direction="row" alignItems="flex-start" justifyContent="space-between" spacing={0.5}>
         <Box sx={{ minWidth: 0, flex: 1 }}>
           <Typography variant="caption" fontWeight={600} display="block" noWrap lineHeight={1.3}>
-            {entry.staffName || entry.staffEmail}
+            {entry.staff_name || entry.staff_email}
           </Typography>
-          {entry.coveredByName && (
+          {entry.covered_by_name && (
             <Typography variant="caption" color="warning.main" display="block" noWrap lineHeight={1.2}>
-              ↳ {entry.coveredByName}
+              ↳ {entry.covered_by_name}
             </Typography>
           )}
         </Box>
@@ -168,46 +164,67 @@ export default function Schedule({ showSnackbar }) {
   // Subscribe entries for current week
   useEffect(() => {
     setLoadingEntries(true);
-    const q = query(
-      collection(db, 'schedules'),
-      where('date', '>=', weekStart),
-      where('date', '<=', weekEnd),
-    );
-    const unsub = onSnapshot(q, snap => {
-      setEntries(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    const fetchEntries = async () => {
+      const { data } = await supabase
+        .from('schedules')
+        .select('*')
+        .gte('date', weekStart)
+        .lte('date', weekEnd);
+      if (data) setEntries(data);
       setLoadingEntries(false);
-    }, err => { console.error('Schedule fetch:', err); setLoadingEntries(false); });
-    return unsub;
+    };
+
+    fetchEntries();
+
+    const channel = supabase.channel(`schedule-entries-${weekStart}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, fetchEntries)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, [weekStart, weekEnd]);
 
-  // Subscribe shift templates — seeds defaults on first run if collection is empty
+  // Subscribe shift templates — seeds defaults on first run if table is empty
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'shiftTemplates'), async snap => {
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      list.sort((a, b) => (a.startTime || '').localeCompare(b.startTime || '') || (a.name || '').localeCompare(b.name || ''));
+    const fetchTemplates = async () => {
+      const { data } = await supabase.from('shift_templates').select('*');
+      if (data) {
+        const list = [...data].sort((a, b) =>
+          (a.start_time || '').localeCompare(b.start_time || '') ||
+          (a.name || '').localeCompare(b.name || ''),
+        );
 
-      if (list.length === 0 && !tplSeededRef.current) {
-        tplSeededRef.current = true;
-        const batch = writeBatch(db);
-        for (const seed of TEMPLATE_SEEDS) {
-          batch.set(doc(collection(db, 'shiftTemplates')), {
-            ...seed, isDefault: true, disabled: false, createdAt: serverTimestamp(),
-          });
+        if (list.length === 0 && !tplSeededRef.current) {
+          tplSeededRef.current = true;
+          await supabase.from('shift_templates').insert(
+            TEMPLATE_SEEDS.map(s => ({
+              id: crypto.randomUUID(),
+              ...s,
+              is_default: true,
+              disabled: false,
+              created_at: new Date().toISOString(),
+            }))
+          );
+          return;
         }
-        await batch.commit().catch(console.error);
-        return;
-      }
 
-      setTemplates(list);
-    }, err => { console.error('Templates fetch:', err); });
-    return unsub;
+        setTemplates(list);
+      }
+    };
+
+    fetchTemplates();
+
+    const channel = supabase.channel('schedule-templates')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shift_templates' }, fetchTemplates)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
-  // Derived: entries keyed by shiftLabel → date → [entries]
+  // Derived: entries keyed by shift_label → date → [entries]
   const byShiftByDate = useMemo(() => {
     const map = {};
     for (const e of entries) {
-      const key = e.shiftLabel;
+      const key = e.shift_label;
       if (!map[key]) map[key] = {};
       if (!map[key][e.date]) map[key][e.date] = [];
       map[key][e.date].push(e);
@@ -215,14 +232,12 @@ export default function Schedule({ showSnackbar }) {
     return map;
   }, [entries]);
 
-  // Only active (non-disabled) templates for calendar rows and entry form
   const activeTemplates = useMemo(() => templates.filter(t => !t.disabled), [templates]);
 
-  // Absences & covered entries for the current week
   const absenceEntries = useMemo(() =>
     [...entries]
       .filter(e => e.status === 'absent' || e.status === 'covered')
-      .sort((a, b) => a.date.localeCompare(b.date) || (a.staffName || '').localeCompare(b.staffName || '')),
+      .sort((a, b) => a.date.localeCompare(b.date) || (a.staff_name || '').localeCompare(b.staff_name || '')),
     [entries]
   );
 
@@ -247,8 +262,8 @@ export default function Schedule({ showSnackbar }) {
       staffEmail,
       date: date || todayPHT(),
       shiftLabel: shiftLabel || '',
-      startTime: tpl?.startTime || '',
-      endTime: tpl?.endTime || '',
+      startTime: tpl?.start_time || '',
+      endTime: tpl?.end_time || '',
     });
     setEntryDrawer({ open: true, mode: 'create', entry: null });
   }, [templates]);
@@ -256,11 +271,11 @@ export default function Schedule({ showSnackbar }) {
   const openEdit = useCallback((entry) => {
     setFormErr('');
     setEntryForm({
-      staffEmail: entry.staffEmail || '',
+      staffEmail: entry.staff_email || '',
       date: entry.date || '',
-      shiftLabel: entry.shiftLabel || '',
-      startTime: entry.startTime || '',
-      endTime: entry.endTime || '',
+      shiftLabel: entry.shift_label || '',
+      startTime: entry.start_time || '',
+      endTime: entry.end_time || '',
       notes: entry.notes || '',
       status: entry.status || 'scheduled',
     });
@@ -269,7 +284,7 @@ export default function Schedule({ showSnackbar }) {
 
   const handleTplSelect = (name) => {
     const tpl = templates.find(t => t.name === name);
-    setEntryForm(f => ({ ...f, shiftLabel: name, startTime: tpl?.startTime || '', endTime: tpl?.endTime || '' }));
+    setEntryForm(f => ({ ...f, shiftLabel: name, startTime: tpl?.start_time || '', endTime: tpl?.end_time || '' }));
   };
 
   // --- CRUD entry ---
@@ -280,23 +295,30 @@ export default function Schedule({ showSnackbar }) {
     setSaving(true); setFormErr('');
     try {
       const staff = staffOnly.find(s => s.email === entryForm.staffEmail);
+      const now = new Date().toISOString();
       const data = {
-        staffUid: staff?.uid || '',
-        staffEmail: entryForm.staffEmail,
-        staffName: staff ? (staff.fullName || staff.email) : entryForm.staffEmail,
+        staff_uid: staff?.uid || '',
+        staff_email: entryForm.staffEmail,
+        staff_name: staff ? (staff.fullName || staff.email) : entryForm.staffEmail,
         date: entryForm.date,
-        shiftLabel: entryForm.shiftLabel,
-        startTime: entryForm.startTime,
-        endTime: entryForm.endTime,
+        shift_label: entryForm.shiftLabel,
+        start_time: entryForm.startTime,
+        end_time: entryForm.endTime,
         status: entryForm.status || 'scheduled',
         notes: entryForm.notes || '',
-        updatedAt: serverTimestamp(),
+        updated_at: now,
       };
       if (entryDrawer.mode === 'create') {
-        await addDoc(collection(db, 'schedules'), { ...data, createdAt: serverTimestamp() });
+        const { error } = await supabase.from('schedules').insert([{
+          id: crypto.randomUUID(),
+          ...data,
+          created_at: now,
+        }]);
+        if (error) throw error;
         showSnackbar?.('Schedule entry added.', 'success');
       } else {
-        await updateDoc(doc(db, 'schedules', entryDrawer.entry.id), data);
+        const { error } = await supabase.from('schedules').update(data).eq('id', entryDrawer.entry.id);
+        if (error) throw error;
         showSnackbar?.('Schedule entry updated.', 'success');
       }
       setEntryDrawer(p => ({ ...p, open: false }));
@@ -307,17 +329,22 @@ export default function Schedule({ showSnackbar }) {
   };
 
   const handleDelete = async (entry) => {
-    if (!window.confirm(`Delete schedule entry for ${entry.staffName || entry.staffEmail}?`)) return;
+    if (!window.confirm(`Delete schedule entry for ${entry.staff_name || entry.staff_email}?`)) return;
     try {
-      await deleteDoc(doc(db, 'schedules', entry.id));
+      const { error } = await supabase.from('schedules').delete().eq('id', entry.id);
+      if (error) throw error;
       showSnackbar?.('Entry deleted.', 'success');
     } catch (err) { showSnackbar?.(getFriendlyErrorMessage(err), 'error'); }
   };
 
   const handleMarkAbsent = async (entry) => {
     try {
-      await updateDoc(doc(db, 'schedules', entry.id), { status: 'absent', updatedAt: serverTimestamp() });
-      showSnackbar?.(`${entry.staffName || entry.staffEmail} marked absent.`, 'warning');
+      const { error } = await supabase
+        .from('schedules')
+        .update({ status: 'absent', updated_at: new Date().toISOString() })
+        .eq('id', entry.id);
+      if (error) throw error;
+      showSnackbar?.(`${entry.staff_name || entry.staff_email} marked absent.`, 'warning');
     } catch (err) { showSnackbar?.(getFriendlyErrorMessage(err), 'error'); }
   };
 
@@ -326,13 +353,14 @@ export default function Schedule({ showSnackbar }) {
     setSavingCover(true);
     try {
       const s = staffOnly.find(x => x.email === coverStaff);
-      await updateDoc(doc(db, 'schedules', coverDlg.entry.id), {
+      const { error } = await supabase.from('schedules').update({
         status: 'covered',
-        coveredByUid: s?.uid || '',
-        coveredByEmail: coverStaff,
-        coveredByName: s ? (s.fullName || coverStaff) : coverStaff,
-        updatedAt: serverTimestamp(),
-      });
+        covered_by_uid: s?.uid || '',
+        covered_by_email: coverStaff,
+        covered_by_name: s ? (s.fullName || coverStaff) : coverStaff,
+        updated_at: new Date().toISOString(),
+      }).eq('id', coverDlg.entry.id);
+      if (error) throw error;
       showSnackbar?.('Coverage assigned.', 'success');
       setCoverDlg({ open: false, entry: null }); setCoverStaff('');
     } catch (err) { showSnackbar?.(getFriendlyErrorMessage(err), 'error'); }
@@ -344,24 +372,33 @@ export default function Schedule({ showSnackbar }) {
     const lws = addDays(weekStart, -7);
     const lwe = addDays(lws, 6);
     try {
-      const snap = await getDocs(query(
-        collection(db, 'schedules'),
-        where('date', '>=', lws),
-        where('date', '<=', lwe),
-      ));
-      if (snap.empty) { showSnackbar?.('No entries found last week.', 'info'); return; }
-      await Promise.all(snap.docs.map(d => {
-        const x = d.data();
-        return addDoc(collection(db, 'schedules'), {
-          staffUid: x.staffUid || '', staffEmail: x.staffEmail,
-          staffName: x.staffName || '',
-          date: addDays(x.date, 7),
-          shiftLabel: x.shiftLabel, startTime: x.startTime || '', endTime: x.endTime || '',
-          status: 'scheduled', notes: x.notes || '',
-          createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
-        });
+      const { data, error } = await supabase
+        .from('schedules')
+        .select('*')
+        .gte('date', lws)
+        .lte('date', lwe);
+      if (error) throw error;
+      if (!data || data.length === 0) { showSnackbar?.('No entries found last week.', 'info'); return; }
+
+      const now = new Date().toISOString();
+      const inserts = data.map(x => ({
+        id: crypto.randomUUID(),
+        staff_uid: x.staff_uid || '',
+        staff_email: x.staff_email,
+        staff_name: x.staff_name || '',
+        date: addDays(x.date, 7),
+        shift_label: x.shift_label,
+        start_time: x.start_time || '',
+        end_time: x.end_time || '',
+        status: 'scheduled',
+        notes: x.notes || '',
+        created_at: now,
+        updated_at: now,
       }));
-      showSnackbar?.(`Copied ${snap.docs.length} entries to this week.`, 'success');
+
+      const { error: insertErr } = await supabase.from('schedules').insert(inserts);
+      if (insertErr) throw insertErr;
+      showSnackbar?.(`Copied ${inserts.length} entries to this week.`, 'success');
     } catch (err) { showSnackbar?.(getFriendlyErrorMessage(err), 'error'); console.error(err); }
   };
 
@@ -370,11 +407,18 @@ export default function Schedule({ showSnackbar }) {
     if (!tplForm.name.trim()) return;
     setSavingTpl(true);
     try {
-      const data = { name: tplForm.name.trim(), startTime: tplForm.startTime, endTime: tplForm.endTime };
+      const data = { name: tplForm.name.trim(), start_time: tplForm.startTime, end_time: tplForm.endTime };
       if (editingTpl) {
-        await updateDoc(doc(db, 'shiftTemplates', editingTpl.id), data);
+        const { error } = await supabase.from('shift_templates').update(data).eq('id', editingTpl.id);
+        if (error) throw error;
       } else {
-        await addDoc(collection(db, 'shiftTemplates'), { ...data, disabled: false });
+        const { error } = await supabase.from('shift_templates').insert([{
+          id: crypto.randomUUID(),
+          ...data,
+          disabled: false,
+          created_at: new Date().toISOString(),
+        }]);
+        if (error) throw error;
       }
       setEditingTpl(null); setTplForm(BLANK_TPL);
       showSnackbar?.('Template saved.', 'success');
@@ -389,7 +433,8 @@ export default function Schedule({ showSnackbar }) {
       return;
     }
     try {
-      await updateDoc(doc(db, 'shiftTemplates', tpl.id), { disabled: willDisable });
+      const { error } = await supabase.from('shift_templates').update({ disabled: willDisable }).eq('id', tpl.id);
+      if (error) throw error;
       showSnackbar?.(willDisable ? `"${tpl.name}" disabled.` : `"${tpl.name}" enabled.`, 'success');
     } catch (err) { showSnackbar?.(getFriendlyErrorMessage(err), 'error'); }
   };
@@ -400,15 +445,20 @@ export default function Schedule({ showSnackbar }) {
       return;
     }
     try {
-      const snap = await getDocs(query(collection(db, 'schedules'), where('shiftLabel', '==', tpl.name)));
-      if (!snap.empty) {
-        showSnackbar?.(`"${tpl.name}" has ${snap.size} schedule entries. It cannot be permanently deleted.`, 'warning');
+      const { data } = await supabase
+        .from('schedules')
+        .select('id')
+        .eq('shift_label', tpl.name)
+        .limit(1);
+      if (data && data.length > 0) {
+        showSnackbar?.(`"${tpl.name}" has schedule entries. It cannot be permanently deleted.`, 'warning');
         return;
       }
     } catch { /* proceed if check fails */ }
     if (!window.confirm(`Permanently delete "${tpl.name}"?`)) return;
     try {
-      await deleteDoc(doc(db, 'shiftTemplates', tpl.id));
+      const { error } = await supabase.from('shift_templates').delete().eq('id', tpl.id);
+      if (error) throw error;
       showSnackbar?.('Template deleted.', 'success');
     } catch (err) { showSnackbar?.(getFriendlyErrorMessage(err), 'error'); }
   };
@@ -455,10 +505,7 @@ export default function Schedule({ showSnackbar }) {
       {/* Tabs */}
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 1.5, flexShrink: 0, borderBottom: 1, borderColor: 'divider' }}>
         <Tab icon={<CalendarMonthIcon />} iconPosition="start" label="Calendar" />
-        <Tab
-          icon={<WarningAmberIcon />} iconPosition="start" label="Absences & Coverage"
-          sx={{ '& .MuiBadge-badge': {} }}
-        />
+        <Tab icon={<WarningAmberIcon />} iconPosition="start" label="Absences & Coverage" />
       </Tabs>
 
       {/* ── TAB 0: CALENDAR ── */}
@@ -468,7 +515,6 @@ export default function Schedule({ showSnackbar }) {
             <Table sx={{ tableLayout: 'fixed', minWidth: 760 }}>
               <TableHead>
                 <TableRow>
-                  {/* Shift column header */}
                   <TableCell sx={{ width: 120, fontWeight: 600 }}>Shift</TableCell>
                   {weekDates.map(date => (
                     <TableCell
@@ -504,17 +550,15 @@ export default function Schedule({ showSnackbar }) {
                 ) : (
                   activeTemplates.map(tpl => (
                     <TableRow key={tpl.id} hover>
-                      {/* Row label: shift template */}
                       <TableCell sx={{ verticalAlign: 'top', py: 1, bgcolor: 'action.hover' }}>
                         <Typography variant="body2" fontWeight={700} noWrap>{tpl.name}</Typography>
-                        {tpl.startTime && (
+                        {tpl.start_time && (
                           <Typography variant="caption" color="text.secondary" noWrap display="block">
-                            {tpl.startTime}–{tpl.endTime}
+                            {tpl.start_time}–{tpl.end_time}
                           </Typography>
                         )}
                       </TableCell>
 
-                      {/* Day cells: staff chips */}
                       {weekDates.map(date => {
                         const cellEntries = byShiftByDate[tpl.name]?.[date] || [];
                         return (
@@ -581,13 +625,13 @@ export default function Schedule({ showSnackbar }) {
                           <Typography variant="caption" color="text.secondary">{fmtDay(entry.date)}</Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2">{entry.staffName || entry.staffEmail}</Typography>
+                          <Typography variant="body2">{entry.staff_name || entry.staff_email}</Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2">{entry.shiftLabel}</Typography>
-                          {entry.startTime && (
+                          <Typography variant="body2">{entry.shift_label}</Typography>
+                          {entry.start_time && (
                             <Typography variant="caption" color="text.secondary">
-                              {entry.startTime}–{entry.endTime}
+                              {entry.start_time}–{entry.end_time}
                             </Typography>
                           )}
                         </TableCell>
@@ -595,8 +639,8 @@ export default function Schedule({ showSnackbar }) {
                           <Chip label={cfg.label} color={cfg.color} size="small" />
                         </TableCell>
                         <TableCell>
-                          {entry.coveredByName ? (
-                            <Typography variant="body2">{entry.coveredByName}</Typography>
+                          {entry.covered_by_name ? (
+                            <Typography variant="body2">{entry.covered_by_name}</Typography>
                           ) : (
                             <Typography variant="caption" color="text.secondary">—</Typography>
                           )}
@@ -682,7 +726,7 @@ export default function Schedule({ showSnackbar }) {
             >
               {activeTemplates.map(t => (
                 <MenuItem key={t.id} value={t.name}>
-                  {t.name}{t.startTime ? ` (${t.startTime}–${t.endTime})` : ''}
+                  {t.name}{t.start_time ? ` (${t.start_time}–${t.end_time})` : ''}
                 </MenuItem>
               ))}
             </Select>
@@ -752,7 +796,7 @@ export default function Schedule({ showSnackbar }) {
                   {tpl.disabled && <Chip label="Disabled" size="small" sx={{ fontSize: '0.6rem', height: 16 }} />}
                 </Stack>
                 <Typography variant="caption" color="text.secondary">
-                  {tpl.startTime && tpl.endTime ? `${tpl.startTime}–${tpl.endTime}` : 'No time set'}
+                  {tpl.start_time && tpl.end_time ? `${tpl.start_time}–${tpl.end_time}` : 'No time set'}
                 </Typography>
               </Box>
               <Stack direction="row" spacing={0.5} alignItems="center">
@@ -768,7 +812,7 @@ export default function Schedule({ showSnackbar }) {
                 </Tooltip>
                 <IconButton size="small" onClick={() => {
                   setEditingTpl(tpl);
-                  setTplForm({ name: tpl.name, startTime: tpl.startTime || '', endTime: tpl.endTime || '' });
+                  setTplForm({ name: tpl.name, startTime: tpl.start_time || '', endTime: tpl.end_time || '' });
                 }}>
                   <EditIcon fontSize="small" />
                 </IconButton>
@@ -834,8 +878,8 @@ export default function Schedule({ showSnackbar }) {
         <DialogContent>
           {coverDlg.entry && (
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Original: <strong>{coverDlg.entry.staffName || coverDlg.entry.staffEmail}</strong>
-              {' – '}{coverDlg.entry.shiftLabel} on {fmtShort(coverDlg.entry.date)}
+              Original: <strong>{coverDlg.entry.staff_name || coverDlg.entry.staff_email}</strong>
+              {' – '}{coverDlg.entry.shift_label} on {fmtShort(coverDlg.entry.date)}
             </Typography>
           )}
           <FormControl fullWidth>
@@ -847,7 +891,7 @@ export default function Schedule({ showSnackbar }) {
               disabled={savingCover}
             >
               {staffOnly
-                .filter(s => s.email !== coverDlg.entry?.staffEmail)
+                .filter(s => s.email !== coverDlg.entry?.staff_email)
                 .map(s => (
                   <MenuItem key={s.email} value={s.email}>{s.fullName || s.email}</MenuItem>
                 ))}

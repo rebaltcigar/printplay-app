@@ -6,12 +6,7 @@ import {
     InputAdornment, Autocomplete
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import {
-    collection, query, orderBy, limit, getDocs, startAfter, where,
-    doc, getDoc, writeBatch, serverTimestamp, deleteField
-} from 'firebase/firestore';
-import { db, auth } from '../firebase';
-import { generateBatchIds } from '../services/orderService';
+import { supabase } from '../supabase';
 
 // Icons
 import SearchIcon from '@mui/icons-material/Search';
@@ -48,7 +43,7 @@ export default function OrderManagement({ showSnackbar }) {
     const [orders, setOrders] = useState([]);
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
-    const [lastDoc, setLastDoc] = useState(null);
+    const [lastOffset, setLastOffset] = useState(0);
     const [hasMore, setHasMore] = useState(true);
     const [systemSettings, setSystemSettings] = useState({});
 
@@ -65,14 +60,23 @@ export default function OrderManagement({ showSnackbar }) {
 
     // Unified drawer state — mode: 'view' | 'edit'
     const [orderDrawer, setOrderDrawer] = useState({ open: false, mode: null, order: null, saving: false });
+    const [drawerItems, setDrawerItems] = useState([]);
 
-    const openViewDrawer = (order) => setOrderDrawer({ open: true, mode: 'view', order, saving: false });
+    const openViewDrawer = async (order) => {
+        setOrderDrawer({ open: true, mode: 'view', order, saving: false });
+        const { data } = await supabase
+            .from('order_items')
+            .select('*')
+            .eq('parent_order_id', order.id)
+            .eq('is_deleted', false);
+        if (data) setDrawerItems(data);
+    };
     const openEditDrawer = (order) => {
-        setEditItems([...(order.items || [])]);
+        setEditItems(drawerItems.map(i => ({ ...i, name: i.name, price: i.price, quantity: i.quantity, total: i.amount })));
         setEditForm({
-            customerName: order.customerName || '',
-            paymentMethod: order.paymentMethod || 'Cash',
-            amountTendered: order.amountTendered || 0,
+            customerName: order.customer_name || '',
+            paymentMethod: order.payment_method || 'Cash',
+            amountTendered: order.amount_tendered || 0,
             editReason: ''
         });
         setOrderDrawer({ open: true, mode: 'edit', order, saving: false });
@@ -97,11 +101,18 @@ export default function OrderManagement({ showSnackbar }) {
         amountTendered: 0,
         editReason: ''
     });
+
     // Load settings
     useEffect(() => {
-        getDoc(doc(db, 'settings', 'config')).then(snap => {
-            if (snap.exists()) setSystemSettings(snap.data());
-        });
+        const loadSettings = async () => {
+            const { data: settingsData } = await supabase
+                .from('settings')
+                .select('*')
+                .eq('id', 'config')
+                .single();
+            if (settingsData) setSystemSettings(settingsData);
+        };
+        loadSettings();
     }, []);
 
 
@@ -111,36 +122,33 @@ export default function OrderManagement({ showSnackbar }) {
         else setLoadingMore(true);
 
         try {
-            let q = query(
-                collection(db, "orders"),
-                orderBy("timestamp", "desc"),
-                limit(50)
-            );
+            const offset = isLoadMore ? lastOffset : 0;
 
-            // Apply basic filters if any
-            // Note: Firestore doesn't support complex substring search like 'searchTerm'
-            // We'll filter searchTerm in memory for simplicity unless it's a specific Order No.
+            let q = supabase
+                .from('orders')
+                .select('*')
+                .order('timestamp', { ascending: false })
+                .range(offset, offset + 49);
+
             if (statusFilter !== 'ALL') {
-                q = query(q, where("status", "==", statusFilter));
+                q = q.eq('status', statusFilter);
             }
 
-            if (isLoadMore && lastDoc) {
-                q = query(q, startAfter(lastDoc));
-            }
+            const { data: newOrders, error } = await q;
 
-            const snap = await getDocs(q);
-            const newOrders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            if (error) throw error;
 
             if (isLoadMore) {
-                setOrders(prev => [...prev, ...newOrders]);
+                setOrders(prev => [...prev, ...(newOrders || [])]);
             } else {
-                setOrders(newOrders);
+                setOrders(newOrders || []);
             }
 
-            if (snap.docs.length < 50) setHasMore(false);
+            const fetched = newOrders?.length || 0;
+            if (fetched < 50) setHasMore(false);
             else {
                 setHasMore(true);
-                setLastDoc(snap.docs[snap.docs.length - 1]);
+                setLastOffset(offset + fetched);
             }
         } catch (e) {
             console.error("Error fetching orders:", e);
@@ -152,6 +160,7 @@ export default function OrderManagement({ showSnackbar }) {
     };
 
     useEffect(() => {
+        setLastOffset(0);
         fetchOrders();
     }, [statusFilter]); // Re-fetch on status change. Search/Date we might do manually or debounced.
 
@@ -161,16 +170,16 @@ export default function OrderManagement({ showSnackbar }) {
             // 1. Search
             const search = searchTerm.toLowerCase().trim();
             const matchesSearch = !search ||
-                String(o.orderNumber || "").toLowerCase().includes(search) ||
-                String(o.customerName || "").toLowerCase().includes(search);
+                String(o.order_number || "").toLowerCase().includes(search) ||
+                String(o.customer_name || "").toLowerCase().includes(search);
 
             // 2. Staff Filter
-            const matchesStaff = staffFilter === 'ALL' || o.staffEmail === staffFilter;
+            const matchesStaff = staffFilter === 'ALL' || o.staff_email === staffFilter;
 
             // 3. Date Filter
             let matchesDate = true;
             if (o.timestamp) {
-                const d = o.timestamp.toDate ? o.timestamp.toDate() : new Date(o.timestamp);
+                const d = new Date(o.timestamp);
                 if (dateStart) {
                     const startAt = new Date(dateStart + "T00:00:00");
                     if (d < startAt) matchesDate = false;
@@ -195,34 +204,20 @@ export default function OrderManagement({ showSnackbar }) {
         if (!orderToVoid) return;
         setLoading(true);
         try {
-            const batch = writeBatch(db);
+            await supabase
+                .from('orders')
+                .update({ status: 'VOIDED' })
+                .eq('id', orderToVoid.id);
 
-            // Update Order
-            const orderRef = doc(db, 'orders', orderToVoid.id);
-            batch.update(orderRef, {
-                isDeleted: true,
-                status: 'VOIDED',
-                voidReason: reason,
-                voidedAt: serverTimestamp()
-            });
+            await supabase
+                .from('order_items')
+                .update({ is_deleted: true })
+                .eq('parent_order_id', orderToVoid.id);
 
-            // Update associated transactions
-            // We need to query transactions by orderNumber
-            const q = query(collection(db, 'transactions'), where('orderNumber', '==', orderToVoid.orderNumber));
-            const txSnap = await getDocs(q);
-            txSnap.forEach(d => {
-                batch.update(d.ref, {
-                    isDeleted: true,
-                    deleteReason: `Order Voided: ${reason}`,
-                    deletedAt: serverTimestamp()
-                });
-            });
-
-            await batch.commit();
             showSnackbar?.("Order successfully voided.", "success");
 
             // Update local state
-            setOrders(prev => prev.map(o => o.id === orderToVoid.id ? { ...o, status: 'VOIDED', isDeleted: true } : o));
+            setOrders(prev => prev.map(o => o.id === orderToVoid.id ? { ...o, status: 'VOIDED' } : o));
         } catch (e) {
             console.error("Void failed:", e);
             showSnackbar?.("Failed to void order.", "error");
@@ -241,36 +236,20 @@ export default function OrderManagement({ showSnackbar }) {
         if (!orderToRestore) return;
         setLoading(true);
         try {
-            const batch = writeBatch(db);
+            await supabase
+                .from('orders')
+                .update({ status: 'completed' })
+                .eq('id', orderToRestore.id);
 
-            // Update Order
-            const orderRef = doc(db, 'orders', orderToRestore.id);
-            batch.update(orderRef, {
-                isDeleted: false,
-                status: deleteField(),
-                voidReason: deleteField(),
-                voidedAt: deleteField(),
-                restoredAt: serverTimestamp(),
-                restoreReason: reason,
-                restoredBy: auth.currentUser?.email || 'admin'
-            });
+            await supabase
+                .from('order_items')
+                .update({ is_deleted: false })
+                .eq('parent_order_id', orderToRestore.id);
 
-            // Update associated transactions
-            const q = query(collection(db, 'transactions'), where('orderNumber', '==', orderToRestore.orderNumber));
-            const txSnap = await getDocs(q);
-            txSnap.forEach(d => {
-                batch.update(d.ref, {
-                    isDeleted: false,
-                    restoreReason: `Order Restored: ${reason}`,
-                    restoredAt: serverTimestamp()
-                });
-            });
-
-            await batch.commit();
             showSnackbar?.("Order successfully restored.", "success");
 
             // Update local state
-            setOrders(prev => prev.map(o => o.id === orderToRestore.id ? { ...o, status: null, isDeleted: false } : o));
+            setOrders(prev => prev.map(o => o.id === orderToRestore.id ? { ...o, status: 'completed' } : o));
         } catch (e) {
             console.error("Restore failed:", e);
             showSnackbar?.("Failed to restore order.", "error");
@@ -320,75 +299,45 @@ export default function OrderManagement({ showSnackbar }) {
 
         setOrderDrawer(p => ({ ...p, saving: true }));
         try {
-            const batch = writeBatch(db);
             const newTotal = editItems.reduce((sum, i) => sum + (Number(i.total) || 0), 0);
             const amtTendered = Number(editForm.amountTendered) || 0;
             const newChange = Math.max(0, amtTendered - newTotal);
 
-            // 1. Update Order Document
-            const orderRef = doc(db, 'orders', editingOrder.id);
-            const orderUpdate = {
-                items: editItems,
-                total: newTotal,
-                amountTendered: amtTendered,
-                change: newChange,
-                customerName: editForm.customerName,
-                paymentMethod: editForm.paymentMethod,
-                isEdited: true,
-                editReason: editForm.editReason,
-                editedAt: serverTimestamp()
-            };
-            batch.update(orderRef, orderUpdate);
+            // 1. Soft-delete old order_items
+            await supabase
+                .from('order_items')
+                .update({ is_deleted: true })
+                .eq('parent_order_id', editingOrder.id);
 
-            // 2. Sync Transactions
-            const q = query(collection(db, 'transactions'), where('orderNumber', '==', editingOrder.orderNumber));
-            const txSnap = await getDocs(q);
-
-            // Collect metadata from first existing transaction to preserve context (date, staff, etc)
-            let baseTx = txSnap.docs.length > 0 ? txSnap.docs[0].data() : null;
-
-            // Delete (Soft Delete) old transactions
-            txSnap.forEach(d => {
-                batch.update(d.ref, {
-                    isDeleted: true,
-                    deleteReason: `Order Edited: ${editForm.editReason}`,
-                    replacedByEdit: true,
-                    deletedAt: serverTimestamp()
-                });
-            });
-
-            // Create new transactions
+            // 2. Create new order_items
             const validItems = editItems.filter(item => !item.isVoided);
-            const newTxs = [];
-            const newIds = await generateBatchIds("transactions", "TX", validItems.length);
+            await supabase.from('order_items').insert(
+                validItems.map(item => ({
+                    id: crypto.randomUUID(),
+                    parent_order_id: editingOrder.id,
+                    name: item.name,
+                    quantity: Number(item.quantity),
+                    price: Number(item.price),
+                    amount: Number(item.total || 0),
+                    is_edited: true,
+                    financial_category: 'Sale',
+                    timestamp: new Date().toISOString(),
+                }))
+            );
 
-            validItems.forEach((item, idx) => {
-                const txRef = doc(collection(db, 'transactions'));
+            // 3. Update order
+            await supabase
+                .from('orders')
+                .update({
+                    customer_name: editForm.customerName,
+                    payment_method: editForm.paymentMethod,
+                    amount_tendered: Number(editForm.amountTendered),
+                    change: newChange,
+                    total: newTotal,
+                    subtotal: newTotal,
+                })
+                .eq('id', editingOrder.id);
 
-                // Final sanitization of values
-                const txQty = Number(item.quantity) || 0;
-                const txPrice = Number(item.price) || 0;
-                const txTotal = txQty * txPrice;
-
-                batch.set(txRef, {
-                    ...baseTx, // Preserve shiftId, staffEmail, timestamp, etc.
-                    displayId: newIds[idx],
-                    item: item.name || item.serviceName || 'Item',
-                    quantity: txQty,
-                    price: txPrice,
-                    total: txTotal,
-                    customerName: editForm.customerName || 'Walk-in',
-                    paymentMethod: editForm.paymentMethod || 'Cash',
-                    isEdited: true,
-                    editReason: editForm.editReason || 'Administrative Edit',
-                    orderId: editingOrder.id,
-                    orderNumber: editingOrder.orderNumber,
-                    timestamp: baseTx ? baseTx.timestamp : serverTimestamp(), // Keep original time
-                    serverTime: serverTimestamp()
-                });
-            });
-
-            await batch.commit();
             showSnackbar?.("Order updated successfully.", "success");
             closeDrawer();
             fetchOrders();
@@ -402,7 +351,7 @@ export default function OrderManagement({ showSnackbar }) {
 
     const handlePrintReceipt = (order) => {
         const data = normalizeReceiptData(order, {
-            staffName: users[order.staffEmail] || 'Staff',
+            staffName: users[order.staff_email] || 'Staff',
             isReprint: true
         });
         setReprintOrder(data);
@@ -410,7 +359,7 @@ export default function OrderManagement({ showSnackbar }) {
 
     const handlePrintInvoice = (order) => {
         const data = normalizeInvoiceData(order, {
-            staffName: users[order.staffEmail] || 'Staff',
+            staffName: users[order.staff_email] || 'Staff',
             isReprint: true
         });
         setPrintInvoiceData(data);
@@ -436,7 +385,7 @@ export default function OrderManagement({ showSnackbar }) {
         let timer;
         if (printInvoiceData && !isPrintingInvoice.current) {
             isPrintingInvoice.current = true;
-            console.log("[OrderManagement] Triggering Invoice Print for:", printInvoiceData.orderNumber);
+            console.log("[OrderManagement] Triggering Invoice Print for:", printInvoiceData.order_number);
             timer = setTimeout(() => {
                 safePrintInvoice(() => {
                     setPrintInvoiceData(null);
@@ -452,7 +401,7 @@ export default function OrderManagement({ showSnackbar }) {
         const revenue = filteredOrders
             .filter(o => o.status !== 'VOIDED')
             .reduce((s, o) => s + Number(o.total || 0), 0);
-        const unpaid = filteredOrders.filter(o => o.paymentMethod === 'Charge' && o.status !== 'VOIDED').length;
+        const unpaid = filteredOrders.filter(o => o.payment_method === 'Charge' && o.status !== 'VOIDED').length;
         const voided = filteredOrders.filter(o => o.status === 'VOIDED').length;
         return { revenue, unpaid, voided };
     }, [filteredOrders]);
@@ -577,24 +526,24 @@ export default function OrderManagement({ showSnackbar }) {
                         ) : (
                             filteredOrders.map((o) => (
                                 <TableRow key={o.id} hover sx={{ opacity: o.status === 'VOIDED' ? 0.6 : 1 }}>
-                                    <TableCell sx={{ fontWeight: 600 }}>{o.orderNumber}</TableCell>
+                                    <TableCell sx={{ fontWeight: 600 }}>{o.order_number}</TableCell>
                                     <TableCell>
                                         <Typography
                                             variant="body2"
                                             sx={{
                                                 fontWeight: 400,
                                                 color: o.status === 'VOIDED' ? 'error.main' :
-                                                    o.paymentMethod === 'Charge' ? 'warning.main' : 'success.main'
+                                                    o.payment_method === 'Charge' ? 'warning.main' : 'success.main'
                                             }}
                                         >
-                                            {o.status === 'VOIDED' ? 'Voided' : o.paymentMethod === 'Charge' ? 'Unpaid' : ('Paid')}
+                                            {o.status === 'VOIDED' ? 'Voided' : o.payment_method === 'Charge' ? 'Unpaid' : ('Paid')}
                                         </Typography>
                                     </TableCell>
-                                    <TableCell>{o.customerName || 'Walk-in'}</TableCell>
+                                    <TableCell>{o.customer_name || 'Walk-in'}</TableCell>
                                     <TableCell sx={{ whiteSpace: 'nowrap' }}>{fmtDateTime(o.timestamp)}</TableCell>
                                     <TableCell sx={{ fontWeight: 'bold' }}>{currency(o.total)}</TableCell>
-                                    <TableCell>{o.paymentMethod || 'Cash'}</TableCell>
-                                    <TableCell>{users[o.staffEmail] || '---'}</TableCell>
+                                    <TableCell>{o.payment_method || 'Cash'}</TableCell>
+                                    <TableCell>{users[o.staff_email] || '---'}</TableCell>
                                     <TableCell align="right">
                                         <Stack direction="row" spacing={0.5} justifyContent="flex-end">
                                             <Tooltip title="View Details">
@@ -662,8 +611,8 @@ export default function OrderManagement({ showSnackbar }) {
                 loading={orderDrawer.saving}
                 title={
                     orderDrawer.mode === 'edit'
-                        ? `Edit Order ${orderDrawer.order?.orderNumber}`
-                        : `Order ${orderDrawer.order?.orderNumber}`
+                        ? `Edit Order ${orderDrawer.order?.order_number}`
+                        : `Order ${orderDrawer.order?.order_number}`
                 }
                 subtitle={
                     orderDrawer.mode === 'view'
@@ -717,15 +666,12 @@ export default function OrderManagement({ showSnackbar }) {
                                         </TableRow>
                                     </TableHead>
                                     <TableBody>
-                                        {o.items?.map((item, idx) => (
-                                            <TableRow key={idx} sx={{ opacity: item.isVoided ? 0.4 : 1 }}>
-                                                <TableCell sx={{ textDecoration: item.isVoided ? 'line-through' : 'none' }}>
-                                                    {item.name || item.serviceName}
-                                                    {item.isVoided && <Typography variant="caption" color="error" sx={{ ml: 1 }}>(Voided)</Typography>}
-                                                </TableCell>
+                                        {drawerItems.map((item, idx) => (
+                                            <TableRow key={idx}>
+                                                <TableCell>{item.name}</TableCell>
                                                 <TableCell align="right">{item.quantity}</TableCell>
                                                 <TableCell align="right">{currency(item.price)}</TableCell>
-                                                <TableCell align="right">{currency(item.total)}</TableCell>
+                                                <TableCell align="right">{currency(item.amount)}</TableCell>
                                             </TableRow>
                                         ))}
                                     </TableBody>
@@ -736,12 +682,12 @@ export default function OrderManagement({ showSnackbar }) {
                                 <Stack spacing={1.5}>
                                     <Box display="flex" justifyContent="space-between">
                                         <Typography variant="body2" color="text.secondary">Cashier:</Typography>
-                                        <Typography variant="body2" fontWeight="bold">{users[o.staffEmail] || '---'}</Typography>
+                                        <Typography variant="body2" fontWeight="bold">{users[o.staff_email] || '---'}</Typography>
                                     </Box>
                                     <Divider sx={{ borderStyle: 'dashed' }} />
                                     <Box>
                                         <Typography variant="caption" color="text.secondary" display="block">Customer:</Typography>
-                                        <Typography variant="body2" fontWeight="bold">{o.customerName || 'Walk-in'}</Typography>
+                                        <Typography variant="body2" fontWeight="bold">{o.customer_name || 'Walk-in'}</Typography>
                                         {o.customerPhone && <Typography variant="caption" display="block">Phone: {o.customerPhone}</Typography>}
                                         {o.customerAddress && <Typography variant="caption" display="block">Addr: {o.customerAddress}</Typography>}
                                         {o.customerTin && <Typography variant="caption" display="block">TIN: {o.customerTin}</Typography>}
@@ -750,24 +696,24 @@ export default function OrderManagement({ showSnackbar }) {
                                     <Box display="flex" justifyContent="space-between">
                                         <Typography variant="body2" color="text.secondary">Payment:</Typography>
                                         <Typography variant="body2" fontWeight="bold" color="primary">
-                                            {o.paymentMethod === 'Charge' ? 'UNPAID (Charge)' : o.paymentMethod}
+                                            {o.payment_method === 'Charge' ? 'UNPAID (Charge)' : o.payment_method}
                                         </Typography>
                                     </Box>
-                                    {o.paymentMethod === 'GCash' && o.gcashRef && (
+                                    {o.payment_method === 'GCash' && (o.payment_details?.gcashRef || o.payment_details?.ref) && (
                                         <Box display="flex" justifyContent="space-between">
                                             <Typography variant="body2" color="text.secondary">GCash Ref:</Typography>
-                                            <Typography variant="body2" fontWeight="bold">{o.gcashRef}</Typography>
+                                            <Typography variant="body2" fontWeight="bold">{o.payment_details?.gcashRef || o.payment_details?.ref}</Typography>
                                         </Box>
                                     )}
                                     <Box display="flex" justifyContent="space-between" sx={{ pt: 1 }}>
                                         <Typography variant="subtitle1" fontWeight="bold">Total:</Typography>
                                         <Typography variant="subtitle1" fontWeight="bold" color="primary">{currency(o.total)}</Typography>
                                     </Box>
-                                    {o.amountTendered > 0 && (
+                                    {o.amount_tendered > 0 && (
                                         <>
                                             <Box display="flex" justifyContent="space-between">
                                                 <Typography variant="body2" color="text.secondary">Tendered:</Typography>
-                                                <Typography variant="body2">{currency(o.amountTendered)}</Typography>
+                                                <Typography variant="body2">{currency(o.amount_tendered)}</Typography>
                                             </Box>
                                             <Box display="flex" justifyContent="space-between">
                                                 <Typography variant="body2" color="text.secondary">Change:</Typography>
@@ -925,7 +871,7 @@ export default function OrderManagement({ showSnackbar }) {
                 onClose={() => setVoidDialogOpen(false)}
                 onConfirm={confirmVoid}
                 title="Void Order"
-                message={`Are you sure you want to void Order #${orderToVoid?.orderNumber}? This will also delete all associated transactions and is irreversible.`}
+                message={`Are you sure you want to void Order #${orderToVoid?.order_number}? This will also delete all associated transactions and is irreversible.`}
             />
 
             {/* Confirmation Dialog for Restore */}
@@ -934,7 +880,7 @@ export default function OrderManagement({ showSnackbar }) {
                 onClose={() => setRestoreDialogOpen(false)}
                 onConfirm={confirmRestore}
                 title="Restore Order"
-                message={`Are you sure you want to restore Order #${orderToRestore?.orderNumber}? All associated transactions will also be restored.`}
+                message={`Are you sure you want to restore Order #${orderToRestore?.order_number}? All associated transactions will also be restored.`}
                 confirmColor="success"
                 confirmText="Restore"
             />
@@ -944,7 +890,7 @@ export default function OrderManagement({ showSnackbar }) {
                 <SimpleReceipt
                     order={reprintOrder}
                     settings={systemSettings}
-                    staffName={users[reprintOrder.staffEmail]}
+                    staffName={users[reprintOrder.staff_email]}
                 />
             )}
             {printInvoiceData && (

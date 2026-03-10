@@ -41,7 +41,7 @@ export const POS_ICON_OPTIONS = [
  * Resolves a posIcon key to a rendered MUI icon element.
  * Returns null if the key is empty or not found.
  *
- * @param {string}  key   - Icon key stored in Firestore (e.g., 'print')
+ * @param {string}  key   - Icon key stored in Supabase (e.g., 'print')
  * @param {object}  props - Props forwarded to the icon (e.g., { fontSize: 'small' })
  */
 export function getPosIcon(key, props = {}) {

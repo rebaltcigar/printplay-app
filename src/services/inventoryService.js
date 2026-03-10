@@ -1,37 +1,43 @@
-import { db } from "../firebase";
-import {
-    collection, addDoc, updateDoc, doc, serverTimestamp,
-    writeBatch, increment, query, where, orderBy, limit, getDocs
-} from "firebase/firestore";
-import { generateDisplayId } from "./orderService";
+import { supabase } from "../supabase";
+
+const generateId = () => crypto.randomUUID();
 
 /**
  * Records a stock adjustment (Damage, Loss, Correction, etc.)
- * Updates the item's stockCount and creates an audit entry in inventory_logs.
+ * Updates the item's stock_count and creates an audit entry in inventory_logs.
  */
 export const recordStockAdjustment = async ({ itemId, itemName, qtyChange, type, reason, staffEmail }) => {
-    const batch = writeBatch(db);
-    const itemRef = doc(db, 'services', itemId);
-    const logRef = doc(collection(db, 'inventory_logs'));
+    // 1. Fetch current item stock
+    const { data: item, error: fetchErr } = await supabase
+        .from('products')
+        .select('*')
+        .eq('id', itemId)
+        .single();
 
-    // 1. Update stock count
-    batch.update(itemRef, {
-        stockCount: increment(qtyChange),
-        lastModified: serverTimestamp()
-    });
+    if (fetchErr) throw fetchErr;
 
-    // 2. Create log entry
-    batch.set(logRef, {
-        itemId,
-        itemName,
-        qtyChange,
-        type, // 'Adjustment', 'Damage', 'Loss', 'Correction', 'Sale'
-        reason,
-        staffEmail,
-        timestamp: serverTimestamp()
-    });
+    const currentQty = Number(item.stock_count || 0);
+    const newQty = currentQty + Number(qtyChange);
 
-    await batch.commit();
+    // 2. Update stock count
+    const { error: updateErr } = await supabase
+        .from('products')
+        .update({ stock_count: newQty, updated_at: new Date().toISOString() })
+        .eq('id', itemId);
+
+    if (updateErr) throw updateErr;
+
+    // 3. Create log entry
+    await supabase.from('inventory_logs').insert([{
+        id: generateId(),
+        item_id: itemId,
+        item_name: itemName,
+        qty_change: qtyChange,
+        type: type, // 'Adjustment', 'Damage', 'Loss', 'Correction', 'Sale'
+        reason: reason,
+        staff_email: staffEmail,
+        timestamp: new Date().toISOString()
+    }]);
 };
 
 /**
@@ -40,14 +46,9 @@ export const recordStockAdjustment = async ({ itemId, itemName, qtyChange, type,
  * Also creates an 'InventoryAsset' transaction for financial tracking.
  */
 export const restockItem = async ({ item, qtyAdded, unitCost, totalCost, staffEmail }) => {
-    const batch = writeBatch(db);
-    const itemRef = doc(db, 'services', item.id);
-    const logRef = doc(collection(db, 'inventory_logs'));
-    const txRef = doc(collection(db, 'transactions'));
-
     // 1. Weighted Average Cost Calculation
-    const oldQty = Number(item.stockCount || 0);
-    const oldCost = Number(item.costPrice || 0);
+    const oldQty = Number(item.stock_count || item.stockCount || 0);
+    const oldCost = Number(item.cost_price || item.costPrice || 0);
     const oldTotalValue = oldQty * oldCost;
 
     const newTotalValue = oldTotalValue + totalCost;
@@ -55,42 +56,44 @@ export const restockItem = async ({ item, qtyAdded, unitCost, totalCost, staffEm
     const newAverageCost = newTotalQty > 0 ? (newTotalValue / newTotalQty) : unitCost;
 
     // 2. Update Item
-    batch.update(itemRef, {
-        stockCount: newTotalQty,
-        costPrice: newAverageCost,
-        lastRestocked: serverTimestamp()
-    });
+    const { error: updateErr } = await supabase
+        .from('products')
+        .update({
+            stock_count: newTotalQty,
+            cost_price: newAverageCost,
+            updated_at: new Date().toISOString()
+        })
+        .eq('id', item.id);
+
+    if (updateErr) throw updateErr;
 
     // 3. Create Audit Log
-    batch.set(logRef, {
-        itemId: item.id,
-        itemName: item.serviceName,
-        qtyChange: qtyAdded,
+    await supabase.from('inventory_logs').insert([{
+        id: generateId(),
+        item_id: item.id,
+        item_name: item.name || item.serviceName,
+        qty_change: qtyAdded,
         type: 'Restock',
         reason: 'Manual Restock',
         cost: unitCost,
-        totalCost: totalCost,
-        staffEmail,
-        timestamp: serverTimestamp()
-    });
+        total_cost: totalCost,
+        staff_email: staffEmail,
+        timestamp: new Date().toISOString()
+    }]);
 
-    // 4. Create Financial Transaction (Credit/Asset)
-    const displayId = await generateDisplayId("expenses", "EXP");
-    batch.set(txRef, {
-        displayId,
-        item: `Restock: ${item.serviceName}`,
+    // 4. Create Financial Transaction (Credit/Asset) -> 'expenses' table
+    await supabase.from('expenses').insert([{
+        id: `EXP-${Date.now()}-${generateId().slice(0, 4)}`,
+        item: `Restock: ${item.name || item.serviceName}`,
         quantity: qtyAdded,
-        price: unitCost,
-        total: totalCost,
-        financialCategory: 'InventoryAsset',
+        amount: totalCost,
+        financial_category: 'InventoryAsset',
         category: 'Credit',
-        timestamp: serverTimestamp(),
-        staffEmail,
-        notes: `Restocked ${qtyAdded} units. WAC: ${newAverageCost.toFixed(2)}`,
-        inventoryItemId: item.id
-    });
+        expense_type: 'Restock',
+        staff_email: staffEmail,
+        timestamp: new Date().toISOString()
+    }]);
 
-    await batch.commit();
     return newAverageCost;
 };
 
@@ -98,14 +101,20 @@ export const restockItem = async ({ item, qtyAdded, unitCost, totalCost, staffEm
  * Fetches inventory logs for a specific item or globally.
  */
 export const getInventoryLogs = async (itemId = null, maxLogs = 50) => {
-    let q = collection(db, 'inventory_logs');
+    let query = supabase
+        .from('inventory_logs')
+        .select('*')
+        .order('timestamp', { ascending: false })
+        .limit(maxLogs);
 
     if (itemId) {
-        q = query(q, where('itemId', '==', itemId), orderBy('timestamp', 'desc'), limit(maxLogs));
-    } else {
-        q = query(q, orderBy('timestamp', 'desc'), limit(maxLogs));
+        query = query.eq('item_id', itemId);
     }
 
-    const snap = await getDocs(q);
-    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const { data, error } = await query;
+    if (error) {
+        console.error("Error fetching inventory logs:", error);
+        return [];
+    }
+    return data;
 };

@@ -8,11 +8,7 @@ import {
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
-import {
-  collection, addDoc, updateDoc, deleteDoc, doc,
-  onSnapshot, serverTimestamp,
-} from 'firebase/firestore';
-import { db } from '../../firebase';
+import { supabase } from '../../supabase';
 import PageHeader from '../common/PageHeader';
 import ConfirmationReasonDialog from '../ConfirmationReasonDialog';
 
@@ -32,11 +28,18 @@ export default function Rates({ showSnackbar }) {
   const [confirmDialog, setConfirmDialog] = useState({ open: false });
 
   useEffect(() => {
-    return onSnapshot(
-      collection(db, 'rates'),
-      snap => setRates(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.name.localeCompare(b.name))),
-      err => console.error('[Rates] snapshot error:', err)
-    );
+    const fetchRates = async () => {
+      const { data } = await supabase.from('rates').select('*').order('name');
+      if (data) setRates(data);
+    };
+
+    fetchRates();
+
+    const channel = supabase.channel('rates-admin')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rates' }, fetchRates)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
   const handleOpen = (rate = null) => {
@@ -44,10 +47,10 @@ export default function Rates({ showSnackbar }) {
     if (rate) {
       setForm({
         name: rate.name,
-        ratePerHour: rate.ratePerMinute ? (rate.ratePerMinute * 60).toFixed(2) : '',
-        minimumMinutes: rate.minimumMinutes ?? 0,
-        roundingPolicy: rate.roundingPolicy || 'up-minute',
-        isActive: rate.isActive !== false,
+        ratePerHour: rate.rate_per_minute ? (rate.rate_per_minute * 60).toFixed(2) : '',
+        minimumMinutes: rate.minimum_minutes ?? 0,
+        roundingPolicy: rate.rounding_policy || 'up-minute',
+        isActive: rate.is_active !== false,
         schedules: (rate.schedules || []).map(s => ({
           label: s.label || '',
           startTime: s.startTime || '08:00',
@@ -70,10 +73,10 @@ export default function Rates({ showSnackbar }) {
       const data = {
         name: form.name.trim(),
         type: 'per-hour',
-        ratePerMinute,
-        minimumMinutes: Number(form.minimumMinutes) || 0,
-        roundingPolicy: form.roundingPolicy,
-        isActive: form.isActive,
+        rate_per_minute: ratePerMinute,
+        minimum_minutes: Number(form.minimumMinutes) || 0,
+        rounding_policy: form.roundingPolicy,
+        is_active: form.isActive,
         schedules: form.schedules
           .filter(s => s.label && s.ratePerHour)
           .map(s => ({
@@ -83,13 +86,19 @@ export default function Rates({ showSnackbar }) {
             days: s.days,
             ratePerMinute: parseFloat(s.ratePerHour) / 60,
           })),
-        updatedAt: serverTimestamp(),
+        updated_at: new Date().toISOString(),
       };
       if (editing) {
-        await updateDoc(doc(db, 'rates', editing.id), data);
+        const { error } = await supabase.from('rates').update(data).eq('id', editing.id);
+        if (error) throw error;
         showSnackbar('Rate updated');
       } else {
-        await addDoc(collection(db, 'rates'), { ...data, createdAt: serverTimestamp() });
+        const { error } = await supabase.from('rates').insert([{
+          id: crypto.randomUUID(),
+          ...data,
+          created_at: new Date().toISOString(),
+        }]);
+        if (error) throw error;
         showSnackbar('Rate created');
       }
       setOpen(false);
@@ -109,7 +118,8 @@ export default function Rates({ showSnackbar }) {
       confirmColor: 'error',
       onConfirm: async () => {
         try {
-          await deleteDoc(doc(db, 'rates', rate.id));
+          const { error } = await supabase.from('rates').delete().eq('id', rate.id);
+          if (error) throw error;
           showSnackbar('Rate deleted');
         } catch (e) {
           showSnackbar(e.message, 'error');
@@ -139,8 +149,8 @@ export default function Rates({ showSnackbar }) {
     updateSchedule(schedIdx, 'days', days);
   };
 
-  const fmtRate = (r) => r.ratePerMinute
-    ? `₱${(r.ratePerMinute * 60).toFixed(2)}/hr`
+  const fmtRate = (r) => r.rate_per_minute
+    ? `₱${(r.rate_per_minute * 60).toFixed(2)}/hr`
     : '—';
 
   return (
@@ -173,9 +183,9 @@ export default function Rates({ showSnackbar }) {
               <TableRow key={r.id} hover>
                 <TableCell sx={{ fontWeight: 500 }}>{r.name}</TableCell>
                 <TableCell>{fmtRate(r)}</TableCell>
-                <TableCell>{r.minimumMinutes || 0} min</TableCell>
+                <TableCell>{r.minimum_minutes || 0} min</TableCell>
                 <TableCell>
-                  <Typography variant="caption" color="text.secondary">{r.roundingPolicy}</Typography>
+                  <Typography variant="caption" color="text.secondary">{r.rounding_policy}</Typography>
                 </TableCell>
                 <TableCell>
                   {(r.schedules || []).length > 0
@@ -185,9 +195,9 @@ export default function Rates({ showSnackbar }) {
                 </TableCell>
                 <TableCell>
                   <Chip
-                    label={r.isActive !== false ? 'Active' : 'Inactive'}
+                    label={r.is_active !== false ? 'Active' : 'Inactive'}
                     size="small"
-                    color={r.isActive !== false ? 'success' : 'default'}
+                    color={r.is_active !== false ? 'success' : 'default'}
                   />
                 </TableCell>
                 <TableCell align="right">

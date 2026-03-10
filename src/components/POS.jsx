@@ -58,12 +58,8 @@ const POSHistoryDrawer = lazy(() => import('./pos/POSHistoryDrawer'));
 const CustomerSelectionDrawer = lazy(() => import('./pos/CustomerSelectionDrawer'));
 
 
-// Firebase
-import { auth, db } from '../firebase';
-import {
-  collection, query, onSnapshot, orderBy, doc,
-  where, serverTimestamp, getDocs
-} from 'firebase/firestore';
+// Supabase
+import { supabase } from '../supabase';
 
 // Helpers
 import { openDrawer } from '../services/drawerService';
@@ -296,18 +292,37 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
   // Load Shift Orders
   useEffect(() => {
     if (!activeShiftId) return;
-    const q = query(
-      collection(db, 'orders'),
-      where('shiftId', '==', activeShiftId),
-      orderBy('orderNumber', 'desc')
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      const docs = snap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .filter(d => d.isDeleted !== true);
-      setShiftOrders(docs);
-    });
-    return () => unsub();
+
+    const fetchOrders = async () => {
+      const { data } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('shift_id', activeShiftId)
+        .eq('is_deleted', false)
+        .order('order_number', { ascending: false });
+
+      if (data) {
+        setShiftOrders(data.map(d => ({
+          ...d,
+          shiftId: d.shift_id,
+          orderNumber: d.order_number,
+          isDeleted: d.is_deleted,
+          subtotal: d.subtotal,
+          totalDue: d.total_due,
+          amountPaid: d.amount_paid,
+          createdAt: d.created_at,
+          paymentMethod: d.payment_method
+        })));
+      }
+    };
+
+    fetchOrders();
+
+    const channel = supabase.channel('public:orders:shift')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `shift_id=eq.${activeShiftId}` }, fetchOrders)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, [activeShiftId]);
 
 
@@ -321,24 +336,40 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
   // Load Transactions Log
   useEffect(() => {
     if (!activeShiftId) return;
-    const qTx = query(
-      collection(db, "transactions"),
-      where("shiftId", "==", activeShiftId)
-      // orderBy("timestamp", "desc") // Client-side sort to avoid index requirements
-    );
-    const unsubscribe = onSnapshot(qTx, (snapshot) => {
-      const docs = snapshot.docs
-        .map(doc => ({ ...doc.data(), id: doc.id }))
-        .filter(d => d.isDeleted !== true);
-      docs.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
-      setTransactions(docs);
-    });
-    return () => unsubscribe();
+
+    const fetchTransactions = async () => {
+      const { data } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('shift_id', activeShiftId)
+        .eq('is_deleted', false)
+        .order('timestamp', { ascending: false });
+
+      if (data) {
+        setTransactions(data.map(d => ({
+          ...d,
+          shiftId: d.shift_id,
+          orderNumber: d.order_number,
+          isDeleted: d.is_deleted,
+          paymentMethod: d.payment_method,
+          staffEmail: d.staff_email,
+          createdAt: d.created_at
+        })));
+      }
+    };
+
+    fetchTransactions();
+
+    const channel = supabase.channel('public:transactions:shift')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions', filter: `shift_id=eq.${activeShiftId}` }, fetchTransactions)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, [activeShiftId]);
 
 
   const handleLogoutOnly = () => {
-    auth.signOut();
+    supabase.auth.signOut();
   };
   const handleDownloadReceipt = async () => {
     if (receiptRef.current) {
@@ -621,12 +652,16 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
 
   const handleOpenOrderAsTab = async (order) => {
     try {
-      const q = query(
-        collection(db, 'transactions'),
-        where('orderNumber', '==', order.orderNumber)
-      );
-      const snap = await getDocs(q);
-      const transactions = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const { data } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('order_number', order.orderNumber);
+
+      const transactions = (data || []).map(d => ({
+        ...d,
+        orderNumber: d.order_number,
+        paymentMethod: d.payment_method
+      }));
       loadOrder(order, transactions);
     } catch (e) {
       console.error("Error opening order:", e);
@@ -1272,7 +1307,7 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
           <Button
             variant="contained"
             color="error"
-            onClick={() => auth.signOut()}
+            onClick={() => supabase.auth.signOut()}
             sx={{ fontWeight: 'bold' }}
           >
             CLOSE & LOGOUT

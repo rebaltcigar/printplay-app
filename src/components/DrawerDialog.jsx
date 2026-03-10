@@ -5,10 +5,7 @@ import {
 } from '@mui/material';
 import FingerprintIcon from '@mui/icons-material/Fingerprint';
 
-// Firebase
-import { auth, db } from '../firebase';
-import { EmailAuthProvider } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { supabase } from '../supabase';
 import { useGlobalUI } from '../contexts/GlobalUIContext';
 
 // Helpers
@@ -40,16 +37,14 @@ export default function DrawerDialog({ open, onClose, user }) {
 
         // Don't set loading true immediately to avoid flickering if not set up
         try {
-            const userDocRef = doc(db, 'users', user.uid);
-            const userSnap = await getDoc(userDocRef);
+            const { data: userData, error } = await supabase.from('profiles').select('biometric_id').eq('id', user.id).single();
 
-            if (!userSnap.exists()) {
+            if (error || !userData) {
                 setInternalError("User record not found.");
                 return;
             }
 
-            const userData = userSnap.data();
-            const storedBiometricId = userData.biometricId;
+            const storedBiometricId = userData.biometric_id;
 
             if (!storedBiometricId) {
                 // Inform user why it's not popping up
@@ -80,17 +75,14 @@ export default function DrawerDialog({ open, onClose, user }) {
         setLoading(true);
         setInternalError("");
         try {
-            // Use Re-Authentication instead of Sign-In to verify current session
-            const credential = EmailAuthProvider.credential(user.email, password);
-            if (!auth.currentUser) throw new Error("No active session.");
-
-            await reauthenticateWithCredential(auth.currentUser, credential);
+            const { error } = await supabase.auth.signInWithPassword({ email: user.email, password });
+            if (error) throw error;
 
             await openDrawer(user, 'manual');
             onClose();
         } catch (err) {
             console.error("Drawer Unlock Failed:", err);
-            if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+            if (err.message?.includes('Invalid login credentials')) {
                 setInternalError("Incorrect password.");
             } else {
                 setInternalError("Error: " + err.message);

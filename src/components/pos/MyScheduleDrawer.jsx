@@ -5,8 +5,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Box, Typography, Chip, CircularProgress, Stack,
 } from '@mui/material';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { supabase } from '../../supabase';
 import { fmtDate as sharedFmtDate } from '../../utils/formatters';
 import DetailDrawer from '../common/DetailDrawer';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
@@ -47,12 +46,20 @@ export default function MyScheduleDrawer({ open, onClose, userEmail }) {
         const limit = addDays(today, 14);
 
         // Query own entries (single-field query, filter date in JS)
-        const snap = await getDocs(query(
-          collection(db, 'schedules'),
-          where('staffEmail', '==', userEmail),
-        ));
-        const list = snap.docs
-          .map(d => ({ id: d.id, ...d.data() }))
+        const { data } = await supabase
+          .from('schedules')
+          .select('*')
+          .eq('staff_email', userEmail);
+
+        const list = (data || [])
+          .map(e => ({
+            ...e,
+            staffEmail: e.staff_email,
+            shiftLabel: e.shift_label,
+            startTime: e.start_time,
+            endTime: e.end_time,
+            coveredByName: e.covered_by_name
+          }))
           .filter(e => e.date >= today && e.date <= limit)
           .sort((a, b) => a.date.localeCompare(b.date));
         setEntries(list);

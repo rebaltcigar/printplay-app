@@ -1,6 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
-import { db } from '../firebase';
-import { collection, query, where, onSnapshot, getDocs, orderBy, Timestamp, limit } from 'firebase/firestore';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
+import { supabase } from '../supabase';
 import { getRange } from '../services/analyticsService';
 import dayjs from 'dayjs';
 
@@ -29,15 +28,16 @@ export function AnalyticsProvider({ children }) {
     useEffect(() => {
         const fetchEarliest = async () => {
             try {
-                // Check transactions for earliest timestamp
-                const qTx = query(collection(db, "transactions"), orderBy("timestamp", "asc"), limit(1));
-                const snapTx = await getDocs(qTx);
-                if (!snapTx.empty) {
-                    const d = snapTx.docs[0].data();
-                    const ts = d.timestamp?.seconds ? d.timestamp.seconds * 1000 : d.timestamp;
-                    setAllTimeStart(new Date(ts));
+                const { data, error } = await supabase
+                    .from('order_items')
+                    .select('timestamp')
+                    .order('timestamp', { ascending: true })
+                    .limit(1)
+                    .maybeSingle();
+
+                if (data && data.timestamp) {
+                    setAllTimeStart(new Date(data.timestamp));
                 } else {
-                    // Fallback to a reasonable product launch date if DB is empty
                     setAllTimeStart(new Date("2024-01-01"));
                 }
             } catch (err) {
@@ -55,16 +55,23 @@ export function AnalyticsProvider({ children }) {
 
     // --- 3. Fetch Services (Static / Rare Update) ---
     useEffect(() => {
-        const unsub = onSnapshot(collection(db, "services"), (snap) => {
-            setServices(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        }, (err) => console.error("Services Error:", err));
-        return () => unsub();
+        const fetchServices = async () => {
+            const { data } = await supabase.from('products').select('*');
+            if (data) setServices(data);
+        };
+        fetchServices();
+
+        const channel = supabase.channel('public:products')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, fetchServices)
+            .subscribe();
+
+        return () => supabase.removeChannel(channel);
     }, []);
 
     // --- 4. Smart Fetching Strategy ---
     useEffect(() => {
-        const startTs = r.startUtc?.getTime();
-        const endTs = r.endUtc?.getTime();
+        const startTs = r.startUtc?.toISOString();
+        const endTs = r.endUtc?.toISOString();
         if (!startTs || !endTs) return;
 
         setLoading(true);
@@ -72,75 +79,95 @@ export function AnalyticsProvider({ children }) {
 
         const isHistorical = ["lastMonth", "lastYear", "allTime", "customMonth"].includes(preset);
 
-        // --- QUERIES ---
-        const txQuery = query(
-            collection(db, "transactions"),
-            where("timestamp", ">=", Timestamp.fromDate(r.startUtc)),
-            where("timestamp", "<=", Timestamp.fromDate(r.endUtc)),
-            orderBy("timestamp", "desc")
-        );
-
-        const shiftQuery = query(
-            collection(db, "shifts"),
-            where("startTime", ">=", Timestamp.fromDate(r.startUtc)),
-            where("startTime", "<=", Timestamp.fromDate(r.endUtc))
-        );
-
-        const invoiceQuery = query(
-            collection(db, "invoices"),
-            where("createdAt", ">=", Timestamp.fromDate(r.startUtc)),
-            where("createdAt", "<=", Timestamp.fromDate(r.endUtc))
-        );
-
-        let unsubTx = () => { };
-        let unsubShifts = () => { };
-        let unsubInvoices = () => { };
-
-        const fetchData = async () => {
+        const fetchAnalyticsData = async () => {
             try {
-                if (isHistorical) {
-                    console.log(`[Analytics] Performing ONE-TIME fetch for ${preset}...`);
-                    const [txSnap, shiftSnap, invSnap] = await Promise.all([
-                        getDocs(txQuery),
-                        getDocs(shiftQuery),
-                        getDocs(invoiceQuery)
-                    ]);
+                // Fetch transactions (order_items)
+                const txPromise = supabase
+                    .from('order_items')
+                    .select('*')
+                    .gte('timestamp', startTs)
+                    .lte('timestamp', endTs)
+                    .order('timestamp', { ascending: false });
 
-                    setTransactions(txSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-                    setShifts(shiftSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-                    setInvoices(invSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-                    setLoading(false);
-                } else {
-                    console.log(`[Analytics] Subscribing to REAL-TIME updates for ${preset}...`);
-                    unsubTx = onSnapshot(txQuery, (snap) => {
-                        setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-                    }, (err) => setError(err));
+                // Fetch shifts
+                const shiftPromise = supabase
+                    .from('shifts')
+                    .select('*')
+                    .gte('start_time', startTs)
+                    .lte('start_time', endTs);
 
-                    unsubShifts = onSnapshot(shiftQuery, (snap) => {
-                        setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-                    }, (err) => setError(err));
+                // Fetch invoices
+                const invPromise = supabase
+                    .from('invoices')
+                    .select('*')
+                    .gte('created_at', startTs)
+                    .lte('created_at', endTs);
 
-                    unsubInvoices = onSnapshot(invoiceQuery, (snap) => {
-                        setInvoices(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-                        setLoading(false);
-                    }, (err) => setError(err));
-                }
+                const [txRes, shiftRes, invRes] = await Promise.all([txPromise, shiftPromise, invPromise]);
+
+                if (txRes.error) throw txRes.error;
+                if (shiftRes.error) throw shiftRes.error;
+                if (invRes.error) throw invRes.error;
+
+                // Map Supabase snake_case back to expected camelCase for Analytics
+                const mappedTx = (txRes.data || []).map(t => ({
+                    ...t,
+                    item: t.name,
+                    price: t.price,
+                    quantity: t.quantity,
+                    total: t.amount,
+                    timestamp: t.timestamp,
+                    financialCategory: t.financial_category,
+                    isDeleted: t.is_deleted,
+                    serviceId: t.product_id
+                }));
+
+                const mappedShifts = (shiftRes.data || []).map(s => ({
+                    ...s,
+                    startTime: s.start_time,
+                    endTime: s.end_time,
+                    pcRentalTotal: s.pc_rental_total
+                }));
+
+                const mappedInvoices = (invRes.data || []).map(i => ({
+                    ...i,
+                    createdAt: i.created_at,
+                    invoiceNumber: i.invoice_number,
+                    amountPaid: i.amount_paid
+                }));
+
+                setTransactions(mappedTx);
+                setShifts(mappedShifts);
+                setInvoices(mappedInvoices);
+                setLoading(false);
             } catch (err) {
-                console.error("Fetch Error:", err);
+                console.error("[Analytics] Fetch Error:", err);
                 setError(err);
                 setLoading(false);
             }
         };
 
-        fetchData();
+        fetchAnalyticsData();
+
+        if (isHistorical) {
+            console.log(`[Analytics] Performing ONE-TIME fetch for ${preset}...`);
+            return;
+        }
+
+        console.log(`[Analytics] Subscribing to REAL-TIME updates for ${preset}...`);
+
+        // Subscribe to changes and simply re-fetch the range to ensure data consistency
+        const channel = supabase.channel(`analytics_changes_${preset}`)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, fetchAnalyticsData)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'shifts' }, fetchAnalyticsData)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, fetchAnalyticsData)
+            .subscribe();
 
         return () => {
-            try { if (unsubTx) unsubTx(); } catch (e) { }
-            try { if (unsubShifts) unsubShifts(); } catch (e) { }
-            try { if (unsubInvoices) unsubInvoices(); } catch (e) { }
+            supabase.removeChannel(channel);
         };
 
-    }, [r.startUtc?.getTime(), r.endUtc?.getTime(), preset]);
+    }, [r.startUtc?.toISOString(), r.endUtc?.toISOString(), preset]);
 
     const value = useMemo(() => ({
         preset, setPreset,

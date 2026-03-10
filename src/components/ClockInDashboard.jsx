@@ -7,14 +7,13 @@ import {
   Box, Card, Typography, Stack, Button, Divider,
   CircularProgress,
 } from '@mui/material';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { supabase } from '../supabase';
 import MyScheduleDrawer from './pos/MyScheduleDrawer';
 import MyPaystubsDrawer from './pos/MyPaystubsDrawer';
-import AccessTimeIcon  from '@mui/icons-material/AccessTime';
+import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
-import ReceiptLongIcon  from '@mui/icons-material/ReceiptLong';
-import LogoutIcon       from '@mui/icons-material/Logout';
+import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import LogoutIcon from '@mui/icons-material/Logout';
 
 function getGreeting() {
   const h = new Date().getHours();
@@ -28,40 +27,40 @@ function fmtTime(date) {
 }
 
 export default function ClockInDashboard({ user, clockInLogId, onClockOut }) {
-  const [profile,     setProfile]     = useState(null);
+  const [profile, setProfile] = useState(null);
   const [activeShift, setActiveShift] = useState(null);
   const [clockInTime] = useState(() => new Date());
-  const [scheduleOpen,  setScheduleOpen]  = useState(false);
-  const [paystubsOpen,  setPaystubsOpen]  = useState(false);
-  const [clockingOut,   setClockingOut]   = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [paystubsOpen, setPaystubsOpen] = useState(false);
+  const [clockingOut, setClockingOut] = useState(false);
 
   useEffect(() => {
-    if (!user?.uid) return;
+    if (!user?.id) return;
     (async () => {
       try {
-        const snap = await getDoc(doc(db, 'users', user.uid));
-        if (snap.exists()) setProfile(snap.data());
+        const { data: profileSnap } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+        if (profileSnap) setProfile({ ...profileSnap, fullName: profileSnap.full_name });
 
-        const statusSnap = await getDoc(doc(db, 'app_status', 'current_shift'));
-        if (statusSnap.exists()) {
-          const lock = statusSnap.data();
-          const shiftSnap = await getDoc(doc(db, 'shifts', lock.activeShiftId));
-          if (shiftSnap.exists()) {
+        const { data: statusSnap } = await supabase.from('app_status').select('*').eq('id', 'current_shift').single();
+        if (statusSnap && statusSnap.active_shift_id) {
+          const lock = statusSnap;
+          const { data: shiftSnap } = await supabase.from('shifts').select('*').eq('id', lock.active_shift_id).single();
+          if (shiftSnap) {
             // Try to get cashier display name
-            let cashierName = lock.staffEmail;
+            let cashierName = lock.staff_email;
             try {
-              const cashierUserSnap = await getDoc(doc(db, 'users', shiftSnap.data().staffUid || ''));
-              if (cashierUserSnap.exists()) {
-                const d = cashierUserSnap.data();
-                cashierName = d.fullName || d.name || lock.staffEmail;
+              const { data: cashierUserSnap } = await supabase.from('profiles').select('*').eq('id', shiftSnap.staff_id || '').single();
+              if (cashierUserSnap) {
+                const d = cashierUserSnap;
+                cashierName = d.full_name || d.username || lock.staff_email;
               }
-            } catch {}
-            setActiveShift({ ...shiftSnap.data(), cashierName });
+            } catch { }
+            setActiveShift({ ...shiftSnap, shiftPeriod: shiftSnap.shift_period, cashierName });
           }
         }
       } catch (err) { console.error('ClockInDashboard init:', err); }
     })();
-  }, [user?.uid]);
+  }, [user?.id]);
 
   const handleClockOut = async () => {
     setClockingOut(true);
@@ -69,7 +68,7 @@ export default function ClockInDashboard({ user, clockInLogId, onClockOut }) {
     catch { setClockingOut(false); }
   };
 
-  const name      = profile?.fullName || profile?.name || user?.email || '';
+  const name = profile?.fullName || profile?.name || user?.email || '';
   const firstName = name.split(' ')[0] || name;
 
   return (

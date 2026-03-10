@@ -38,26 +38,13 @@ import CheckIcon from "@mui/icons-material/Check";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
-import { db, auth } from "../../firebase";
-import {
-  addDoc,
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  query,
-  serverTimestamp,
-  Timestamp,
-  updateDoc,
-  where,
-  writeBatch,
-} from "firebase/firestore";
+import { supabase } from "../../supabase";
 import SummaryCards from "../common/SummaryCards";
 import {
   cap,
   calcGross,
   inferShiftName,
-  minutesBetweenTS,
+  minutesBetween,
   peso,
   resolveHourlyRate,
   shortageForShift,
@@ -189,19 +176,9 @@ export default function RunPayroll({
           if (r.id !== shiftId) return r;
           const next = { ...r, ...patch };
 
-          const start = next.overrideStart?.seconds
-            ? next.overrideStart
-            : next.overrideStart
-              ? Timestamp.fromDate(new Date(next.overrideStart))
-              : next.start;
-
-          const end = next.overrideEnd?.seconds
-            ? next.overrideEnd
-            : next.overrideEnd
-              ? Timestamp.fromDate(new Date(next.overrideEnd))
-              : next.end || next.overrideEnd;
-
-          next.minutesUsed = next.excluded ? 0 : minutesBetweenTS(start, end);
+          const start = next.overrideStart || next.start;
+          const end = next.overrideEnd || next.end || next.overrideEnd;
+          next.minutesUsed = next.excluded ? 0 : minutesBetween(start, end);
           next.shortage = shortageForShift({
             denominations: next.denominations,
             systemTotal: next.systemTotal,
@@ -349,21 +326,24 @@ export default function RunPayroll({
       const end = tsFromYMD(periodEnd, true);
 
       updateBusy("Querying shifts and transactions...");
-      const [sSnap, adminSnap] = await Promise.all([
-        getDocs(query(
-          collection(db, "shifts"),
-          where("startTime", ">=", start),
-          where("startTime", "<=", end)
-        )),
-        getDocs(query(
-          collection(db, "transactions"),
-          where("timestamp", ">=", start),
-          where("timestamp", "<=", end)
-        )),
+      const [sRes, adminRes] = await Promise.all([
+        supabase.from('shifts')
+          .select('*')
+          .gte('start_time', start)
+          .lte('start_time', end),
+        supabase.from('expenses')
+          .select('*')
+          .eq('expense_type', 'Salary Advance')
+          .gte('timestamp', start)
+          .lte('timestamp', end)
+          .is('shift_id', null)
       ]);
 
-      const rawShifts = sSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      const ongoing = rawShifts.filter((s) => !s.endTime);
+      if (sRes.error) throw sRes.error;
+      if (adminRes.error) throw adminRes.error;
+
+      const rawShifts = sRes.data;
+      const ongoing = rawShifts.filter((s) => !s.end_time);
 
       if (ongoing.length > 0 && decision === null) {
         setOngoingPrompt({ open: true, shifts: ongoing });
@@ -372,7 +352,7 @@ export default function RunPayroll({
       }
 
       const shiftsToProcess = rawShifts.filter((s) => {
-        if (s.endTime) return true;
+        if (s.end_time) return true;
         if (decision === "include") return true;
         return false;
       });
@@ -389,38 +369,37 @@ export default function RunPayroll({
       const shiftsById = new Map();
 
       shiftsToProcess.forEach((s) => {
-        if (!s.startTime) return;
-        const email = s.staffEmail || "unknown";
-        const isOngoing = !s.endTime;
-        const effectiveEnd = isOngoing ? Timestamp.now() : s.endTime;
-        const overrideEnd = isOngoing ? effectiveEnd : null;
-        const minutes = minutesBetweenTS(s.startTime, effectiveEnd);
+        if (!s.start_time) return;
+        const email = s.staff_email || "unknown";
+        const isOngoing = !s.end_time;
+        const effectiveEnd = isOngoing ? new Date().toISOString() : s.end_time;
+        const minutes = minutesBetween(s.start_time, effectiveEnd);
         const shortage = shortageForShift(s);
 
         const row = {
           id: s.id,
-          start: s.startTime,
-          end: s.endTime || null,
-          title: s.title || s.shiftTitle || null,
+          start: s.start_time,
+          end: s.end_time || null,
+          title: s.title || s.shift_title || null,
           label: s.label || null,
           overrideStart: null,
-          overrideEnd: overrideEnd,
+          overrideEnd: isOngoing ? effectiveEnd : null,
           isOngoing: isOngoing,
           excluded: false,
           minutesOriginal: minutes,
           minutesUsed: minutes,
           shortage,
           denominations: s.denominations || {},
-          systemTotal: Number(s.systemTotal || 0),
-          staffUid: s.staffUid || null,
-          staffName: s.staffName || s.staffFullName || email,
+          systemTotal: Number(s.system_total || 0),
+          staffUid: s.staff_id || null,
+          staffName: s.staff_name || s.staff_full_name || email,
           staffEmail: email,
           expenseDate: null,
         };
         shiftsById.set(s.id, row);
 
         const bucket = byStaff.get(email) || {
-          staffUid: s.staffUid || null,
+          staffUid: s.staff_id || null,
           staffName: row.staffName,
           staffEmail: email,
           minutes: 0,
@@ -433,40 +412,46 @@ export default function RunPayroll({
       });
 
       updateBusy("Fetching staff records and salary advances...");
-      const shiftRows = Array.from(shiftsById.values());
-      const [usersSnap, ...advanceSnaps] = await Promise.all([
-        getDocs(query(collection(db, "users"), where("role", "==", "staff"))),
-        ...shiftRows.map((row) =>
-          getDocs(query(
-            collection(db, "transactions"),
-            where("expenseType", "==", "Salary Advance"),
-            where("shiftId", "==", row.id)
-          ))
-        ),
+      const shiftIds = Array.from(shiftsById.keys());
+      const [uRes, advRes] = await Promise.all([
+        supabase.from('profiles')
+          .select('*')
+          .eq('role', 'staff'),
+        supabase.from('expenses')
+          .select('*')
+          .eq('expense_type', 'Salary Advance')
+          .in('shift_id', shiftIds)
       ]);
 
+      if (uRes.error) throw uRes.error;
+      if (advRes.error) throw advRes.error;
+
       const usersByEmail = new Map();
-      usersSnap.forEach((u) => {
-        const v = u.data() || {};
+      uRes.data.forEach((v) => {
         usersByEmail.set(v.email, {
-          uid: u.id,
-          name: v.fullName || v.name || v.email,
+          uid: v.id,
+          name: v.full_name || v.name || v.email,
           payroll: v.payroll || null,
         });
       });
 
       const extraAdvancesByStaff = new Map();
+      const advByShift = new Map();
+      advRes.data.forEach(tx => {
+        if (tx.voided) return;
+        const list = advByShift.get(tx.shift_id) || [];
+        list.push(tx);
+        advByShift.set(tx.shift_id, list);
+      });
 
-      shiftRows.forEach((row, idx) => {
-        const advSnap = advanceSnaps[idx];
+      Array.from(shiftsById.values()).forEach((row) => {
+        const txs = advByShift.get(row.id) || [];
         let ownerAdvance = 0;
         const ownerAdvanceRefs = [];
-        advSnap.docs.forEach((advDoc) => {
-          const tx = advDoc.data() || {};
-          if (tx.voided) return;
+        txs.forEach((tx) => {
           const amt = Number(tx.total || 0);
-          const targetEmail = tx.expenseStaffEmail || tx.staffEmail || null;
-          const targetUid = tx.expenseStaffId || tx.staffUid || null;
+          const targetEmail = tx.expense_staff_email || tx.staff_email || null;
+          const targetUid = tx.expense_staff_id || tx.staff_id || null;
           const shiftOwnerEmail = row.staffEmail;
           const shiftOwnerUid = row.staffUid;
 
@@ -482,7 +467,7 @@ export default function RunPayroll({
               staffEmail: targetEmail || null,
               staffUid: targetUid || null,
               staffName:
-                tx.expenseStaffName ||
+                tx.expense_staff_name ||
                 usersByEmail.get(targetEmail || "")?.name ||
                 targetEmail ||
                 "Unknown Staff",
@@ -491,7 +476,7 @@ export default function RunPayroll({
             };
             existing.total += amt;
             existing.details.push({
-              id: advDoc.id,
+              id: tx.id,
               label: `Salary Advance (recorded on ${shiftLabel})`,
               amount: amt,
               fromShiftId: row.id,
@@ -499,7 +484,7 @@ export default function RunPayroll({
             extraAdvancesByStaff.set(key, existing);
           } else {
             ownerAdvance += amt;
-            ownerAdvanceRefs.push(advDoc.id);
+            ownerAdvanceRefs.push(tx.id);
           }
         });
         row.advance = ownerAdvance;
@@ -531,15 +516,11 @@ export default function RunPayroll({
         }
       }
 
-      adminSnap.docs.forEach((docSnap) => {
-        const tx = docSnap.data();
+      adminRes.data.forEach((tx) => {
         if (tx.voided || tx.isDeleted) return;
-        if (tx.expenseType !== "Salary Advance") return;
-        if (tx.shiftId) return;
-
         const amt = Number(tx.total || 0);
-        const staffEmail = tx.expenseStaffEmail || tx.staffEmail;
-        const staffUid = tx.expenseStaffId;
+        const staffEmail = tx.expense_staff_email || tx.staff_email;
+        const staffUid = tx.expense_staff_id;
 
         let key = staffEmail;
         if (!key && staffUid) {
@@ -549,7 +530,7 @@ export default function RunPayroll({
         if (!key) return;
 
         if (!byStaff.has(key)) {
-          const name = tx.expenseStaffName || (usersByEmail.get(key)?.name) || "Unknown Staff";
+          const name = tx.expense_staff_name || (usersByEmail.get(key)?.name) || "Unknown Staff";
           byStaff.set(key, {
             staffUid: staffUid || null,
             staffName: name,
@@ -562,8 +543,8 @@ export default function RunPayroll({
 
         const bucket = byStaff.get(key);
         bucket.extraAdvances.push({
-          id: docSnap.id,
-          label: `${tx.expenseType} (Admin Manual - ${fmtDate(tx.timestamp)})`,
+          id: tx.id,
+          label: `${tx.expense_type} (Admin Manual - ${fmtDate(tx.timestamp)})`,
           amount: amt,
           fromShiftId: null,
         });
@@ -642,108 +623,111 @@ export default function RunPayroll({
       return;
     }
 
-    startBusy("Loading selected payroll run...");
-
     try {
-      const runRef = doc(db, "payrollRuns", id);
-      const runDoc = await getDoc(runRef);
-      if (!runDoc.exists()) {
+      const { data: run, error: runErr } = await supabase
+        .from('payroll_runs')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (runErr || !run) {
         showSnackbar("That payroll run does not exist anymore.", "error");
         return;
       }
-      const run = runDoc.data() || {};
+
       setRunId(id);
       setStatus(run.status || "draft");
-      setPeriodStart(run.periodStart?.seconds ? toYMD_PHT_fromTS(run.periodStart) : "");
-      setPeriodEnd(run.periodEnd?.seconds ? toYMD_PHT_fromTS(run.periodEnd) : "");
-      setPayDate(run.payDate?.seconds ? toYMD_PHT_fromTS(run.payDate) : todayYMD_PHT());
-      setExpenseMode(run.expenseMode || "per-staff");
+      setPeriodStart(run.period_start || "");
+      setPeriodEnd(run.period_end || "");
+      setPayDate(run.pay_date || todayYMD_PHT());
+      setExpenseMode(run.expense_mode || "per-staff");
 
       updateBusy("Loading run lines...");
-      const linesSnap = await getDocs(collection(runRef, "lines"));
+      const { data: lines, error: linesErr } = await supabase
+        .from('payroll_lines')
+        .select('*')
+        .eq('run_id', id);
 
-      const out = await Promise.all(linesSnap.docs.map(async (ld) => {
-        const l = ld.data() || {};
-        const lineId = ld.id;
-        const shiftIds = l.source?.shiftIds || [];
+      if (linesErr) throw linesErr;
 
-        const [overSnap, ...shiftAndAdvResults] = await Promise.all([
-          getDocs(collection(runRef, `lines/${lineId}/shifts`)),
-          ...shiftIds.map((sid) => getDoc(doc(db, "shifts", sid))),
-          ...shiftIds.map((sid) =>
-            getDocs(query(
-              collection(db, "transactions"),
-              where("expenseType", "==", "Salary Advance"),
-              where("shiftId", "==", sid)
-            ))
-          ),
+      const out = await Promise.all(lines.map(async (lineRec) => {
+        const lineId = lineRec.id;
+        const shiftIds = lineRec.source?.shiftIds || [];
+
+        const [{ data: overData }, { data: shiftsData }, { data: advData }] = await Promise.all([
+          supabase.from('payroll_line_shifts').select('*').eq('line_id', lineId),
+          supabase.from('shifts').select('*').in('id', shiftIds),
+          supabase.from('expenses').select('*').eq('expense_type', 'Salary Advance').in('shift_id', shiftIds)
         ]);
 
-        const shiftDocs = shiftAndAdvResults.slice(0, shiftIds.length);
-        const advanceSnaps = shiftAndAdvResults.slice(shiftIds.length);
-
         const overrides = new Map();
-        overSnap.forEach((od) => {
-          const v = od.data() || {};
-          overrides.set(v.shiftId, v);
+        (overData || []).forEach((ov) => {
+          overrides.set(ov.shift_id, ov);
+        });
+
+        const shiftsById = new Map();
+        (shiftsData || []).forEach(s => shiftsById.set(s.id, s));
+
+        const advByShift = new Map();
+        (advData || []).forEach(tx => {
+          if (tx.voided) return;
+          const list = advByShift.get(tx.shift_id) || [];
+          list.push(tx);
+          advByShift.set(tx.shift_id, list);
         });
 
         const shiftRows = [];
-        for (let i = 0; i < shiftIds.length; i++) {
-          const sid = shiftIds[i];
-          const sDoc = shiftDocs[i];
-          if (!sDoc.exists()) continue;
-          const s = sDoc.data() || {};
+        for (const sid of shiftIds) {
+          const s = shiftsById.get(sid);
+          if (!s) continue;
           const ov = overrides.get(sid) || {};
 
-          const isOngoing = !s.endTime;
-          const start = ov.overrideStart || s.startTime;
-          const end = ov.overrideEnd || s.endTime || (isOngoing ? Timestamp.now() : null);
+          const isOngoing = !s.end_time;
+          const start = ov.override_start || s.start_time;
+          const end = ov.override_end || s.end_time || (isOngoing ? new Date().toISOString() : null);
 
-          const minutesOriginal = minutesBetweenTS(s.startTime, s.endTime || Timestamp.now());
+          const minutesOriginal = minutesBetween(s.start_time, s.end_time || new Date());
           const minutesUsed = ov.excluded
             ? 0
-            : ov.minutesUsed != null
-              ? ov.minutesUsed
-              : minutesBetweenTS(start, end);
+            : ov.minutes_used != null
+              ? ov.minutes_used
+              : minutesBetween(start, end);
 
           const row = {
             id: sid,
-            start: s.startTime,
-            end: s.endTime || null,
-            title: s.title || s.shiftTitle || null,
+            start: s.start_time,
+            end: s.end_time || null,
+            title: s.title || s.shift_title || null,
             label: s.label || null,
-            overrideStart: ov.overrideStart || null,
-            overrideEnd: ov.overrideEnd || null,
+            overrideStart: ov.override_start || null,
+            overrideEnd: ov.override_end || null,
             isOngoing: isOngoing,
             excluded: !!ov.excluded,
             minutesOriginal,
             minutesUsed,
             shortage: shortageForShift(s),
             denominations: s.denominations || {},
-            systemTotal: Number(s.systemTotal || 0),
-            staffUid: l.staffUid || null,
-            staffName: l.staffName || s.staffName || s.staffFullName || l.staffEmail,
-            staffEmail: l.staffEmail || s.staffEmail,
-            expenseDate: ov.expenseDate || null,
+            systemTotal: Number(s.system_total || 0),
+            staffUid: lineRec.staff_id || null,
+            staffName: lineRec.staff_name || s.staff_name || s.staff_full_name || lineRec.staff_email,
+            staffEmail: lineRec.staff_email || s.staff_email,
+            expenseDate: ov.expense_date || null,
           };
 
-          const advSnap = advanceSnaps[i];
+          const txs = advByShift.get(sid) || [];
           let ownerAdvance = 0;
           const ownerAdvanceRefs = [];
-          advSnap.docs.forEach((ad) => {
-            const tx = ad.data() || {};
-            if (tx.voided) return;
+          txs.forEach((tx) => {
             const amt = Number(tx.total || 0);
-            const targetEmail = tx.expenseStaffEmail || tx.staffEmail || row.staffEmail;
-            const targetUid = tx.expenseStaffId || tx.staffUid || row.staffUid;
+            const targetEmail = tx.expense_staff_email || tx.staff_email || row.staffEmail;
+            const targetUid = tx.expense_staff_id || tx.staff_id || row.staffUid;
             const isForThisStaff =
-              (l.staffEmail && targetEmail === l.staffEmail) ||
-              (l.staffUid && targetUid === l.staffUid) ||
-              (!tx.expenseStaffEmail && !tx.expenseStaffId);
+              (lineRec.staff_email && targetEmail === lineRec.staff_email) ||
+              (lineRec.staff_id && targetUid === lineRec.staff_id) ||
+              (!tx.expense_staff_email && !tx.expense_staff_id);
             if (isForThisStaff) {
               ownerAdvance += amt;
-              ownerAdvanceRefs.push(ad.id);
+              ownerAdvanceRefs.push(tx.id);
             }
           });
           row.advance = ownerAdvance;
@@ -752,17 +736,17 @@ export default function RunPayroll({
           shiftRows.push(row);
         }
 
-        const manualAdjustments = Array.isArray(l.adjustments)
-          ? l.adjustments.filter((a) => a?.type === "manual-deduction")
+        const manualAdjustments = Array.isArray(lineRec.adjustments)
+          ? lineRec.adjustments.filter((a) => a?.type === "manual-deduction")
           : [];
-        const manualAdditions = Array.isArray(l.adjustments)
-          ? l.adjustments.filter((a) => a?.type === "manual-addition")
+        const manualAdditions = Array.isArray(lineRec.adjustments)
+          ? lineRec.adjustments.filter((a) => a?.type === "manual-addition")
           : [];
-        const extraAdvAdjustments = Array.isArray(l.adjustments)
-          ? l.adjustments.filter((a) => a?.type === "extra-advance")
+        const extraAdvAdjustments = Array.isArray(lineRec.adjustments)
+          ? lineRec.adjustments.filter((a) => a?.type === "extra-advance")
           : [];
 
-        const rate = Number(l.rate || 0);
+        const rate = Number(lineRec.rate || 0);
         const minutes = shiftRows
           .filter((r) => !r.excluded)
           .reduce((m, r) => m + Number(r.minutesUsed || 0), 0);
@@ -785,9 +769,9 @@ export default function RunPayroll({
 
         return {
           id: lineId,
-          staffUid: l.staffUid || null,
-          staffEmail: l.staffEmail,
-          staffName: l.staffName,
+          staffUid: lineRec.staff_id || null,
+          staffEmail: lineRec.staff_email,
+          staffName: lineRec.staff_name,
           rate,
           minutes,
           gross,
@@ -840,103 +824,94 @@ export default function RunPayroll({
 
   /** ─── save edits to run ─────────────────────────────────────────────────── */
   const saveEditsToRun = async (id = runId, { withLoader = true } = {}) => {
-    if (!id) {
-      showSnackbar("No payroll run selected.", "warning");
-      return;
-    }
-    if (withLoader) startBusy("Saving payroll changes...");
-
     try {
-      const batch = writeBatch(db);
-      batch.update(doc(db, "payrollRuns", id), {
-        payDate: tsFromYMD(payDate, false),
-        expenseMode: expenseMode,
-        totals: {
-          staffCount: preview.length,
-          minutes: preview.reduce((s, l) => s + Number(l.minutes || 0), 0),
-          gross: Number(preview.reduce((s, l) => s + Number(l.gross || 0), 0).toFixed(2)),
-          advances: Number(preview.reduce((s, l) => s + Number(l.advances || 0), 0).toFixed(2)),
-          shortages: Number(preview.reduce((s, l) => s + Number(l.shortages || 0), 0).toFixed(2)),
-          otherDeductions: Number(preview.reduce((s, l) => s + Number(l.otherDeductions || 0), 0).toFixed(2)),
-          additions: Number(preview.reduce((s, l) => s + Number(l.totalAdditions || 0), 0).toFixed(2)),
-          net: Number(preview.reduce((s, l) => s + Number(l.net || 0), 0).toFixed(2)),
-        },
-        updatedAt: serverTimestamp(),
-        updatedBy: auth.currentUser?.uid || "admin",
-      });
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      const userId = currentUser?.id || "admin";
+
+      const { error: runErr } = await supabase
+        .from('payroll_runs')
+        .update({
+          pay_date: tsFromYMD(payDate, false),
+          expense_mode: expenseMode,
+          totals: {
+            staffCount: preview.length,
+            minutes: preview.reduce((s, l) => s + Number(l.minutes || 0), 0),
+            gross: Number(preview.reduce((s, l) => s + Number(l.gross || 0), 0).toFixed(2)),
+            advances: Number(preview.reduce((s, l) => s + Number(l.advances || 0), 0).toFixed(2)),
+            shortages: Number(preview.reduce((s, l) => s + Number(l.shortages || 0), 0).toFixed(2)),
+            otherDeductions: Number(preview.reduce((s, l) => s + Number(l.otherDeductions || 0), 0).toFixed(2)),
+            additions: Number(preview.reduce((s, l) => s + Number(l.totalAdditions || 0), 0).toFixed(2)),
+            net: Number(preview.reduce((s, l) => s + Number(l.net || 0), 0).toFixed(2)),
+          },
+          updated_at: new Date().toISOString(),
+          updated_by: userId,
+        })
+        .eq('id', id);
+
+      if (runErr) throw runErr;
 
       for (const line of preview) {
-        batch.set(doc(db, `payrollRuns/${id}/lines/${line.id}`), {
-          staffUid: line.staffUid || null,
-          staffEmail: line.staffEmail,
-          staffName: line.staffName,
-          minutes: line.minutes,
-          rate: line.rate,
-          gross: line.gross,
-          adjustments: [
-            ...(line.customDeductions || []).map((d, idx) => ({
-              id: d.id || `manual-ded-${idx}`,
-              type: "manual-deduction",
-              label: d.label,
-              amount: Number(d.amount || 0),
-            })),
-            ...(line.customAdditions || []).map((d, idx) => ({
-              id: d.id || `manual-add-${idx}`,
-              type: "manual-addition",
-              label: d.label,
-              amount: Number(d.amount || 0),
-            })),
-            ...(line.extraAdvances || []).map((d, idx) => ({
-              id: d.id || `extra-adv-${idx}`,
-              type: "extra-advance",
-              label: d.label,
-              amount: Number(d.amount || 0),
-              fromShiftId: d.fromShiftId || null,
-            })),
-          ],
-          source: { shiftIds: line.shiftRows.map((r) => r.id) },
-          isEdited: true,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-          updatedBy: auth.currentUser?.uid || user?.uid || "admin",
-        });
-      }
+        const { error: lineErr } = await supabase
+          .from('payroll_lines')
+          .upsert({
+            id: line.id.startsWith('email:') || line.id.startsWith('uid:') ? undefined : line.id,
+            run_id: id,
+            staff_id: line.staffUid || null,
+            staff_email: line.staffEmail,
+            staff_name: line.staffName,
+            minutes: line.minutes,
+            rate: line.rate,
+            gross: line.gross,
+            adjustments: [
+              ...(line.customDeductions || []).map((d, idx) => ({
+                id: d.id || `manual-ded-${idx}`,
+                type: "manual-deduction",
+                label: d.label,
+                amount: Number(d.amount || 0),
+              })),
+              ...(line.customAdditions || []).map((d, idx) => ({
+                id: d.id || `manual-add-${idx}`,
+                type: "manual-addition",
+                label: d.label,
+                amount: Number(d.amount || 0),
+              })),
+              ...(line.extraAdvances || []).map((d, idx) => ({
+                id: d.id || `extra-adv-${idx}`,
+                type: "extra-advance",
+                label: d.label,
+                amount: Number(d.amount || 0),
+                fromShiftId: d.fromShiftId || null,
+              })),
+            ],
+            source: { shiftIds: line.shiftRows.map((r) => r.id) },
+            is_edited: true,
+            updated_at: new Date().toISOString(),
+            updated_by: userId,
+          }, { onConflict: 'id' });
 
-      const overSnaps = await Promise.all(
-        preview.map((line) =>
-          getDocs(collection(db, "payrollRuns", id, "lines", line.id, "shifts"))
-        )
-      );
+        if (lineErr) throw lineErr;
 
-      preview.forEach((line, lineIdx) => {
-        overSnaps[lineIdx].forEach((o) => batch.delete(o.ref));
-        for (const r of line.shiftRows) {
-          if (r.excluded || r.overrideStart || r.overrideEnd || r.expenseDate || r.isOngoing) {
-            batch.set(
-              doc(db, "payrollRuns", id, "lines", line.id, "shifts", r.id),
-              {
-                shiftId: r.id,
-                originalStart: r.start,
-                originalEnd: r.end || null,
-                overrideStart: r.overrideStart
-                  ? r.overrideStart.seconds
-                    ? r.overrideStart
-                    : Timestamp.fromDate(new Date(r.overrideStart))
-                  : null,
-                overrideEnd: r.overrideEnd
-                  ? r.overrideEnd.seconds
-                    ? r.overrideEnd
-                    : Timestamp.fromDate(new Date(r.overrideEnd))
-                  : null,
-                excluded: !!r.excluded,
-                minutesUsed: r.minutesUsed,
-                expenseDate: r.expenseDate || null,
-              }
-            );
-          }
+        // Manage shift overrides
+        await supabase.from('payroll_line_shifts').delete().eq('line_id', line.id);
+        const overrideRows = line.shiftRows
+          .filter(r => r.excluded || r.overrideStart || r.overrideEnd || r.expenseDate || r.isOngoing)
+          .map(r => ({
+            line_id: line.id,
+            shift_id: r.id,
+            original_start: r.start,
+            original_end: r.end || null,
+            override_start: r.overrideStart || null,
+            override_end: r.overrideEnd || null,
+            excluded: !!r.excluded,
+            minutes_used: r.minutesUsed,
+            expense_date: r.expenseDate || null,
+          }));
+
+        if (overrideRows.length > 0) {
+          const { error: ovErr } = await supabase.from('payroll_line_shifts').insert(overrideRows);
+          if (ovErr) throw ovErr;
         }
-      });
-      await batch.commit();
+      }
 
       if (withLoader) {
         showSnackbar("Payroll changes were saved.", "success");
@@ -954,33 +929,44 @@ export default function RunPayroll({
     startBusy("Creating new payroll run doc...");
 
     try {
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      const userId = currentUser?.id || "admin";
+
       const displayId = await generateDisplayId("payrollRuns", "PAY");
       const run = {
-        displayId,
-        periodStart: tsFromYMD(periodStart, false),
-        periodEnd: tsFromYMD(periodEnd, true),
+        display_id: displayId,
+        period_start: periodStart,
+        period_end: periodEnd,
         status: "draft",
-        expenseMode: expenseMode || "per-staff",
-        payDate: tsFromYMD(payDate, false),
+        expense_mode: expenseMode || "per-staff",
+        pay_date: payDate,
         totals: {
           staffCount: preview.length,
           minutes: preview.reduce((s, l) => s + Number(l.minutes || 0), 0),
           gross: Number(preview.reduce((s, l) => s + Number(l.gross || 0), 0).toFixed(2)),
           advances: Number(preview.reduce((s, l) => s + Number(l.advances || 0), 0).toFixed(2)),
           shortages: Number(preview.reduce((s, l) => s + Number(l.shortages || 0), 0).toFixed(2)),
-          otherDeductions: Number(preview.reduce((s, l) => s + Number(l.otherDeductions || 0), 0).toFixed(2)),
+          other_deductions: Number(preview.reduce((s, l) => s + Number(l.otherDeductions || 0), 0).toFixed(2)),
           additions: Number(preview.reduce((s, l) => s + Number(l.totalAdditions || 0), 0).toFixed(2)),
           net: Number(preview.reduce((s, l) => s + Number(l.net || 0), 0).toFixed(2)),
         },
-        createdAt: serverTimestamp(),
-        createdBy: auth.currentUser?.uid || user?.uid || "admin",
+        created_at: new Date().toISOString(),
+        created_by: userId,
       };
-      const runRef = await addDoc(collection(db, "payrollRuns"), run);
+
+      const { data: newRun, error: insErr } = await supabase
+        .from('payroll_runs')
+        .insert(run)
+        .select()
+        .single();
+
+      if (insErr) throw insErr;
+
       updateBusy("Saving line overrides...");
-      await saveEditsToRun(runRef.id, { withLoader: false });
-      setRunId(runRef.id);
+      await saveEditsToRun(newRun.id, { withLoader: false });
+      setRunId(newRun.id);
       setStatus("draft");
-      return runRef.id;
+      return newRun.id;
     } catch (err) {
       console.error(err);
       showSnackbar("Failed to create payroll run.", "error");
@@ -1019,86 +1005,77 @@ export default function RunPayroll({
       await saveEditsToRun(id, { withLoader: false });
 
       updateBusy("Fetching run data...");
-      const runRef = doc(db, "payrollRuns", id);
-      const runDoc = await getDoc(runRef);
-      const runData = runDoc.data() || {};
+      const { data: runData, error: runErr } = await supabase
+        .from('payroll_runs')
+        .select('*')
+        .eq('id', id)
+        .single();
+      if (runErr || !runData) throw runErr || new Error("Run not found");
 
       updateBusy("Loading run lines...");
-      const linesSnap = await getDocs(collection(runRef, "lines"));
-
-      const txBatch = writeBatch(db);
+      const { data: lines, error: linesErr } = await supabase
+        .from('payroll_lines')
+        .select('*')
+        .eq('run_id', id);
+      if (linesErr) throw linesErr;
 
       updateBusy("Voiding existing payroll transactions...");
-      const existingTx = await getDocs(
-        query(
-          collection(db, "transactions"),
-          where("payrollRunId", "==", id),
-          where("voided", "==", false)
-        )
-      );
-      existingTx.docs.forEach((t) => txBatch.update(t.ref, { voided: true }));
+      await supabase
+        .from('expenses')
+        .update({ voided: true })
+        .eq('payroll_run_id', id)
+        .eq('voided', false);
 
       updateBusy("Cleaning up old paystubs...");
-      const oldStubs = await getDocs(collection(runRef, "paystubs"));
-      oldStubs.docs.forEach((s) => txBatch.delete(s.ref));
+      await supabase
+        .from('payroll_stubs')
+        .delete()
+        .eq('run_id', id);
 
       const lineIdByUid = new Map();
       const lineIdByEmail = new Map();
-      linesSnap.docs.forEach((ld) => {
-        const l = ld.data() || {};
-        if (l.staffUid) lineIdByUid.set(l.staffUid, ld.id);
-        if (l.staffEmail) lineIdByEmail.set(l.staffEmail, ld.id);
+      lines.forEach((l) => {
+        if (l.staff_id) lineIdByUid.set(l.staff_id, l.id);
+        if (l.staff_email) lineIdByEmail.set(l.staff_email, l.id);
       });
 
       const extraDeductionsByLineId = new Map();
       const materializedLines = [];
-      const pendingTransactions = [];
 
-      const periodStartTS = runData.periodStart;
-      const periodEndTS = runData.periodEnd;
+      const periodStartTS = runData.period_start;
+      const periodEndTS = runData.period_end;
 
-      const runPayDateTS =
-        runData.payDate || tsFromYMD(payDate, false) || Timestamp.now();
-      const runPayDate = runPayDateTS.seconds
-        ? new Date(runPayDateTS.seconds * 1000)
-        : new Date();
+      const runPayDate = runData.pay_date || payDate || new Date().toISOString();
 
 
       updateBusy("Expanding each line to shift-level data...");
 
-      const linesFetchData = await Promise.all(linesSnap.docs.map(async (ld) => {
-        const l = ld.data() || {};
-        const lineId = ld.id;
+      updateBusy("Expanding each line to shift-level data...");
+
+      for (const l of lines) {
+        const lineId = l.id;
         const shiftIds = l.source?.shiftIds || [];
 
-        const [overSnap, ...shiftAndAdvResults] = await Promise.all([
-          getDocs(collection(runRef, `lines/${lineId}/shifts`)),
-          ...shiftIds.map((sid) => getDoc(doc(db, "shifts", sid))),
-          ...shiftIds.map((sid) =>
-            getDocs(query(
-              collection(db, "transactions"),
-              where("expenseType", "==", "Salary Advance"),
-              where("shiftId", "==", sid)
-            ))
-          ),
+        const [{ data: overData }, { data: shiftsData }, { data: advData }] = await Promise.all([
+          supabase.from('payroll_line_shifts').select('*').eq('line_id', lineId),
+          supabase.from('shifts').select('*').in('id', shiftIds),
+          supabase.from('expenses').select('*').eq('expense_type', 'Salary Advance').in('shift_id', shiftIds)
         ]);
 
-        return {
-          ld,
-          l,
-          lineId,
-          shiftIds,
-          overSnap,
-          shiftDocs: shiftAndAdvResults.slice(0, shiftIds.length),
-          advanceSnaps: shiftAndAdvResults.slice(shiftIds.length),
-        };
-      }));
-
-      for (const { ld, l, lineId, shiftIds, overSnap, shiftDocs, advanceSnaps } of linesFetchData) {
         const overrides = new Map();
-        overSnap.forEach((od) => {
-          const v = od.data() || {};
-          overrides.set(v.shiftId, v);
+        (overData || []).forEach((ov) => {
+          overrides.set(ov.shift_id, ov);
+        });
+
+        const shiftsById = new Map();
+        (shiftsData || []).forEach(s => shiftsById.set(s.id, s));
+
+        const advByShift = new Map();
+        (advData || []).forEach(tx => {
+          if (tx.voided) return;
+          const list = advByShift.get(tx.shift_id) || [];
+          list.push(tx);
+          advByShift.set(tx.shift_id, list);
         });
 
         const shiftDetails = [];
@@ -1106,69 +1083,53 @@ export default function RunPayroll({
         let totalAdvancesLine = 0;
         let totalShortagesLine = 0;
 
-        for (let _si = 0; _si < shiftIds.length; _si++) {
-          const sid = shiftIds[_si];
-          const sDoc = shiftDocs[_si];
-          if (!sDoc.exists()) continue;
-          const s = sDoc.data() || {};
+        for (const sid of shiftIds) {
+          const s = shiftsById.get(sid);
+          if (!s) continue;
 
           const ov = overrides.get(sid) || {};
           if (ov.excluded) continue;
 
-          const start = ov.overrideStart || s.startTime;
-          const end = ov.overrideEnd || s.endTime;
+          const start = ov.override_start || s.start_time;
+          const end = ov.override_end || s.end_time;
 
-          const minutesUsed =
-            ov.minutesUsed != null
-              ? ov.minutesUsed
-              : minutesBetweenTS(start, end);
-
-          const shiftLabel = `${fmtDate(s.startTime)} (${inferShiftName(s.startTime, s.title, s.label)})`;
-
-          const expenseDateTS =
-            ov.expenseDate || s.startTime || runData.payDate || Timestamp.fromDate(runPayDate);
+          const minutesUsed = ov.minutes_used != null ? ov.minutes_used : minutesBetween(start, end);
+          const shiftLabel = `${fmtDate(s.start_time)} (${inferShiftName(s.start_time, s.title, s.label)})`;
+          const expenseDate = ov.expense_date || s.start_time || runData.pay_date || new Date().toISOString();
 
           const shortageAmount = shortageForShift(s);
-          if (shortageAmount > 0) {
-            totalShortagesLine += shortageAmount;
-          }
+          if (shortageAmount > 0) totalShortagesLine += shortageAmount;
 
-          const advSnap = advanceSnaps[_si];
+          const txs = advByShift.get(sid) || [];
           let advancesForThisShiftForThisStaff = 0;
 
-          for (const advDoc of advSnap.docs) {
-            const tx = advDoc.data() || {};
-            if (tx.voided) continue;
+          txs.forEach((tx) => {
             const amt = Number(tx.total || 0);
-            const intendedEmail = tx.expenseStaffEmail || tx.staffEmail || null;
-            const intendedUid = tx.expenseStaffId || tx.staffUid || null;
+            const intendedEmail = tx.expense_staff_email || tx.staff_email || null;
+            const intendedUid = tx.expense_staff_id || tx.staff_id || null;
 
             const isForThisLine =
-              (!!l.staffUid && intendedUid === l.staffUid) ||
-              (!!l.staffEmail && intendedEmail === l.staffEmail) ||
-              (!intendedEmail && !intendedUid && s.staffEmail === l.staffEmail);
+              (!!l.staff_id && intendedUid === l.staff_id) ||
+              (!!l.staff_email && intendedEmail === l.staff_email) ||
+              (!intendedEmail && !intendedUid && s.staff_email === l.staff_email);
 
             if (isForThisLine) {
               advancesForThisShiftForThisStaff += amt;
             } else {
-              const targetLineId =
-                (intendedUid && lineIdByUid.get(intendedUid)) ||
-                (intendedEmail && lineIdByEmail.get(intendedEmail)) ||
-                null;
+              const targetLineId = (intendedUid && lineIdByUid.get(intendedUid)) || (intendedEmail && lineIdByEmail.get(intendedEmail)) || null;
               const key = targetLineId || lineId;
               const list = extraDeductionsByLineId.get(key) || [];
               list.push({
                 id: sid,
                 label: `Salary Advance on ${shiftLabel}`,
                 amount: amt,
-                expenseDate: expenseDateTS,
+                expenseDate,
               });
               extraDeductionsByLineId.set(key, list);
             }
-          }
+          });
 
           totalAdvancesLine += advancesForThisShiftForThisStaff;
-
           shiftDetails.push({
             id: sid,
             label: shiftLabel,
@@ -1176,33 +1137,26 @@ export default function RunPayroll({
             minutes: minutesUsed,
             startTime: start,
             endTime: end,
-            expenseDate: expenseDateTS,
+            expenseDate,
             advances: advancesForThisShiftForThisStaff,
             shortages: shortageAmount,
           });
 
           totalMinutesLine += minutesUsed;
-
-          txBatch.update(doc(db, "shifts", sid), { payrollRunId: id });
+          await supabase.from('shifts').update({ payroll_run_id: id }).eq('id', sid);
         }
 
         const grossPay = calcGross(totalMinutesLine, l.rate);
-
-        const manualAdjustments = Array.isArray(l.adjustments)
-          ? l.adjustments.filter((a) => a?.type === "manual-deduction")
-          : [];
+        const manualAdjustments = Array.isArray(l.adjustments) ? l.adjustments.filter((a) => a?.type === "manual-deduction") : [];
         const manualTotal = manualAdjustments.reduce((s, a) => s + Number(a.amount || 0), 0);
-
-        const manualAdditions = Array.isArray(l.adjustments)
-          ? l.adjustments.filter((a) => a?.type === "manual-addition")
-          : [];
+        const manualAdditions = Array.isArray(l.adjustments) ? l.adjustments.filter((a) => a?.type === "manual-addition") : [];
         const additionTotal = manualAdditions.reduce((s, a) => s + Number(a.amount || 0), 0);
 
         materializedLines.push({
           lineId,
-          staffUid: l.staffUid,
-          staffEmail: l.staffEmail,
-          staffName: l.staffName,
+          staffUid: l.staff_id,
+          staffEmail: l.staff_email,
+          staffName: l.staff_name,
           rate: l.rate,
           shifts: shiftDetails,
           totalMinutes: totalMinutesLine,
@@ -1219,24 +1173,24 @@ export default function RunPayroll({
 
       updateBusy("Merging cross-staff salary advances...");
       updateBusy("Fetching admin manual salary entries...");
-      const startTS = tsFromYMD(runData.periodStart ? toYMD_PHT_fromTS(runData.periodStart) : periodStart, false);
-      const endTS = tsFromYMD(runData.periodEnd ? toYMD_PHT_fromTS(runData.periodEnd) : periodEnd, true);
+      const startYMD = runData.period_start;
+      const endYMD = runData.period_end;
 
-      const adminSnap = await getDocs(query(
-        collection(db, "transactions"),
-        where("timestamp", ">=", startTS),
-        where("timestamp", "<=", endTS),
-        where("item", "==", "Expenses")
-      ));
+      const { data: adminData, error: adminErr } = await supabase
+        .from('expenses')
+        .select('*')
+        .gte('timestamp', startYMD)
+        .lte('timestamp', endYMD)
+        .eq('item', 'Expenses')
+        .eq('expense_type', 'Salary Advance')
+        .is('shift_id', null)
+        .eq('voided', false);
 
-      for (const docSnap of adminSnap.docs) {
-        const tx = { id: docSnap.id, ...docSnap.data() };
-        if (tx.voided || tx.isDeleted) continue;
-        if (tx.expenseType !== "Salary Advance") continue;
-        if (tx.shiftId) continue;
+      if (adminErr) throw adminErr;
 
-        const email = tx.expenseStaffEmail || tx.staffEmail;
-        const uid = tx.expenseStaffId || tx.staffUid;
+      (adminData || []).forEach((tx) => {
+        const email = tx.expense_staff_email || tx.staff_email;
+        const uid = tx.expense_staff_id || tx.staff_id;
         const amt = Number(tx.total || 0);
 
         const targetLine = materializedLines.find((l) =>
@@ -1255,7 +1209,7 @@ export default function RunPayroll({
             });
           }
         }
-      }
+      });
 
       for (const [targetLineId, extraList] of extraDeductionsByLineId.entries()) {
         const target = materializedLines.find((m) => m.lineId === targetLineId);
@@ -1268,7 +1222,13 @@ export default function RunPayroll({
       updateBusy("Writing paystubs and posting salary expenses...");
       let runTotals = { staffCount: 0, minutes: 0, gross: 0, additions: 0, advances: 0, shortages: 0, otherDeductions: 0, net: 0 };
 
-      const expenseModeToUse = runData.expenseMode || "per-staff";
+      const expenseModeToUse = runData.expense_mode || "per-staff";
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      const userId = currentUser?.id || "admin";
+      const userEmail = currentUser?.email || "admin";
+
+      const allPaystubs = [];
+      const pendingExpenses = [];
 
       for (const m of materializedLines) {
         const deductionItems = [];
@@ -1307,46 +1267,45 @@ export default function RunPayroll({
 
         const netPay = Number((m.grossPay + m.additionTotal - totalDeductions).toFixed(2));
 
-        const paystubData = {
-          staffUid: m.staffUid,
-          staffEmail: m.staffEmail,
-          staffName: m.staffName,
-          periodStart: periodStartTS,
-          periodEnd: periodEndTS,
-          payDate: runPayDateTS,
+        allPaystubs.push({
+          run_id: id,
+          staff_id: m.staffUid,
+          staff_email: m.staffEmail,
+          staff_name: m.staffName,
+          period_start: periodStartTS,
+          period_end: periodEndTS,
+          pay_date: runPayDate,
           shifts: shiftsForStub,
-          deductionItems,
-          additionItems,
-          totalHours: toHours(m.totalMinutes),
-          grossPay: m.grossPay,
-          totalAdditions: m.additionTotal,
-          totalDeductions: Number(totalDeductions.toFixed(2)),
-          netPay,
-          createdAt: serverTimestamp(),
-          createdBy: auth.currentUser?.uid || "admin",
-        };
-
-        txBatch.set(doc(collection(runRef, "paystubs")), paystubData);
+          deduction_items: deductionItems,
+          addition_items: additionItems,
+          total_hours: toHours(m.totalMinutes),
+          gross_pay: m.grossPay,
+          total_additions: m.additionTotal,
+          total_deductions: Number(totalDeductions.toFixed(2)),
+          net_pay: netPay,
+          created_at: new Date().toISOString(),
+          created_by: userId,
+        });
 
         if (m.additionTotal > 0 && expenseModeToUse === "per-shift") {
-          pendingTransactions.push({
+          pendingExpenses.push({
             item: "Expenses",
-            expenseType: "Salary",
-            expenseStaffId: m.staffUid,
-            expenseStaffName: m.staffName,
-            expenseStaffEmail: m.staffEmail,
+            expense_type: "Salary",
+            expense_staff_id: m.staffUid,
+            expense_staff_name: m.staffName,
+            expense_staff_email: m.staffEmail,
             quantity: 1,
             price: m.additionTotal,
             total: m.additionTotal,
-            notes: `Payroll Additions/Bonuses [${toYMD_PHT_fromTS(periodStartTS)} — ${toYMD_PHT_fromTS(periodEndTS)}]`,
-            shiftId: null,
+            notes: `Payroll Additions/Bonuses [${periodStartTS} — ${periodEndTS}]`,
+            shift_id: null,
             source: `payroll_run:${id}`,
-            payrollRunId: id,
+            payroll_run_id: id,
             voided: false,
-            timestamp: runPayDateTS,
-            staffEmail: auth.currentUser?.email || "admin",
-            isDeleted: false,
-            isEdited: false,
+            timestamp: runPayDate,
+            staff_email: userEmail,
+            is_deleted: false,
+            is_edited: false,
           });
         }
 
@@ -1359,24 +1318,24 @@ export default function RunPayroll({
             const shiftNet = Number((shiftGross - shiftDeductions).toFixed(2));
             if (shiftGross === 0 && shiftDeductions === 0) return;
 
-            pendingTransactions.push({
+            pendingExpenses.push({
               item: "Expenses",
-              expenseType: "Salary",
-              expenseStaffId: m.staffUid,
-              expenseStaffName: m.staffName,
-              expenseStaffEmail: m.staffEmail,
+              expense_type: "Salary",
+              expense_staff_id: m.staffUid,
+              expense_staff_name: m.staffName,
+              expense_staff_email: m.staffEmail,
               quantity: 1,
               price: shiftNet,
               total: shiftNet,
-              notes: `Payroll [${toYMD_PHT_fromTS(periodStartTS)} — ${toYMD_PHT_fromTS(periodEndTS)}] | Shift: ${s.label} | Gross: ${peso(shiftGross)} | Net: ${peso(shiftNet)}`,
-              shiftId: null,
+              notes: `Payroll [${periodStartTS} — ${periodEndTS}] | Shift: ${s.label} | Gross: ${peso(shiftGross)} | Net: ${peso(shiftNet)}`,
+              shift_id: null,
               source: `payroll_run:${id}`,
-              payrollRunId: id,
+              payroll_run_id: id,
               voided: false,
-              timestamp: s.expenseDate || runPayDateTS,
-              staffEmail: auth.currentUser?.email || "admin",
-              isDeleted: false,
-              isEdited: false,
+              timestamp: s.expenseDate || runPayDate,
+              staff_email: userEmail,
+              is_deleted: false,
+              is_edited: false,
             });
           });
 
@@ -1384,46 +1343,46 @@ export default function RunPayroll({
           if (nonShiftDeds.length) {
             const extraTotal = nonShiftDeds.reduce((s, d) => s + Number(d.amount || 0), 0);
             if (extraTotal > 0) {
-              pendingTransactions.push({
+              pendingExpenses.push({
                 item: "Expenses",
-                expenseType: "Salary",
-                expenseStaffId: m.staffUid,
-                expenseStaffName: m.staffName,
-                expenseStaffEmail: m.staffEmail,
+                expense_type: "Salary",
+                expense_staff_id: m.staffUid,
+                expense_staff_name: m.staffName,
+                expense_staff_email: m.staffEmail,
                 quantity: 1,
                 price: extraTotal * -1,
                 total: extraTotal * -1,
-                notes: `Payroll manual / cross-staff deductions [${toYMD_PHT_fromTS(periodStartTS)} — ${toYMD_PHT_fromTS(periodEndTS)}]`,
-                shiftId: null,
+                notes: `Payroll manual / cross-staff deductions [${periodStartTS} — ${periodEndTS}]`,
+                shift_id: null,
                 source: `payroll_run:${id}`,
-                payrollRunId: id,
+                payroll_run_id: id,
                 voided: false,
-                timestamp: runPayDateTS,
-                staffEmail: auth.currentUser?.email || "admin",
-                isDeleted: false,
-                isEdited: false,
+                timestamp: runPayDate,
+                staff_email: userEmail,
+                is_deleted: false,
+                is_edited: false,
               });
             }
           }
         } else {
-          pendingTransactions.push({
+          pendingExpenses.push({
             item: "Expenses",
-            expenseType: "Salary",
-            expenseStaffId: m.staffUid,
-            expenseStaffName: m.staffName,
-            expenseStaffEmail: m.staffEmail,
+            expense_type: "Salary",
+            expense_staff_id: m.staffUid,
+            expense_staff_name: m.staffName,
+            expense_staff_email: m.staffEmail,
             quantity: 1,
             price: netPay,
             total: netPay,
-            notes: `Payroll [${toYMD_PHT_fromTS(periodStartTS)} — ${toYMD_PHT_fromTS(periodEndTS)}] | Gross: ${peso(m.grossPay)} | Adds: ${peso(m.additionTotal)} | Net: ${peso(netPay)}`,
-            shiftId: null,
+            notes: `Payroll [${periodStartTS} — ${periodEndTS}] | Gross: ${peso(m.grossPay)} | Adds: ${peso(m.additionTotal)} | Net: ${peso(netPay)}`,
+            shift_id: null,
             source: `payroll_run:${id}`,
-            payrollRunId: id,
+            payroll_run_id: id,
             voided: false,
-            timestamp: runPayDateTS,
-            staffEmail: auth.currentUser?.email || "admin",
-            isDeleted: false,
-            isEdited: false,
+            timestamp: runPayDate,
+            staff_email: userEmail,
+            is_deleted: false,
+            is_edited: false,
           });
         }
 
@@ -1439,25 +1398,32 @@ export default function RunPayroll({
         };
       }
 
-      if (pendingTransactions.length > 0) {
-        updateBusy(`Generating IDs for ${pendingTransactions.length} expenses...`);
-        const expIds = await generateBatchIds("expenses", "EXP", pendingTransactions.length);
-        pendingTransactions.forEach((tx, idx) => {
-          const newRef = doc(collection(db, "transactions"));
-          tx.displayId = expIds[idx];
-          txBatch.set(newRef, tx);
-        });
+      if (allPaystubs.length > 0) {
+        const { error: stubErr } = await supabase.from('payroll_stubs').insert(allPaystubs);
+        if (stubErr) throw stubErr;
+      }
+
+      if (pendingExpenses.length > 0) {
+        updateBusy(`Generating IDs for ${pendingExpenses.length} expenses...`);
+        const expIds = await generateBatchIds("expenses", "EXP", pendingExpenses.length);
+        const expensesToInsert = pendingExpenses.map((tx, idx) => ({ ...tx, display_id: expIds[idx] }));
+        const { error: expErr } = await supabase.from('expenses').insert(expensesToInsert);
+        if (expErr) throw expErr;
       }
 
       updateBusy("Updating run status...");
-      txBatch.update(runRef, {
-        status: "posted",
-        updatedAt: serverTimestamp(),
-        totals: runTotals,
-        expenseMode: expenseModeToUse,
-      });
+      const { error: finalRunErr } = await supabase
+        .from('payroll_runs')
+        .update({
+          status: "posted",
+          updated_at: new Date().toISOString(),
+          totals: runTotals,
+          expense_mode: expenseModeToUse,
+          updated_by: userId,
+        })
+        .eq('id', id);
 
-      await txBatch.commit();
+      if (finalRunErr) throw finalRunErr;
 
       setStatus("posted");
       setStep(1);
@@ -1689,7 +1655,7 @@ export default function RunPayroll({
 
                                       const expenseDateYMD = isPerStaffMode
                                         ? payDate
-                                        : r.expenseDate?.seconds
+                                        : r.expenseDate
                                           ? toYMD_PHT_fromTS(r.expenseDate)
                                           : payDate || todayYMD_PHT();
 

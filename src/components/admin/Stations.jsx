@@ -9,14 +9,8 @@ import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import VpnKeyIcon from '@mui/icons-material/VpnKey';
-import {
-  collection, addDoc, updateDoc, deleteDoc, doc,
-  onSnapshot, serverTimestamp,
-} from 'firebase/firestore';
-import { db, firebaseConfig } from '../../firebase';
-import { initializeApp, deleteApp } from 'firebase/app';
-import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
 import DownloadIcon from '@mui/icons-material/Download';
+import { supabase } from '../../supabase';
 import PageHeader from '../common/PageHeader';
 import ConfirmationReasonDialog from '../ConfirmationReasonDialog';
 
@@ -39,23 +33,26 @@ export default function Stations({ showSnackbar }) {
   const [tokenDialog, setTokenDialog] = useState({ open: false, stationId: null, stationName: '', agentEmail: '', agentPassword: '', loading: false });
 
   useEffect(() => {
-    const onErr = (label) => (err) => console.error(`[Stations] ${label} snapshot error:`, err);
-    const u1 = onSnapshot(
-      collection(db, 'stations'),
-      snap => setStations(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.name.localeCompare(b.name))),
-      onErr('stations')
-    );
-    const u2 = onSnapshot(
-      collection(db, 'zones'),
-      snap => setZones(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))),
-      onErr('zones')
-    );
-    const u3 = onSnapshot(
-      collection(db, 'rates'),
-      snap => setRates(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => r.isActive !== false).sort((a, b) => a.name.localeCompare(b.name))),
-      onErr('rates')
-    );
-    return () => { u1(); u2(); u3(); };
+    const fetchAll = async () => {
+      const [{ data: stationsData }, { data: zonesData }, { data: ratesData }] = await Promise.all([
+        supabase.from('stations').select('*').order('name'),
+        supabase.from('zones').select('*').order('sort_order'),
+        supabase.from('rates').select('*').order('name'),
+      ]);
+      if (stationsData) setStations(stationsData);
+      if (zonesData) setZones(zonesData);
+      if (ratesData) setRates(ratesData.filter(r => r.is_active !== false));
+    };
+
+    fetchAll();
+
+    const channel = supabase.channel('stations-admin')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'stations' }, fetchAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'zones' }, fetchAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rates' }, fetchAll)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
   const handleOpen = (station = null) => {
@@ -63,10 +60,10 @@ export default function Stations({ showSnackbar }) {
     setForm(station ? {
       name: station.name || '',
       label: station.label || '',
-      zoneId: station.zoneId || '',
-      rateId: station.rateId || '',
-      macAddress: station.macAddress || '',
-      ipAddress: station.ipAddress || '',
+      zoneId: station.zone_id || '',
+      rateId: station.rate_id || '',
+      macAddress: station.mac_address || '',
+      ipAddress: station.ip_address || '',
       specs: { ...BLANK_SPECS, ...(station.specs || {}) },
     } : BLANK_FORM);
     setOpen(true);
@@ -79,28 +76,31 @@ export default function Stations({ showSnackbar }) {
       const data = {
         name: form.name.trim(),
         label: form.label.trim(),
-        zoneId: form.zoneId || null,
-        rateId: form.rateId || null,
-        macAddress: form.macAddress.trim(),
-        ipAddress: form.ipAddress.trim(),
+        zone_id: form.zoneId || null,
+        rate_id: form.rateId || null,
+        mac_address: form.macAddress.trim(),
+        ip_address: form.ipAddress.trim(),
         specs: form.specs,
-        updatedAt: serverTimestamp(),
+        updated_at: new Date().toISOString(),
       };
       if (editing) {
-        await updateDoc(doc(db, 'stations', editing.id), data);
+        const { error } = await supabase.from('stations').update(data).eq('id', editing.id);
+        if (error) throw error;
         showSnackbar('Station updated');
       } else {
-        await addDoc(collection(db, 'stations'), {
+        const { error } = await supabase.from('stations').insert([{
+          id: crypto.randomUUID(),
           ...data,
           status: 'offline',
-          currentSessionId: null,
-          isOnline: false,
-          isLocked: true,
-          agentVersion: null,
-          agentLastPing: null,
-          tamperAlert: false,
-          createdAt: serverTimestamp(),
-        });
+          current_session_id: null,
+          is_online: false,
+          is_locked: true,
+          agent_version: null,
+          last_ping: null,
+          tamper_alert: false,
+          created_at: new Date().toISOString(),
+        }]);
+        if (error) throw error;
         showSnackbar('Station created');
       }
       setOpen(false);
@@ -120,7 +120,8 @@ export default function Stations({ showSnackbar }) {
       confirmColor: 'error',
       onConfirm: async () => {
         try {
-          await deleteDoc(doc(db, 'stations', station.id));
+          const { error } = await supabase.from('stations').delete().eq('id', station.id);
+          if (error) throw error;
           showSnackbar('Station deleted');
         } catch (e) {
           showSnackbar(e.message, 'error');
@@ -132,40 +133,46 @@ export default function Stations({ showSnackbar }) {
 
   const handleGenerateToken = async (station) => {
     setTokenDialog({ open: true, stationId: station.id, stationName: station.name, agentEmail: '', agentPassword: '', loading: true });
-    let secondaryApp = null;
     try {
-      // Generate unique agent credentials (no Cloud Function needed)
       const uid = Array.from(crypto.getRandomValues(new Uint8Array(8))).map(b => b.toString(16).padStart(2, '0')).join('');
       const agentEmail = `agent-${uid}@kunek-agent.internal`;
       const agentPassword = Array.from(crypto.getRandomValues(new Uint8Array(24))).map(b => b.toString(16).padStart(2, '0')).join('');
 
-      // Use a secondary app instance so we don't sign out the current admin
-      secondaryApp = initializeApp(firebaseConfig, `provision-${Date.now()}`);
-      const secondaryAuth = getAuth(secondaryApp);
-      const credential = await createUserWithEmailAndPassword(secondaryAuth, agentEmail, agentPassword);
-
-      // Bind the agent's UID to the station doc
-      await updateDoc(doc(db, 'stations', station.id), {
-        agentUid: credential.user.uid,
-        agentEmail,
-        provisionedAt: serverTimestamp(),
+      // Create a secondary Supabase client so we don't disturb the admin session
+      const { createClient } = await import('@supabase/supabase-js');
+      const secondaryClient = createClient(
+        import.meta.env.VITE_SUPABASE_URL,
+        import.meta.env.VITE_SUPABASE_ANON_KEY
+      );
+      const { data: signUpData, error: signUpErr } = await secondaryClient.auth.signUp({
+        email: agentEmail,
+        password: agentPassword,
       });
+      if (signUpErr) throw signUpErr;
+      await secondaryClient.auth.signOut();
+
+      const agentUid = signUpData.user?.id;
+
+      // Bind the agent's UID to the station row
+      const { error: updateErr } = await supabase.from('stations').update({
+        agent_uid: agentUid,
+        agent_email: agentEmail,
+        provisioned_at: new Date().toISOString(),
+      }).eq('id', station.id);
+      if (updateErr) throw updateErr;
 
       setTokenDialog(p => ({ ...p, agentEmail, agentPassword, loading: false }));
     } catch (err) {
       setTokenDialog(p => ({ ...p, loading: false }));
       showSnackbar(`Failed to provision: ${err.message}`, 'error');
-    } finally {
-      if (secondaryApp) deleteApp(secondaryApp).catch(() => { });
     }
   };
 
   const handleDownloadConfig = () => {
     const config = {
       stationId: tokenDialog.stationId,
-      firestoreProjectId: firebaseConfig.projectId,
-      firebaseApiKey: firebaseConfig.apiKey,
-      firebaseAuthDomain: firebaseConfig.authDomain,
+      supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
+      supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
       agentEmail: tokenDialog.agentEmail,
       agentPassword: tokenDialog.agentPassword,
       videoBackgroundPath: 'C:\\ProgramData\\KunekAgent\\bg.mp4',
@@ -183,10 +190,10 @@ export default function Stations({ showSnackbar }) {
 
   const zoneName = (id) => zones.find(z => z.id === id)?.name || '—';
   const rateName = (station) => {
-    if (station.rateId) return rates.find(r => r.id === station.rateId)?.name || '—';
-    if (station.zoneId) {
-      const zone = zones.find(z => z.id === station.zoneId);
-      if (zone?.rateId) return `${rates.find(r => r.id === zone.rateId)?.name || '—'} (Zone)`;
+    if (station.rate_id) return rates.find(r => r.id === station.rate_id)?.name || '—';
+    if (station.zone_id) {
+      const zone = zones.find(z => z.id === station.zone_id);
+      if (zone?.rate_id) return `${rates.find(r => r.id === zone.rate_id)?.name || '—'} (Zone)`;
     }
     return '—';
   };
@@ -232,7 +239,7 @@ export default function Stations({ showSnackbar }) {
                 <TableCell>
                   <Typography variant="body2" color="text.secondary">{s.label || '—'}</Typography>
                 </TableCell>
-                <TableCell>{zoneName(s.zoneId)}</TableCell>
+                <TableCell>{zoneName(s.zone_id)}</TableCell>
                 <TableCell>{rateName(s)}</TableCell>
                 <TableCell>
                   <Chip
@@ -242,8 +249,8 @@ export default function Stations({ showSnackbar }) {
                   />
                 </TableCell>
                 <TableCell>
-                  {s.isOnline
-                    ? <Chip label={`Online · v${s.agentVersion || '?'}`} size="small" color="success" variant="outlined" />
+                  {s.is_online
+                    ? <Chip label={`Online · v${s.agent_version || '?'}`} size="small" color="success" variant="outlined" />
                     : <Chip label="Offline" size="small" variant="outlined" />
                   }
                 </TableCell>
@@ -285,9 +292,7 @@ export default function Stations({ showSnackbar }) {
                 label="Station ID / Name"
                 value={form.name}
                 onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
-                fullWidth
-                required
-                autoFocus
+                fullWidth required autoFocus
                 placeholder="e.g. PC-01"
                 helperText="Short identifier, must be unique"
               />
@@ -304,22 +309,14 @@ export default function Stations({ showSnackbar }) {
             <Stack direction="row" gap={2}>
               <FormControl fullWidth size="small">
                 <InputLabel>Zone</InputLabel>
-                <Select
-                  value={form.zoneId}
-                  label="Zone"
-                  onChange={e => setForm(p => ({ ...p, zoneId: e.target.value }))}
-                >
+                <Select value={form.zoneId} label="Zone" onChange={e => setForm(p => ({ ...p, zoneId: e.target.value }))}>
                   <MenuItem value="">No zone</MenuItem>
                   {zones.map(z => <MenuItem key={z.id} value={z.id}>{z.name}</MenuItem>)}
                 </Select>
               </FormControl>
               <FormControl fullWidth size="small">
                 <InputLabel>Default Rate</InputLabel>
-                <Select
-                  value={form.rateId}
-                  label="Default Rate"
-                  onChange={e => setForm(p => ({ ...p, rateId: e.target.value }))}
-                >
+                <Select value={form.rateId} label="Default Rate" onChange={e => setForm(p => ({ ...p, rateId: e.target.value }))}>
                   <MenuItem value="">None</MenuItem>
                   {rates.map(r => <MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>)}
                 </Select>
@@ -327,60 +324,20 @@ export default function Stations({ showSnackbar }) {
             </Stack>
 
             <Stack direction="row" gap={2}>
-              <TextField
-                label="MAC Address"
-                value={form.macAddress}
-                onChange={e => setForm(p => ({ ...p, macAddress: e.target.value }))}
-                fullWidth
-                placeholder="AA:BB:CC:DD:EE:FF"
-              />
-              <TextField
-                label="IP Address"
-                value={form.ipAddress}
-                onChange={e => setForm(p => ({ ...p, ipAddress: e.target.value }))}
-                fullWidth
-                placeholder="192.168.1.10"
-              />
+              <TextField label="MAC Address" value={form.macAddress} onChange={e => setForm(p => ({ ...p, macAddress: e.target.value }))} fullWidth placeholder="AA:BB:CC:DD:EE:FF" />
+              <TextField label="IP Address" value={form.ipAddress} onChange={e => setForm(p => ({ ...p, ipAddress: e.target.value }))} fullWidth placeholder="192.168.1.10" />
             </Stack>
 
             <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 1 }}>
               Hardware Specs (optional)
             </Typography>
             <Stack direction="row" gap={2}>
-              <TextField
-                label="CPU"
-                value={form.specs.cpu}
-                onChange={e => setForm(p => ({ ...p, specs: { ...p.specs, cpu: e.target.value } }))}
-                fullWidth
-                size="small"
-                placeholder="e.g. i7-12700"
-              />
-              <TextField
-                label="GPU"
-                value={form.specs.gpu}
-                onChange={e => setForm(p => ({ ...p, specs: { ...p.specs, gpu: e.target.value } }))}
-                fullWidth
-                size="small"
-                placeholder="e.g. RTX 3060"
-              />
+              <TextField label="CPU" value={form.specs.cpu} onChange={e => setForm(p => ({ ...p, specs: { ...p.specs, cpu: e.target.value } }))} fullWidth size="small" placeholder="e.g. i7-12700" />
+              <TextField label="GPU" value={form.specs.gpu} onChange={e => setForm(p => ({ ...p, specs: { ...p.specs, gpu: e.target.value } }))} fullWidth size="small" placeholder="e.g. RTX 3060" />
             </Stack>
             <Stack direction="row" gap={2}>
-              <TextField
-                label="RAM"
-                value={form.specs.ram}
-                onChange={e => setForm(p => ({ ...p, specs: { ...p.specs, ram: e.target.value } }))}
-                fullWidth
-                size="small"
-                placeholder="e.g. 16GB DDR5"
-              />
-              <TextField
-                label="Monitor"
-                value={form.specs.monitor}
-                onChange={e => setForm(p => ({ ...p, specs: { ...p.specs, monitor: e.target.value } }))}
-                fullWidth
-                size="small"
-                placeholder={'e.g. 27" 165Hz'}
-              />
+              <TextField label="RAM" value={form.specs.ram} onChange={e => setForm(p => ({ ...p, specs: { ...p.specs, ram: e.target.value } }))} fullWidth size="small" placeholder="e.g. 16GB DDR5" />
+              <TextField label="Monitor" value={form.specs.monitor} onChange={e => setForm(p => ({ ...p, specs: { ...p.specs, monitor: e.target.value } }))} fullWidth size="small" placeholder={'e.g. 27" 165Hz'} />
             </Stack>
           </Stack>
         </DialogContent>

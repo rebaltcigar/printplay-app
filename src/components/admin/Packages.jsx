@@ -8,11 +8,7 @@ import {
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
-import {
-  collection, addDoc, updateDoc, deleteDoc, doc,
-  onSnapshot, serverTimestamp,
-} from 'firebase/firestore';
-import { db } from '../../firebase';
+import { supabase } from '../../supabase';
 import PageHeader from '../common/PageHeader';
 import ConfirmationReasonDialog from '../ConfirmationReasonDialog';
 
@@ -31,18 +27,23 @@ export default function Packages({ showSnackbar }) {
   const [confirmDialog, setConfirmDialog] = useState({ open: false });
 
   useEffect(() => {
-    const onErr = (label) => (err) => console.error(`[Packages] ${label} snapshot error:`, err);
-    const u1 = onSnapshot(
-      collection(db, 'packages'),
-      snap => setPackages(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))),
-      onErr('packages')
-    );
-    const u2 = onSnapshot(
-      collection(db, 'rates'),
-      snap => setRates(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => r.isActive !== false).sort((a, b) => a.name.localeCompare(b.name))),
-      onErr('rates')
-    );
-    return () => { u1(); u2(); };
+    const fetchAll = async () => {
+      const [{ data: pkgsData }, { data: ratesData }] = await Promise.all([
+        supabase.from('packages').select('*').order('sort_order'),
+        supabase.from('rates').select('*').order('name'),
+      ]);
+      if (pkgsData) setPackages(pkgsData);
+      if (ratesData) setRates(ratesData.filter(r => r.is_active !== false));
+    };
+
+    fetchAll();
+
+    const channel = supabase.channel('packages-rates-admin')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'packages' }, fetchAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rates' }, fetchAll)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
   const handleOpen = (pkg = null) => {
@@ -51,11 +52,11 @@ export default function Packages({ showSnackbar }) {
       name: pkg.name,
       minutes: pkg.minutes,
       price: pkg.price,
-      bonusMinutes: pkg.bonusMinutes ?? 0,
-      validDays: pkg.validDays ?? 0,
-      rateId: pkg.rateId || '',
-      isActive: pkg.isActive !== false,
-      sortOrder: pkg.sortOrder ?? 0,
+      bonusMinutes: pkg.bonus_minutes ?? 0,
+      validDays: pkg.valid_days ?? 0,
+      rateId: pkg.rate_id || '',
+      isActive: pkg.is_active !== false,
+      sortOrder: pkg.sort_order ?? 0,
     } : BLANK_FORM);
     setOpen(true);
   };
@@ -68,18 +69,24 @@ export default function Packages({ showSnackbar }) {
         name: form.name.trim(),
         minutes: Number(form.minutes),
         price: parseFloat(form.price),
-        bonusMinutes: Number(form.bonusMinutes) || 0,
-        validDays: Number(form.validDays) || 0,
-        rateId: form.rateId || null,
-        isActive: form.isActive,
-        sortOrder: Number(form.sortOrder) || 0,
-        updatedAt: serverTimestamp(),
+        bonus_minutes: Number(form.bonusMinutes) || 0,
+        valid_days: Number(form.validDays) || 0,
+        rate_id: form.rateId || null,
+        is_active: form.isActive,
+        sort_order: Number(form.sortOrder) || 0,
+        updated_at: new Date().toISOString(),
       };
       if (editing) {
-        await updateDoc(doc(db, 'packages', editing.id), data);
+        const { error } = await supabase.from('packages').update(data).eq('id', editing.id);
+        if (error) throw error;
         showSnackbar('Package updated');
       } else {
-        await addDoc(collection(db, 'packages'), { ...data, createdAt: serverTimestamp() });
+        const { error } = await supabase.from('packages').insert([{
+          id: crypto.randomUUID(),
+          ...data,
+          created_at: new Date().toISOString(),
+        }]);
+        if (error) throw error;
         showSnackbar('Package created');
       }
       setOpen(false);
@@ -99,7 +106,8 @@ export default function Packages({ showSnackbar }) {
       confirmColor: 'error',
       onConfirm: async () => {
         try {
-          await deleteDoc(doc(db, 'packages', pkg.id));
+          const { error } = await supabase.from('packages').delete().eq('id', pkg.id);
+          if (error) throw error;
           showSnackbar('Package deleted');
         } catch (e) {
           showSnackbar(e.message, 'error');
@@ -112,11 +120,11 @@ export default function Packages({ showSnackbar }) {
   const rateName = (id) => rates.find(r => r.id === id)?.name || '—';
 
   const fmtDuration = (p) => {
-    const total = (p.minutes || 0) + (p.bonusMinutes || 0);
+    const total = (p.minutes || 0) + (p.bonus_minutes || 0);
     const h = Math.floor(total / 60);
     const m = total % 60;
     const base = h > 0 ? `${h}h ${m > 0 ? `${m}m` : ''}`.trim() : `${m}m`;
-    return p.bonusMinutes > 0 ? `${p.minutes}m +${p.bonusMinutes}m bonus = ${base}` : base;
+    return p.bonus_minutes > 0 ? `${p.minutes}m +${p.bonus_minutes}m bonus = ${base}` : base;
   };
 
   return (
@@ -153,20 +161,20 @@ export default function Packages({ showSnackbar }) {
                 </TableCell>
                 <TableCell>₱{parseFloat(p.price || 0).toFixed(2)}</TableCell>
                 <TableCell>
-                  <Typography variant="body2" color={p.rateId ? 'text.primary' : 'text.secondary'}>
-                    {rateName(p.rateId)}
+                  <Typography variant="body2" color={p.rate_id ? 'text.primary' : 'text.secondary'}>
+                    {rateName(p.rate_id)}
                   </Typography>
                 </TableCell>
                 <TableCell>
                   <Typography variant="body2" color="text.secondary">
-                    {p.validDays > 0 ? `${p.validDays} day${p.validDays > 1 ? 's' : ''}` : 'Session only'}
+                    {p.valid_days > 0 ? `${p.valid_days} day${p.valid_days > 1 ? 's' : ''}` : 'Session only'}
                   </Typography>
                 </TableCell>
                 <TableCell>
                   <Chip
-                    label={p.isActive !== false ? 'Active' : 'Inactive'}
+                    label={p.is_active !== false ? 'Active' : 'Inactive'}
                     size="small"
-                    color={p.isActive !== false ? 'success' : 'default'}
+                    color={p.is_active !== false ? 'success' : 'default'}
                   />
                 </TableCell>
                 <TableCell align="right">

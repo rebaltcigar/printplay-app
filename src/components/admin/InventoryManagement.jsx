@@ -6,8 +6,7 @@ import {
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import HistoryIcon from '@mui/icons-material/History'; // For audits
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
-import { db, auth } from '../../firebase';
+import { supabase } from '../../supabase';
 import { fmtCurrency, fmtPesoWhole } from '../../utils/formatters';
 import { restockItem, getInventoryLogs } from '../../services/inventoryService';
 import { useInventoryAnalytics } from '../../hooks/useInventoryAnalytics';
@@ -33,21 +32,28 @@ export default function InventoryManagement({ showSnackbar }) {
 
     // Load Retail Items (Track Stock = True)
     useEffect(() => {
-        // We only care about items that are "retail" OR "trackStock" is true
-        // Filtering client side is easier since composite indexes might be missing
-        const q = query(collection(db, 'services'), where('category', '==', 'Sale'));
-        const unsub = onSnapshot(q, (snap) => {
-            const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            setItems(list.filter(i => i.type === 'retail' || i.trackStock));
+        const fetchItems = async () => {
+            const { data } = await supabase
+                .from('products')
+                .select('*')
+                .eq('financial_category', 'Sale');
+            if (data) setItems(data.filter(i => i.category === 'retail' || i.track_stock));
             setLoading(false);
-        });
-        return () => unsub();
+        };
+
+        fetchItems();
+
+        const channel = supabase.channel('inventory-management-products')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, fetchItems)
+            .subscribe();
+
+        return () => supabase.removeChannel(channel);
     }, []);
 
     const handleOpenRestock = (item) => {
         setRestockDialog({ open: true, item });
         // Pre-fill cost with current costPrice if available, else 0
-        setRestockForm({ qtyAdded: '', unitCost: item.costPrice || '', totalCost: '' });
+        setRestockForm({ qtyAdded: '', unitCost: item.cost_price || '', totalCost: '' });
     };
 
     const calculateRestock = () => {
@@ -73,15 +79,16 @@ export default function InventoryManagement({ showSnackbar }) {
         }
 
         try {
+            const { data: { user } } = await supabase.auth.getUser();
             const newAverageCost = await restockItem({
                 item,
                 qtyAdded: qty,
                 unitCost: unit,
                 totalCost: total,
-                staffEmail: auth.currentUser?.email || 'admin'
+                staffEmail: user?.email || 'admin'
             });
 
-            showSnackbar?.(`Restocked ${item.serviceName}. New Cost: ${fmtCurrency(newAverageCost)}`, 'success');
+            showSnackbar?.(`Restocked ${item.name}. New Cost: ${fmtCurrency(newAverageCost)}`, 'success');
             setRestockDialog({ open: false, item: null });
         } catch (e) {
             console.error('Restock failed:', e);
@@ -108,10 +115,10 @@ export default function InventoryManagement({ showSnackbar }) {
     // Analytics
     const { velocityData, loading: analyticsLoading } = useInventoryAnalytics(items);
     const summaryCards = useMemo(() => {
-        const totalValue = items.reduce((acc, i) => acc + ((i.stockCount || 0) * (i.costPrice || 0)), 0);
-        const lowStockCount = items.filter(i => (i.stockCount || 0) <= (i.lowStockThreshold || 5)).length;
+        const totalValue = items.reduce((acc, i) => acc + ((i.stock_count || 0) * (i.cost_price || 0)), 0);
+        const lowStockCount = items.filter(i => (i.stock_count || 0) <= (i.low_stock_threshold || 5)).length;
         const totalItems = items.length;
-        const totalRetailValue = items.reduce((acc, i) => acc + ((i.stockCount || 0) * (i.price || 0)), 0);
+        const totalRetailValue = items.reduce((acc, i) => acc + ((i.stock_count || 0) * (i.price || 0)), 0);
 
         return [
             {
@@ -182,18 +189,18 @@ export default function InventoryManagement({ showSnackbar }) {
                         </TableHead>
                         <TableBody>
                             {items.map(item => {
-                                const stock = item.stockCount || 0;
-                                const cost = item.costPrice || 0;
+                                const stock = item.stock_count || 0;
+                                const cost = item.cost_price || 0;
                                 const price = item.price || 0;
                                 const margin = price - cost;
                                 const marginPct = price > 0 ? (margin / price) * 100 : 0;
-                                const isLow = stock <= (item.lowStockThreshold || 5);
+                                const isLow = stock <= (item.low_stock_threshold || 5);
 
                                 const vData = velocityData[item.id] || { velocity: 0, daysRemaining: null };
 
                                 return (
                                     <TableRow key={item.id} hover>
-                                        <TableCell fontWeight="bold">{item.serviceName}</TableCell>
+                                        <TableCell fontWeight="bold">{item.name}</TableCell>
                                         <TableCell align="right">
                                             <Typography color={isLow ? 'error' : 'inherit'} fontWeight={isLow ? 'bold' : 'normal'}>
                                                 {stock}
@@ -248,7 +255,7 @@ export default function InventoryManagement({ showSnackbar }) {
                 open={restockDialog.open}
                 onClose={() => setRestockDialog({ open: false, item: null })}
                 title="Restock Inventory"
-                subtitle={restockDialog.item?.serviceName}
+                subtitle={restockDialog.item?.name}
                 actions={
                     <>
                         <Button onClick={() => setRestockDialog({ open: false, item: null })}>Cancel</Button>
@@ -261,11 +268,11 @@ export default function InventoryManagement({ showSnackbar }) {
                         <Typography variant="subtitle2" color="text.secondary" gutterBottom>CURRENT STATUS</Typography>
                         <Stack direction="row" justifyContent="space-between">
                             <Typography variant="body2">Current Stock:</Typography>
-                            <Typography variant="body2" fontWeight="bold">{restockDialog.item?.stockCount || 0} units</Typography>
+                            <Typography variant="body2" fontWeight="bold">{restockDialog.item?.stock_count || 0} units</Typography>
                         </Stack>
                         <Stack direction="row" justifyContent="space-between">
                             <Typography variant="body2">Current Cost:</Typography>
-                            <Typography variant="body2" fontWeight="bold">{fmtCurrency(restockDialog.item?.costPrice || 0)}</Typography>
+                            <Typography variant="body2" fontWeight="bold">{fmtCurrency(restockDialog.item?.cost_price || 0)}</Typography>
                         </Stack>
                     </Box>
 
@@ -304,8 +311,8 @@ export default function InventoryManagement({ showSnackbar }) {
                                 NEW VALUATION (Weighted Average)
                             </Typography>
                             {(() => {
-                                const oldQ = restockDialog.item?.stockCount || 0;
-                                const oldC = restockDialog.item?.costPrice || 0;
+                                const oldQ = restockDialog.item?.stock_count || 0;
+                                const oldC = restockDialog.item?.cost_price || 0;
                                 const newQ = oldQ + Number(restockForm.qtyAdded);
                                 const newVal = (oldQ * oldC) + Number(restockForm.totalCost);
                                 return (
@@ -348,9 +355,9 @@ export default function InventoryManagement({ showSnackbar }) {
                             {auditDrawer.logs.map(log => (
                                 <TableRow key={log.id} hover>
                                     <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                                        {log.timestamp?.toDate ? log.timestamp.toDate().toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
+                                        {log.timestamp ? new Date(log.timestamp).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
                                     </TableCell>
-                                    <TableCell fontWeight="bold">{log.itemName}</TableCell>
+                                    <TableCell fontWeight="bold">{log.item_name}</TableCell>
                                     <TableCell>
                                         <Chip
                                             label={log.type}
@@ -359,10 +366,10 @@ export default function InventoryManagement({ showSnackbar }) {
                                             variant="outlined"
                                         />
                                     </TableCell>
-                                    <TableCell align="right" sx={{ color: log.qtyChange > 0 ? 'success.main' : 'error.main', fontWeight: 'bold' }}>
-                                        {log.qtyChange > 0 ? `+${log.qtyChange}` : log.qtyChange}
+                                    <TableCell align="right" sx={{ color: log.qty_change > 0 ? 'success.main' : 'error.main', fontWeight: 'bold' }}>
+                                        {log.qty_change > 0 ? `+${log.qty_change}` : log.qty_change}
                                     </TableCell>
-                                    <TableCell variant="caption">{log.staffEmail?.split('@')[0]}</TableCell>
+                                    <TableCell variant="caption">{log.staff_email?.split('@')[0]}</TableCell>
                                 </TableRow>
                             ))}
                             {auditDrawer.logs.length === 0 && !auditDrawer.loading && (

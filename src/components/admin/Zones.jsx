@@ -8,11 +8,7 @@ import {
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
-import {
-  collection, addDoc, updateDoc, deleteDoc, doc,
-  onSnapshot, orderBy, query, serverTimestamp,
-} from 'firebase/firestore';
-import { db } from '../../firebase';
+import { supabase } from '../../supabase';
 import PageHeader from '../common/PageHeader';
 import ConfirmationReasonDialog from '../ConfirmationReasonDialog';
 
@@ -28,25 +24,29 @@ export default function Zones({ showSnackbar }) {
   const [confirmDialog, setConfirmDialog] = useState({ open: false });
 
   useEffect(() => {
-    const qZones = query(collection(db, 'zones'), orderBy('sortOrder'));
-    const unsubZones = onSnapshot(qZones,
-      snap => setZones(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
-      err => console.error('[Zones] snapshot error:', err)
-    );
+    const fetchAll = async () => {
+      const [{ data: zonesData }, { data: ratesData }] = await Promise.all([
+        supabase.from('zones').select('*').order('sort_order'),
+        supabase.from('rates').select('*').order('name'),
+      ]);
+      if (zonesData) setZones(zonesData);
+      if (ratesData) setRates(ratesData.filter(r => r.is_active !== false));
+    };
 
-    const qRates = query(collection(db, 'rates'), orderBy('name'));
-    const unsubRates = onSnapshot(qRates,
-      snap => setRates(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => r.isActive !== false)),
-      err => console.error('[Rates] snapshot error:', err)
-    );
+    fetchAll();
 
-    return () => { unsubZones(); unsubRates(); };
+    const channel = supabase.channel('zones-rates-admin')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'zones' }, fetchAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rates' }, fetchAll)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
   const handleOpen = (zone = null) => {
     setEditing(zone);
     setForm(zone
-      ? { name: zone.name, color: zone.color || '#1976d2', sortOrder: zone.sortOrder ?? 0, rateId: zone.rateId || '' }
+      ? { name: zone.name, color: zone.color || '#1976d2', sortOrder: zone.sort_order ?? 0, rateId: zone.rate_id || '' }
       : BLANK
     );
     setOpen(true);
@@ -59,14 +59,21 @@ export default function Zones({ showSnackbar }) {
       const data = {
         name: form.name.trim(),
         color: form.color,
-        sortOrder: Number(form.sortOrder),
-        rateId: form.rateId || null,
+        sort_order: Number(form.sortOrder),
+        rate_id: form.rateId || null,
+        updated_at: new Date().toISOString(),
       };
       if (editing) {
-        await updateDoc(doc(db, 'zones', editing.id), { ...data, updatedAt: serverTimestamp() });
+        const { error } = await supabase.from('zones').update(data).eq('id', editing.id);
+        if (error) throw error;
         showSnackbar('Zone updated');
       } else {
-        await addDoc(collection(db, 'zones'), { ...data, createdAt: serverTimestamp() });
+        const { error } = await supabase.from('zones').insert([{
+          id: crypto.randomUUID(),
+          ...data,
+          created_at: new Date().toISOString(),
+        }]);
+        if (error) throw error;
         showSnackbar('Zone created');
       }
       setOpen(false);
@@ -86,7 +93,8 @@ export default function Zones({ showSnackbar }) {
       confirmColor: 'error',
       onConfirm: async () => {
         try {
-          await deleteDoc(doc(db, 'zones', zone.id));
+          const { error } = await supabase.from('zones').delete().eq('id', zone.id);
+          if (error) throw error;
           showSnackbar('Zone deleted');
         } catch (e) {
           showSnackbar(e.message, 'error');
@@ -131,14 +139,14 @@ export default function Zones({ showSnackbar }) {
                   </Stack>
                 </TableCell>
                 <TableCell>
-                  <Typography variant="body2">{rateName(z.rateId)}</Typography>
+                  <Typography variant="body2">{rateName(z.rate_id)}</Typography>
                 </TableCell>
                 <TableCell>
                   <Typography variant="caption" sx={{ fontFamily: 'monospace', color: 'text.secondary' }}>
                     {z.color}
                   </Typography>
                 </TableCell>
-                <TableCell>{z.sortOrder ?? 0}</TableCell>
+                <TableCell>{z.sort_order ?? 0}</TableCell>
                 <TableCell align="right">
                   <IconButton size="small" onClick={() => handleOpen(z)}>
                     <EditIcon fontSize="small" />

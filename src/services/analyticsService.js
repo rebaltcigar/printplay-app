@@ -258,9 +258,7 @@ export function buildTrendSeries({
   // 2) transactions
   (transactions || []).forEach((t) => {
     if (t.isDeleted) return;
-    const ts = t.timestamp?.seconds
-      ? dayjs.unix(t.timestamp.seconds).tz(ZONE)
-      : dayjs(t.timestamp).tz(ZONE);
+    const ts = dayjs(t.timestamp).tz(ZONE);
     if (!ts.isValid()) return;
     if (ts.isBefore(startLocal) || ts.isAfter(endLocal)) return;
 
@@ -312,9 +310,7 @@ export function buildTrendSeries({
 
   if (includePCRental) {
     (shifts || []).forEach((sh) => {
-      const st = sh.startTime?.seconds
-        ? dayjs.unix(sh.startTime.seconds).tz(ZONE)
-        : null;
+      const st = sh.startTime ? dayjs(sh.startTime).tz(ZONE) : null;
       if (!st || !st.isValid()) return;
       if (st.isBefore(startLocal) || st.isAfter(endLocal)) return;
 
@@ -376,9 +372,7 @@ export function buildHourlySeries(transactions) {
 
   (transactions || []).forEach(t => {
     if (t.isDeleted || t.financialCategory !== 'Revenue') return;
-    const ts = t.timestamp?.seconds
-      ? dayjs.unix(t.timestamp.seconds).tz(ZONE)
-      : dayjs(t.timestamp).tz(ZONE);
+    const ts = dayjs(t.timestamp).tz(ZONE);
 
     if (!ts.isValid()) return;
     const h = ts.hour();
@@ -476,7 +470,7 @@ export function getEarliestDate(transactions = [], shifts = []) {
 
   const compare = (ts) => {
     if (!ts) return;
-    const d = dayjs(ts.seconds ? ts.seconds * 1000 : ts);
+    const d = dayjs(ts);
     if (!d.isValid()) return;
     if (!earliest || d.isBefore(earliest)) earliest = d;
   };

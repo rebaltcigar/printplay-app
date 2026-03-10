@@ -4,8 +4,7 @@ import {
   MenuItem, FormControl, InputLabel, Select, Button, CircularProgress,
   Alert, Stack,
 } from "@mui/material";
-import { db } from "../firebase";
-import { doc, getDoc } from "firebase/firestore";
+import { supabase } from "../supabase";
 import Visibility from "@mui/icons-material/Visibility";
 import VisibilityOff from "@mui/icons-material/VisibilityOff";
 import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
@@ -157,7 +156,7 @@ const CARD_SX = {
 //   onClockIn()                             → Promise<void>
 //   onCancelLogin()                         → Promise<void>
 export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin }) {
-  // Phase machine: 'credentials' | 'confirm' | 'fallback' | 'clockin'
+    // Phase machine: 'credentials' | 'confirm' | 'fallback' | 'clockin' | 'forgot-password'
   const [phase, setPhase] = useState("credentials");
 
   // Periodic grid-line animation reset — increments key every 9s to remount grid divs
@@ -176,27 +175,45 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const [msg, setMsg] = useState(""); // Success messages
   const [branding, setBranding] = useState({ storeName: "Kunek", logoUrl: "/logo.png" });
 
   useEffect(() => {
-    (async () => {
+    const fetchBranding = async () => {
       try {
-        const snap = await getDoc(doc(db, "settings", "config"));
-        if (snap.exists()) {
-          const d = snap.data();
+        const { data } = await supabase.from('settings').select('*').eq('id', 'config').maybeSingle();
+        if (data) {
           setBranding({
-            storeName: d.storeName || "Kunek",
-            logoUrl: convertLogoUrl(d.logoUrl) || "/logo.png"
+            storeName: data.store_name || "Kunek",
+            logoUrl: convertLogoUrl(data.logo_url) || "/logo.png"
           });
         }
       } catch { }
-    })();
+    };
+    fetchBranding();
+
+    // Parse hash errors (e.g. #error=access_denied&error_code=otp_expired)
+    const hash = window.location.hash;
+    if (hash && hash.includes("error=")) {
+      const params = new URLSearchParams(hash.substring(1));
+      const errorMsg = params.get("error_description") || params.get("error");
+      if (errorMsg) {
+        const decoded = decodeURIComponent(errorMsg).replace(/\+/g, " ");
+        setErr(decoded);
+        // If it's an expired link, give a more helpful suggestion
+        if (hash.includes("otp_expired")) {
+          setErr(prev => prev + ". Please request a new link.");
+        }
+        // Clean the hash for a cleaner UI
+        window.history.replaceState(null, null, window.location.pathname);
+      }
+    }
   }, []);
 
   // ── Handlers ──
   const handleCredentialSubmit = async (e) => {
     e.preventDefault();
-    setErr(""); setLoading(true);
+    setErr(""); setMsg(""); setLoading(true);
     try {
       const result = await onLogin(email, password);
       if (result?.type !== "admin") {
@@ -212,8 +229,25 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
     }
   };
 
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+    if (!email) { setErr("Please enter your email first."); return; }
+    setErr(""); setMsg(""); setLoading(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/login`,
+      });
+      if (error) throw error;
+      setMsg("Password reset link sent! Check your email inbox.");
+    } catch (error) {
+      setErr(humanizeAuthError(error));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleStartShift = async () => {
-    setErr(""); setLoading(true);
+    setErr(""); setMsg(""); setLoading(true);
     try {
       await onStartShift(loginResult.type, loginResult.scheduleEntry || null, fallbackPeriod, fallbackNote);
     } catch (error) {
@@ -223,7 +257,7 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
   };
 
   const handleClockInConfirm = async () => {
-    setErr(""); setLoading(true);
+    setErr(""); setMsg(""); setLoading(true);
     try {
       await onClockIn();
     } catch (error) {
@@ -238,11 +272,80 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
     setPhase("credentials");
     setLoginResult(null);
     setErr("");
+    setMsg("");
     setFallbackNote("");
     setLoading(false);
   };
 
-  const clearErr = (setter) => (e) => { setter(e.target.value); if (err) setErr(""); };
+  const handleRescue = async () => {
+    if (!email || !password) { setErr("Enter email and new password above first."); return; }
+    setErr(""); setMsg(""); setLoading(true);
+    const targetEmail = email.trim().toLowerCase();
+    try {
+      // 1. Try to sign up the user
+      let finalUserId = null;
+      const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({ 
+        email: targetEmail, 
+        password,
+        options: { data: { full_name: "Admin" } }
+      });
+      
+      if (signUpErr) {
+        if (signUpErr.message.includes("already registered")) {
+          // If already registered, try to sign in to get the UID
+          const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({ 
+            email: targetEmail, 
+            password 
+          });
+          if (signInErr) {
+            throw new Error("This email is already registered in Supabase Auth, but the password provided is incorrect. Use the dashboard to reset it or provide the correct password here to link the profile.");
+          }
+          finalUserId = signInData.user.id;
+        } else {
+          throw signUpErr;
+        }
+      } else {
+        finalUserId = signUpData?.user?.id;
+      }
+
+      // 2. Try to link profile (this might fail due to RLS)
+      try {
+        // Clear out any other profile that might be using this UID (cleanup)
+        await supabase.from('profiles').delete().eq('id', finalUserId);
+
+        const { data: existingProfile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('email', targetEmail)
+          .maybeSingle();
+
+        if (existingProfile) {
+          await supabase.from('profiles').update({ id: finalUserId, role: 'admin', suspended: false }).eq('email', targetEmail);
+        } else {
+          await supabase.from('profiles').insert([{ id: finalUserId, email: targetEmail, full_name: "Admin", role: "admin", suspended: false, created_at: new Date().toISOString() }]);
+        }
+        
+        setMsg("Rescue successful! Admin access granted.");
+        alert(`🎉 SUCCESS!\n\nAuth account created: ${targetEmail}\nProfile link: REPAIRED\n\nYou can now sign in!`);
+      } catch (dbErr) {
+        console.warn("DB Link failed (RLS), but Auth was successful:", dbErr);
+        setMsg("Auth account created! Now run the SQL fix.");
+        alert(`✅ PARTIAL SUCCESS!\n\nYour Auth account was created, but I couldn't update your database profile due to security (RLS).\n\nPLEASE RUN THIS SQL IN YOUR DASHBOARD TO FINISH:\n\nupdate profiles set id = '${finalUserId}', role = 'admin' where email = '${targetEmail}';`);
+      }
+
+      setPhase("credentials");
+      setMsg("Rescue successful! Your account is now ready.");
+      alert(`🎉 SUCCESS!\n\nYour account has been bootstrapped.\n\nYou can now sign in normally with your password.`);
+      setPhase("credentials");
+    } catch (error) {
+      setErr(error.message || "Rescue failed.");
+      alert(`⚠️ RESCUE FAILED:\n\n${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const clearErr = (setter) => (e) => { setter(e.target.value); if (err) setErr(""); if (msg) setMsg(""); };
   const credDisabled = loading || !email || !password;
   const shiftDisabled = loading || (phase === "fallback" && !fallbackPeriod);
 
@@ -256,6 +359,7 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
     if (phase === "credentials") return (
       <>
         {err && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setErr("")}>{err}</Alert>}
+        {msg && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setMsg("")}>{msg}</Alert>}
 
         <Box
           component="form"
@@ -305,27 +409,21 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
             }}
           />
 
-          {/* Forgot password — placeholder, not yet implemented */}
           <Box sx={{ display: "flex", justifyContent: "flex-end", mt: -0.5 }}>
-            {/* TODO: implement forgot password flow */}
-            <Typography
-              variant="caption"
-              title="Coming soon"
-              sx={{ color: "#444", cursor: "default", userSelect: "none" }}
+            <Button
+              variant="text"
+              size="small"
+              onClick={() => { setPhase("forgot-password"); setErr(""); setMsg(""); }}
+              sx={{ 
+                color: "text.secondary", 
+                fontSize: "0.75rem", 
+                textTransform: "none",
+                '&:hover': { color: "primary.main", bgcolor: "transparent" }
+              }}
             >
               Forgot password?
-            </Typography>
+            </Button>
           </Box>
-
-          {/*
-            Remember me — reserved for future use
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Checkbox size="small" id="remember-me" />
-              <Typography variant="caption" color="text.secondary" component="label" htmlFor="remember-me">
-                Remember me
-              </Typography>
-            </Box>
-          */}
 
           <Button
             type="submit" variant="contained" fullWidth
@@ -336,6 +434,19 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
             Sign In
           </Button>
 
+          {window.location.hostname === "localhost" && (
+            <Button
+              variant="outlined" 
+              color="warning" 
+              fullWidth
+              onClick={handleRescue}
+              disabled={loading || !email || !password}
+              sx={{ height: 42, borderStyle: 'dashed' }}
+            >
+              Bootstrap Admin Access
+            </Button>
+          )}
+
           {/* Powered by Kunek — below the sign in button */}
           <Typography
             variant="caption"
@@ -345,6 +456,51 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
             Powered by Kunek &nbsp;·&nbsp; v{__APP_VERSION__}
           </Typography>
         </Box>
+      </>
+    );
+
+    // ── forgot-password ──
+    if (phase === "forgot-password") return (
+      <>
+        <Typography variant="h5" fontWeight={700} gutterBottom>Reset Password</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+          Enter your email and we'll send you a link to get back into your account.
+        </Typography>
+
+        {err && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setErr("")}>{err}</Alert>}
+        {msg && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setMsg("")}>{msg}</Alert>}
+
+        <Box
+          component="form"
+          onSubmit={handleForgotPassword}
+          sx={{ display: "grid", gap: 2, mb: 3 }}
+        >
+          <TextField
+            label="Email" type="email"
+            value={email} onChange={clearErr(setEmail)}
+            fullWidth required disabled={loading}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <EmailIcon sx={{ fontSize: 17, color: "text.disabled" }} />
+                </InputAdornment>
+              ),
+            }}
+          />
+
+          <Button
+            type="submit" variant="contained" fullWidth
+            disabled={loading || !email}
+            startIcon={<EmailIcon />}
+            sx={{ height: 42 }}
+          >
+            Send Reset Link
+          </Button>
+        </Box>
+
+        <Button fullWidth variant="outlined" onClick={handleBack} disabled={loading}>
+          ← Back to Login
+        </Button>
       </>
     );
 

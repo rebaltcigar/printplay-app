@@ -70,11 +70,10 @@ export const toDatetimeLocal = (d) => {
 export const fromDatetimeLocal = (s) => new Date(s);
 
 /**
- * Ensures a valid Date object from Firestore Timestamp, Date, or string.
+ * Ensures a valid Date object from Date, ISO string, or number.
  */
 function toDateObj(raw) {
     if (!raw) return null;
-    if (raw.toDate) return raw.toDate(); // Firestore Timestamp
     if (raw instanceof Date) return raw;
     const parsed = new Date(raw);
     return isNaN(parsed) ? null : parsed;

@@ -1,35 +1,45 @@
 // src/hooks/usePOSServices.js
-// Single Firestore subscription for the POS service list.
-//
-// Returns:
-//   serviceList      - Legacy flat list for POS.jsx dropdown (until v0.2.1 replaces it).
-//                      Active, non-expense, non-credit services. PC Rental always first.
-//   expenseTypes     - Active expense sub-services (children of the "Expenses" parent)
-//   categories       - Sorted unique category strings from serviceList
-//   allServices      - Raw array of all service docs from Firestore
-//   loading          - true while the first snapshot hasn't arrived
-//
-//   posItems         - All active, top-level, non-expense, non-adminOnly items (v0.2.0+).
-//                      Includes both service and retail types, both direct items and
-//                      variant parents. Used by the POS tile grid (v0.2.1+).
-//   variantMap       - Map<parentId, VariantChild[]> sorted by sortOrder (v0.2.0+).
-//                      Keys are parentServiceId values; values are the sorted children.
-
 import { useEffect, useMemo, useState } from 'react';
-import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
-import { db } from '../firebase';
+import { supabase } from '../supabase';
 
 export function usePOSServices() {
     const [allServices, setAllServices] = useState([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const q = query(collection(db, 'services'), orderBy('sortOrder'));
-        const unsub = onSnapshot(q, (snap) => {
-            setAllServices(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        const fetchServices = async () => {
+            const { data, error } = await supabase
+                .from('products')
+                .select('*')
+                .order('sort_order', { ascending: true });
+
+            if (data) {
+                // Map Supabase snake_case back to frontend expected camelCase
+                const mapped = data.map(d => ({
+                    id: d.id,
+                    ...d,
+                    serviceName: d.name,
+                    parentServiceId: d.parent_service_id,
+                    sortOrder: d.sort_order,
+                    adminOnly: d.admin_only,
+                    financialCategory: d.financial_category,
+                    costPrice: d.cost_price
+                }));
+                setAllServices(mapped);
+            }
+            if (error) {
+                console.error("Error fetching POS services:", error);
+            }
             setLoading(false);
-        });
-        return () => unsub();
+        };
+
+        fetchServices();
+
+        const channel = supabase.channel('public:products:usePOSServices')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, fetchServices)
+            .subscribe();
+
+        return () => supabase.removeChannel(channel);
     }, []);
 
     // Expense parent ID — used to exclude expense items from all POS lists
@@ -55,7 +65,7 @@ export function usePOSServices() {
             list.push({ id: 'pcrental_hc', serviceName: 'PC Rental', price: 0, active: true });
         }
 
-        // PC Rental always first, then preserve Firestore sortOrder for the rest
+        // PC Rental always first, then preserve project sortOrder for the rest
         list.sort((a, b) => {
             if (a.serviceName === 'PC Rental') return -1;
             if (b.serviceName === 'PC Rental') return 1;
@@ -82,10 +92,6 @@ export function usePOSServices() {
     );
 
     // --- v0.2.0: posItems ---
-    // All top-level, active, non-expense, non-adminOnly items for the POS tile grid.
-    // Includes variant parents (hasVariants: true) and direct items alike.
-    // The POS grid filters by type ('service' vs 'retail') and hasVariants flag to
-    // decide which tab to render each item in.
     const posItems = useMemo(() =>
         allServices.filter(i =>
             i.active &&
@@ -99,9 +105,6 @@ export function usePOSServices() {
     );
 
     // --- v0.2.0: variantMap ---
-    // Maps each parentServiceId to its sorted array of active variant children.
-    // Expense children are excluded. Inactive children are excluded so the picker
-    // only shows variants currently available for sale.
     const variantMap = useMemo(() => {
         const map = new Map();
         allServices
@@ -121,13 +124,11 @@ export function usePOSServices() {
     }, [allServices, expenseParentId]);
 
     return {
-        // Legacy outputs — unchanged, backward compatible
         serviceList,
         expenseTypes,
         categories,
         allServices,
         loading,
-        // v0.2.0 outputs — used by POS tile grid and variant picker (v0.2.1+)
         posItems,
         variantMap,
     };

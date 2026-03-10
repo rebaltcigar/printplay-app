@@ -16,12 +16,8 @@ import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import BoltIcon from '@mui/icons-material/Bolt';
 import AddIcon from '@mui/icons-material/Add';
 
-import {
-  collection, addDoc, updateDoc, doc,
-  onSnapshot, serverTimestamp, query,
-  getDocs, orderBy, limit, where
-} from 'firebase/firestore';
-import { auth, db } from '../../firebase';
+import { supabase } from '../../supabase';
+import { pcSessionService } from '../../services/pcSessionService';
 import { fmtCurrency } from '../../utils/formatters';
 import { getBankIcon, GCashIcon, MayaIcon } from '../../utils/bankIcons';
 import CustomerSelectionDrawer from '../pos/CustomerSelectionDrawer';
@@ -72,10 +68,20 @@ export default function StartSessionDialog({ open, station, activeSession, isQui
   // Load dependency data
   useEffect(() => {
     if (!open) return;
-    const u1 = onSnapshot(collection(db, 'rates'), snap => setRates(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => r.isActive !== false)));
-    const u2 = onSnapshot(collection(db, 'zones'), snap => setZones(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const u3 = onSnapshot(doc(db, 'settings', 'system'), snap => setAppSettings(snap.data()));
-    return () => { u1(); u2(); u3(); };
+    const fetchData = async () => {
+      const ObjectData = await Promise.all([
+        supabase.from('rates').select('*').eq('is_active', true),
+        supabase.from('zones').select('*'),
+        supabase.from('settings').select('*').eq('id', 'system').single()
+      ]);
+      const [r, z, s] = ObjectData;
+      if (r.data) setRates(r.data.map(d => ({ ...d, ratePerMinute: d.rate_per_minute, isActive: d.is_active })));
+      if (z.data) setZones(z.data);
+      if (s.data) setAppSettings({
+        paymentMethods: s.data.payment_methods
+      });
+    };
+    fetchData();
   }, [open]);
 
   // Handle Mode/Reset
@@ -122,23 +128,21 @@ export default function StartSessionDialog({ open, station, activeSession, isQui
     }
 
     setSearching(true);
-    const q = query(
-      collection(db, 'customers'),
-      where('isActive', '!=', false),
-      orderBy('isActive'),
-      orderBy('fullName'),
-      limit(10)
-    );
-
-    getDocs(q).then(snap => {
-      const results = snap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .filter(c => (c.fullName || '').toLowerCase().includes(term.toLowerCase()) ||
-          (c.username || '').toLowerCase().includes(term.toLowerCase()) ||
-          (c.phone || '').includes(term));
-      setCustomerResults(results);
-      setSearching(false);
-    }).catch(() => setSearching(false));
+    supabase.from('customers')
+      .select('*')
+      .eq('is_active', true)
+      .or(`full_name.ilike.%${term}%,username.ilike.%${term}%,phone.ilike.%${term}%`)
+      .limit(10)
+      .then(({ data }) => {
+        if (data) {
+          setCustomerResults(data.map(d => ({
+            ...d,
+            fullName: d.full_name,
+            minutesRemaining: d.minutes_remaining
+          })));
+        }
+        setSearching(false);
+      }).catch(() => setSearching(false));
   }, [form.customerSearch]);
 
   const selectedRate = rates.find(r => r.id === form.rateId);
@@ -185,7 +189,7 @@ export default function StartSessionDialog({ open, station, activeSession, isQui
   // Calculate seconds remaining if top-up
   const currentRemaining = useMemo(() => {
     if (!activeSession || activeSession.type === 'postpaid') return null;
-    const startMs = activeSession.startedAt?.toMillis?.() || Date.now();
+    const startMs = activeSession.startedAt ? new Date(activeSession.startedAt).getTime() : Date.now();
     const elapsedMs = Date.now() - startMs;
     const allottedMs = (activeSession.minutesAllotted || 0) * 60000;
     return Math.max(0, (allottedMs - elapsedMs) / 1000);
@@ -220,101 +224,79 @@ export default function StartSessionDialog({ open, station, activeSession, isQui
     if (!canConfirm || saving) return;
     setSaving(true);
     try {
-      const staff = auth.currentUser;
-      const now = serverTimestamp();
+      const { data: { user: staff } } = await supabase.auth.getUser();
+      const now = new Date().toISOString();
       const isTopUp = !!activeSession;
 
       if (isTopUp) {
-        // UPDATE EXISTING SESSION
-        const newAllotted = (activeSession.minutesAllotted || 0) + addedMinutes;
-        const newPaid = (activeSession.amountPaid || 0) + finalTotal;
-        const newCharged = (activeSession.amountCharged || 0) + Number(form.amountDue);
-
-        await updateDoc(doc(db, 'sessions', activeSession.id), {
-          minutesAllotted: newAllotted,
-          amountPaid: newPaid,
-          amountCharged: newCharged,
-          updatedAt: now
+        // UPDATE EXISTING SESSION (Top-up)
+        await pcSessionService.topupSession({
+          sessionId: activeSession.id,
+          stationId: station.id,
+          stationName: station.name,
+          customerName: form.customerName,
+          addedMinutes,
+          amountDue: Number(form.amountDue),
+          amountPaid: finalTotal,
+          paymentMethod: form.paymentMethod,
+          discountAmount,
+          staffId: staff?.id,
+          staffEmail: staff?.email
         });
-
-        await addDoc(collection(db, 'transactions'), {
-          item: `PC Top-up — ${station.name}`,
-          type: 'pc-topup', price: finalTotal, qty: 1,
-          paymentMethod: form.paymentMethod, staffEmail: staff?.email,
-          sessionId: activeSession.id, stationId: station.id, customerName: form.customerName,
-          discountAmount, subtotal: Number(form.amountDue),
-          createdAt: now,
-        });
-
-        await addDoc(collection(db, 'station_logs'), {
-          stationId: station.id, sessionId: activeSession.id, event: 'top-up', severity: 'info',
-          timestamp: now, staffId: staff?.uid, stationName: station.name,
-          metadata: { customerName: form.customerName, addedMinutes, amountPaid: finalTotal }
-        });
-
         showSnackbar(`Topped up ${addedMinutes} min for ${form.customerName}`);
       } else {
-        // CREATE NEW SESSION OR STANDALONE TOPUP (WITH OPTIONAL REGISTRATION)
+        // CREATE NEW SESSION OR STANDALONE TOPUP
         let customerId = form.customerId;
         let customerName = form.customerName || 'Walk-in';
 
         if (isRegistering) {
-          // 1. Create the customer first
-          const custRef = await addDoc(collection(db, 'customers'), {
+          const { data: custRef, error } = await supabase.from('customers').insert([{
             username: form.newMemberUsername.toLowerCase(),
-            fullName: form.newMemberName,
-            minutesRemaining: 0,
-            forcePasswordChange: true,
-            password: '123',
-            isActive: true,
-            createdAt: now,
-            updatedAt: now
-          });
+            full_name: form.newMemberName,
+            minutes_remaining: 0,
+            force_password_change: true,
+            is_active: true,
+            created_at: now,
+            updated_at: now
+          }]).select().single();
+          if (error) throw error;
           customerId = custRef.id;
           customerName = form.newMemberName;
         }
 
         if (isStandaloneTopup) {
-          // STANDALONE TOP UP (New or Existing)
-          const custRef = doc(db, 'customers', customerId);
-          await updateDoc(custRef, {
-            minutesRemaining: (form.availableMinutes || 0) + addedMinutes,
-            updatedAt: now
-          });
+          // STANDALONE TOP UP
+          if (customerId) {
+            const { data: cust } = await supabase.from('customers').select('minutes_remaining').eq('id', customerId).single();
+            await supabase.from('customers').update({
+              minutes_remaining: (cust?.minutes_remaining || 0) + addedMinutes,
+              updated_at: now
+            }).eq('id', customerId);
+          }
 
-          await addDoc(collection(db, 'transactions'), {
+          await supabase.from('transactions').insert([{
             item: `Account Top-up — ${customerName}`,
             type: 'pc-topup', price: finalTotal, qty: 1,
-            paymentMethod: form.paymentMethod, staffEmail: staff?.email,
-            customerId: customerId, customerName: customerName,
-            discountAmount, subtotal: Number(form.amountDue),
-            createdAt: now,
-          });
-
-          await addDoc(collection(db, 'station_logs'), {
-            event: 'account-topup', severity: 'info',
-            timestamp: now, staffId: staff?.uid,
-            metadata: { customerId: customerId, customerName: customerName, addedMinutes, amountPaid: finalTotal }
-          });
+            payment_method: form.paymentMethod, staff_email: staff?.email,
+            customer_id: customerId, customer_name: customerName,
+            discount_amount: discountAmount, subtotal: Number(form.amountDue),
+            created_at: now,
+          }]);
 
           showSnackbar(`Topped up ${addedMinutes} min to ${customerName}'s account`);
         } else {
-          // CREATE NEW SESSION
-          const sessionData = {
+          // START NEW SESSION
+          await pcSessionService.startSession({
             stationId: station.id,
             stationName: station.name,
-            customerId: customerId,
-            customerName: customerName,
+            customerId,
+            customerName,
             type: 'prepaid',
-            status: 'active',
             rateId: form.rateId,
             rateSnapshot: selectedRate,
-            startedAt: now,
             minutesAllotted: addedMinutes,
-            minutesUsed: 0,
-            amountCharged: Number(form.amountDue),
+            amountDue: Number(form.amountDue),
             amountPaid: finalTotal,
-            discount: { type: form.discountType, value: form.discountValue, amount: discountAmount },
             paymentMethod: form.paymentMethod,
             paymentDetails: ['GCash', 'Maya', 'Bank Transfer'].includes(form.paymentMethod) ? {
               refNumber: form.refNumber,
@@ -322,37 +304,11 @@ export default function StartSessionDialog({ open, station, activeSession, isQui
               bankId: form.bankId,
               bankName: activeBank?.bankName
             } : null,
-            staffId: staff?.uid,
-            createdAt: now,
-          };
-
-          const ref = await addDoc(collection(db, 'sessions'), sessionData);
-          await updateDoc(doc(db, 'stations', station.id), { status: 'in-use', currentSessionId: ref.id, isLocked: false, updatedAt: now });
-
-          if (form.usingBalance && customerId) {
-            const custRef = doc(db, 'customers', customerId);
-            await updateDoc(custRef, {
-              minutesRemaining: Math.max(0, (form.availableMinutes || 0) - addedMinutes)
-            });
-          }
-
-          await addDoc(collection(db, 'transactions'), {
-            item: `PC Session — ${station.name}${form.usingBalance ? ' (Balance Use)' : ''}`,
-            type: 'pc-session', price: form.usingBalance ? 0 : finalTotal, qty: 1,
-            paymentMethod: form.usingBalance ? 'Account Balance' : form.paymentMethod,
-            staffEmail: staff?.email,
-            sessionId: ref.id, stationId: station.id, customerName: customerName,
-            discountAmount: form.usingBalance ? 0 : discountAmount,
-            subtotal: form.usingBalance ? 0 : Number(form.amountDue),
-            createdAt: now,
+            discount: { type: form.discountType, value: form.discountValue, amount: discountAmount },
+            usingBalance: form.usingBalance,
+            staffId: staff?.id,
+            staffEmail: staff?.email
           });
-
-          await addDoc(collection(db, 'station_logs'), {
-            stationId: station.id, sessionId: ref.id, event: 'session-start', severity: 'info',
-            timestamp: now, staffId: staff?.uid, stationName: station.name,
-            metadata: { customerName: customerName, minutesAllotted: addedMinutes, amountPaid: finalTotal }
-          });
-
           showSnackbar(`Session started for ${customerName}`);
         }
       }

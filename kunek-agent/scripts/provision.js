@@ -15,9 +15,8 @@
  *     --stationId=PC-01 \
  *     --agentEmail=pc01@kunek.internal \
  *     --agentPassword=<token> \
- *     --projectId=kunek-prod \
- *     --apiKey=AIza... \
- *     --authDomain=kunek-prod.firebaseapp.com \
+ *     --supabaseUrl=https://your-project.supabase.co \
+ *     --supabaseAnonKey=ey... \
  *     --videoPath="C:\ProgramData\KunekAgent\bg.mp4"
  *
  * The token file (config.json) is downloaded from the Admin console:
@@ -56,21 +55,20 @@ function prompt(rl, question, defaultVal) {
 async function promptAll(existing) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
-  console.log('\n── KunekAgent Provisioning ──────────────────────────────');
+  console.log('\n── KunekAgent Provisioning (Supabase) ──────────────────');
   console.log('  Config will be written to:', CONFIG_PATH);
   console.log('  (Get agentEmail + agentPassword from Admin → Stations → Generate Token)\n');
 
-  const stationId    = await prompt(rl, 'Station ID (e.g. PC-01)',            existing.stationId);
-  const agentEmail   = await prompt(rl, 'Agent email',                         existing.agentEmail);
-  const agentPassword = await prompt(rl, 'Agent password',                     existing.agentPassword);
-  const projectId    = await prompt(rl, 'Firebase project ID',                 existing.firestoreProjectId);
-  const apiKey       = await prompt(rl, 'Firebase API key',                    existing.firebaseApiKey);
-  const authDomain   = await prompt(rl, 'Firebase auth domain',                existing.firebaseAuthDomain);
-  const videoPath    = await prompt(rl, 'Video background path (optional)',     existing.videoBackgroundPath);
+  const stationId     = await prompt(rl, 'Station ID (e.g. PC-01)',             existing.stationId);
+  const agentEmail    = await prompt(rl, 'Agent email',                          existing.agentEmail);
+  const agentPassword = await prompt(rl, 'Agent password',                      existing.agentPassword);
+  const supabaseUrl   = await prompt(rl, 'Supabase Project URL',                 existing.supabaseUrl);
+  const supabaseKey   = await prompt(rl, 'Supabase Anon Key',                    existing.supabaseAnonKey);
+  const videoPath     = await prompt(rl, 'Video background path (optional)',      existing.videoBackgroundPath);
 
   rl.close();
 
-  return { stationId, agentEmail, agentPassword, projectId, apiKey, authDomain, videoPath };
+  return { stationId, agentEmail, agentPassword, supabaseUrl, supabaseKey, videoPath };
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -93,7 +91,7 @@ async function main() {
       process.exit(1);
     }
 
-    const required = ['stationId', 'agentEmail', 'agentPassword', 'firestoreProjectId', 'firebaseApiKey'];
+    const required = ['stationId', 'agentEmail', 'agentPassword', 'supabaseUrl', 'supabaseAnonKey'];
     for (const f of required) {
       if (!token[f]) {
         console.error(`Error: token file is missing required field "${f}"`);
@@ -131,25 +129,24 @@ async function main() {
   let values;
 
   const hasAllFlags = flags.stationId && flags.agentEmail && flags.agentPassword &&
-                      flags.projectId && flags.apiKey && flags.authDomain;
+                      flags.supabaseUrl && flags.supabaseAnonKey;
 
   if (hasAllFlags) {
     // Non-interactive mode
     values = {
-      stationId:    flags.stationId,
-      agentEmail:   flags.agentEmail,
+      stationId:     flags.stationId,
+      agentEmail:    flags.agentEmail,
       agentPassword: flags.agentPassword,
-      projectId:    flags.projectId,
-      apiKey:       flags.apiKey,
-      authDomain:   flags.authDomain,
-      videoPath:    flags.videoPath || existing.videoBackgroundPath || '',
+      supabaseUrl:   flags.supabaseUrl,
+      supabaseKey:   flags.supabaseAnonKey,
+      videoPath:     flags.videoPath || existing.videoBackgroundPath || '',
     };
   } else {
     values = await promptAll(existing);
   }
 
   // Validate required fields
-  const required = ['stationId', 'agentEmail', 'agentPassword', 'projectId', 'apiKey', 'authDomain'];
+  const required = ['stationId', 'agentEmail', 'agentPassword', 'supabaseUrl', 'supabaseKey'];
   for (const f of required) {
     if (!values[f]) {
       console.error(`\nError: ${f} is required.`);
@@ -161,9 +158,8 @@ async function main() {
     stationId:            values.stationId,
     agentEmail:           values.agentEmail,
     agentPassword:        values.agentPassword,
-    firestoreProjectId:   values.projectId,
-    firebaseApiKey:       values.apiKey,
-    firebaseAuthDomain:   values.authDomain,
+    supabaseUrl:          values.supabaseUrl,
+    supabaseAnonKey:      values.supabaseKey,
     videoBackgroundPath:  values.videoPath || '',
     provisionedAt:        new Date().toISOString(),
   };

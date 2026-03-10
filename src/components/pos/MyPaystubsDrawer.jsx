@@ -5,8 +5,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   Box, Typography, Button, Stack, CircularProgress, Divider,
 } from '@mui/material';
-import { collectionGroup, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { supabase } from '../../supabase';
 import DetailDrawer from '../common/DetailDrawer';
 import { Paystub } from '../Paystub';
 import { fmtDate } from '../../utils/formatters';
@@ -22,12 +21,18 @@ export default function MyPaystubsDrawer({ open, onClose, userEmail }) {
     setLoading(true);
     (async () => {
       try {
-        const snap = await getDocs(query(
-          collectionGroup(db, 'paystubs'),
-          where('staffEmail', '==', userEmail),
-        ));
-        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        list.sort((a, b) => (b.payDate?.seconds || 0) - (a.payDate?.seconds || 0));
+        const { data } = await supabase
+          .from('paystubs')
+          .select('*')
+          .eq('staff_email', userEmail)
+          .order('pay_date', { ascending: false });
+
+        const list = (data || []).map(d => ({
+          ...d,
+          staffEmail: d.staff_email,
+          payDate: d.pay_date
+        }));
+
         setStubs(list);
         setActive(list[0]?.id || null);
       } catch (err) {

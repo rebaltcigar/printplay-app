@@ -11,6 +11,22 @@
 - **Infrastructure**: Firestore schema changes, new collections, indexes, security rules.
 - No roadmap content — belongs in ROADMAP.md.
 
+## [0.9.0] — 2026-03-11
+
+### Added
+- **Supabase Integration** — Full migration of the primary data layer from Firebase/Firestore to Supabase. Includes real-time subscriptions for POS and admin views.
+- **Kunek Agent v2.0** — Re-engineered terminal agent with native Supabase Realtime support and improved session/power management logic.
+- **Unified PC Timer UI** — Professionalized PC Map dashboard with high-density table views and standardized Pondo-style cards.
+
+### Infrastructure
+- **Postgres Database** — Migrated all collections (stations, sessions, customers, services, etc.) to relational Postgres tables.
+- **Supabase Auth** — Switched authentication provider to Supabase Auth.
+- **Supabase Realtime** — Replaced Firestore listeners with Postgres-level Realtime subscriptions.
+
+### Removed
+- **Firebase SDK** — Completely removed all `firebase` and `firebase-admin` dependencies and configuration files.
+- **Cloud Functions** — Deleted legacy Firebase Cloud Functions in favor of frontend-driven Supabase logic.
+
 ## [0.7.3] — 2026-03-10
 
 ### Fixed

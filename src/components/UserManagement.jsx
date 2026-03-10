@@ -17,31 +17,10 @@ import LockOpenIcon from "@mui/icons-material/LockOpen";
 import DeleteIcon from "@mui/icons-material/Delete";
 import SearchIcon from "@mui/icons-material/Search";
 import PersonAddIcon from "@mui/icons-material/PersonAdd";
-import {
-  collection, query, orderBy, onSnapshot,
-  doc, updateDoc, setDoc, serverTimestamp,
-} from "firebase/firestore";
-import {
-  sendPasswordResetEmail,
-  createUserWithEmailAndPassword,
-  signOut as fbSignOut,
-} from "firebase/auth";
-import { initializeApp, getApps } from "firebase/app";
-import { getAuth } from "firebase/auth";
-import { db, auth, firebaseConfig } from "../firebase";
+import { supabase } from "../supabase";
 import { registerFingerprint } from "../services/biometricService";
 import { getFriendlyErrorMessage } from "../services/errorService";
 import { ROLES } from "../utils/permissions";
-
-// ---------------------------------------------------------------------------
-// Secondary Firebase app — used for user creation so the admin session is
-// never disturbed by createUserWithEmailAndPassword signing in as the new user.
-// ---------------------------------------------------------------------------
-const SECONDARY_APP_NAME = "admin-user-creator";
-const secondaryApp =
-  getApps().find((a) => a.name === SECONDARY_APP_NAME) ||
-  initializeApp(firebaseConfig, SECONDARY_APP_NAME);
-const secondaryAuth = getAuth(secondaryApp);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -143,7 +122,7 @@ function EditUserDrawer({ open, onClose, user, onSave }) {
 
   useEffect(() => {
     if (open && user) {
-      setFullName(user.fullName || "");
+      setFullName(user.full_name || "");
       setRole(user.role || ROLES.STAFF);
       setSaving(false);
     }
@@ -245,20 +224,28 @@ export default function UserManagement({ showSnackbar }) {
 
   // Real-time user list
   useEffect(() => {
-    const q = query(collection(db, "users"), orderBy("fullName"));
-    const unsub = onSnapshot(q, (snap) => {
-      setUsers(
-        snap.docs
-          .map((d) => ({ id: d.id, ...d.data() }))
-          .filter((u) => !u.deleted)
-      );
+    const fetchUsers = async () => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('full_name');
+      if (error) {
+        console.warn("Failed to load users:", error);
+        showSnackbar?.(getFriendlyErrorMessage(error), "error");
+      } else {
+        setUsers(data || []);
+      }
       setLoading(false);
-    }, (err) => {
-      console.warn("Failed to load users:", err);
-      showSnackbar?.(getFriendlyErrorMessage(err), "error");
-      setLoading(false);
-    });
-    return () => unsub();
+    };
+
+    fetchUsers();
+
+    const channel = supabase
+      .channel('usermgmt-profiles')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, fetchUsers)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
   // Filtered list
@@ -267,7 +254,7 @@ export default function UserManagement({ showSnackbar }) {
     return users.filter((u) => {
       if (roleFilter !== "all" && u.role !== roleFilter) return false;
       if (q) {
-        const name = (u.fullName || "").toLowerCase();
+        const name = (u.full_name || "").toLowerCase();
         const email = (u.email || "").toLowerCase();
         if (!name.includes(q) && !email.includes(q)) return false;
       }
@@ -278,28 +265,75 @@ export default function UserManagement({ showSnackbar }) {
   // ---- Handlers ----
 
   const handleAddUser = async ({ fullName, email, password, role }) => {
-    const { user } = await createUserWithEmailAndPassword(secondaryAuth, email, password);
-    await fbSignOut(secondaryAuth); // Clean up secondary session immediately
-    await setDoc(doc(db, "users", user.uid), {
+    const { createClient } = await import('@supabase/supabase-js');
+    const secondaryClient = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY);
+    const { data: signUpData, error: signUpErr } = await secondaryClient.auth.signUp({ email, password });
+    if (signUpErr) throw signUpErr;
+    await secondaryClient.auth.signOut();
+    const { error: insertErr } = await supabase.from('profiles').insert([{
+      id: signUpData.user.id,
       email,
-      fullName,
+      full_name: fullName,
       role,
       suspended: false,
-      requiresPasswordReset: true,
-      createdAt: serverTimestamp(),
-    });
+      requires_password_reset: true,
+      created_at: new Date().toISOString(),
+    }]);
+    if (insertErr) throw insertErr;
     showSnackbar?.(`User ${fullName} created successfully.`, "success");
   };
 
   const handleEditUser = async (uid, updates) => {
-    await updateDoc(doc(db, "users", uid), updates);
+    const { error } = await supabase
+      .from('profiles')
+      .update({ full_name: updates.fullName, role: updates.role, updated_at: new Date().toISOString() })
+      .eq('id', uid);
+    if (error) throw error;
     showSnackbar?.("User updated.", "success");
   };
 
   const handleResetPassword = async (u) => {
     try {
-      await sendPasswordResetEmail(auth, u.email);
+      await supabase.auth.resetPasswordForEmail(u.email, {
+        redirectTo: `${window.location.origin}/login`,
+      });
       showSnackbar?.(`Password reset email sent to ${u.email}.`, "success");
+    } catch (err) {
+      showSnackbar?.(getFriendlyErrorMessage(err), "error");
+    }
+  };
+
+  const handleOnboard = async (u) => {
+    try {
+      // 1. Create a clear temporary password
+      const tempPassword = "Kunek" + Math.random().toString(36).slice(-5).toUpperCase() + "!";
+      
+      const { createClient } = await import('@supabase/supabase-js');
+      const secondaryClient = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY);
+      
+      // 2. Sign up the user in Auth
+      // NOTE: This sends a confirmation email if configured in Supabase.
+      const { data: signUpData, error: signUpErr } = await secondaryClient.auth.signUp({ 
+        email: u.email, 
+        password: tempPassword 
+      });
+      
+      if (signUpErr) throw signUpErr;
+      
+      // 3. Update the profile with the new Auth ID and set the reset flag
+      const { error: profileErr } = await supabase
+        .from('profiles')
+        .update({ 
+          id: signUpData.user.id,
+          requires_password_reset: true 
+        })
+        .eq('email', u.email);
+      
+      if (profileErr) throw profileErr;
+      
+      // 4. Show the password to the admin
+      alert(`User ${u.full_name} onboarded!\n\nTemporary Password: ${tempPassword}\n\nPlease give this to the user. They will be forced to change it on login.`);
+      showSnackbar?.(`Onboarded ${u.full_name} successfully.`, "success");
     } catch (err) {
       showSnackbar?.(getFriendlyErrorMessage(err), "error");
     }
@@ -307,14 +341,16 @@ export default function UserManagement({ showSnackbar }) {
 
   const handleToggleSuspend = async (u) => {
     const newVal = !u.suspended;
-    await updateDoc(doc(db, "users", u.id), { suspended: newVal });
-    showSnackbar?.(newVal ? `${u.fullName} suspended.` : `${u.fullName} reactivated.`, "success");
+    const { error } = await supabase.from('profiles').update({ suspended: newVal }).eq('id', u.id);
+    if (error) throw error;
+    showSnackbar?.(newVal ? `${u.full_name} suspended.` : `${u.full_name} reactivated.`, "success");
   };
 
   const handleDelete = async (u) => {
-    await updateDoc(doc(db, "users", u.id), { deleted: true });
+    const { error } = await supabase.from('profiles').delete().eq('id', u.id);
+    if (error) throw error;
     showSnackbar?.(
-      `${u.fullName} removed from the system. Their Firebase Auth account still exists — delete it from Firebase Console if needed.`,
+      `${u.full_name} removed from the system. Their auth account still exists in the authentication provider.`,
       "info"
     );
   };
@@ -323,13 +359,14 @@ export default function UserManagement({ showSnackbar }) {
     if (!targetUser) return;
     setRegisteringUid(targetUser.id);
     try {
-      const result = await registerFingerprint(targetUser.email, targetUser.fullName || targetUser.email);
+      const result = await registerFingerprint(targetUser.email, targetUser.full_name || targetUser.email);
       if (result?.success) {
-        await updateDoc(doc(db, "users", targetUser.id), {
-          biometricId: result.credentialId,
-          biometricRegisteredAt: new Date().toISOString(),
-        });
-        showSnackbar?.(`Fingerprint registered for ${targetUser.fullName || targetUser.email}`, "success");
+        const { error } = await supabase
+          .from('profiles')
+          .update({ biometric_id: result.credentialId, biometric_registered_at: new Date().toISOString() })
+          .eq('id', targetUser.id);
+        if (error) throw error;
+        showSnackbar?.(`Fingerprint registered for ${targetUser.full_name || targetUser.email}`, "success");
       }
     } catch (err) {
       showSnackbar?.(getFriendlyErrorMessage(err), "error");
@@ -349,20 +386,20 @@ export default function UserManagement({ showSnackbar }) {
   const confirmMeta = confirmTarget
     ? confirmTarget.action === "delete"
       ? {
-        title: `Delete ${confirmTarget.user.fullName}?`,
-        message: `This will hide the account from the system. Their Firebase Auth account must be deleted separately from the Firebase Console.`,
+        title: `Delete ${confirmTarget.user.full_name}?`,
+        message: `This will remove the account from the system. Their auth account still exists in the authentication provider.`,
         confirmLabel: "Delete",
         confirmColor: "error",
       }
       : confirmTarget.action === "suspend"
         ? {
-          title: `Suspend ${confirmTarget.user.fullName}?`,
+          title: `Suspend ${confirmTarget.user.full_name}?`,
           message: `They will be blocked from logging in immediately.`,
           confirmLabel: "Suspend",
           confirmColor: "warning",
         }
         : {
-          title: `Reactivate ${confirmTarget.user.fullName}?`,
+          title: `Reactivate ${confirmTarget.user.full_name}?`,
           message: `They will be able to log in again.`,
           confirmLabel: "Reactivate",
           confirmColor: "success",
@@ -439,18 +476,18 @@ export default function UserManagement({ showSnackbar }) {
               ) : (
                 filtered.map((u) => (
                   <TableRow key={u.id} hover sx={{ opacity: u.suspended ? 0.7 : 1 }}>
-                    <TableCell sx={{ fontWeight: 500 }}>{u.fullName || "—"}</TableCell>
+                    <TableCell sx={{ fontWeight: 500 }}>{u.full_name || "—"}</TableCell>
                     <TableCell>{u.email || "—"}</TableCell>
                     <TableCell>{ROLE_LABELS[u.role] || u.role || "—"}</TableCell>
                     <TableCell><StatusChip suspended={u.suspended} /></TableCell>
                     <TableCell align="center">
-                      <Tooltip title={u.biometricId ? "Re-register Fingerprint" : "Register Fingerprint (Windows Hello)"}>
+                      <Tooltip title={u.biometric_id ? "Re-register Fingerprint" : "Register Fingerprint (Windows Hello)"}>
                         <span>
                           <IconButton
                             size="small"
                             onClick={() => handleRegisterUser(u)}
                             disabled={registeringUid === u.id}
-                            color={u.biometricId ? "success" : "default"}
+                            color={u.biometric_id ? "success" : "default"}
                           >
                             {registeringUid === u.id
                               ? <CircularProgress size={16} />
@@ -469,6 +506,11 @@ export default function UserManagement({ showSnackbar }) {
                         <Tooltip title="Send password reset email">
                           <IconButton size="small" onClick={() => handleResetPassword(u)}>
                             <LockResetIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Migrate/Onboard to Supabase">
+                          <IconButton size="small" color="primary" onClick={() => handleOnboard(u)}>
+                            <PersonAddIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
                         <Tooltip title={u.suspended ? "Reactivate account" : "Suspend account"}>
@@ -500,7 +542,7 @@ export default function UserManagement({ showSnackbar }) {
         <Typography variant="caption" color="text.secondary" sx={{ mt: 1.5, display: "block" }}>
           {filtered.length} user{filtered.length !== 1 ? "s" : ""} shown
           {filtered.length !== users.length ? ` (${users.length} total)` : ""}.
-          Deleting removes from this system only — Firebase Auth account must be removed separately.
+          Deleting removes from this system only — the auth account must be removed separately from the authentication provider.
         </Typography>
       </Card>
 
@@ -531,7 +573,7 @@ export default function UserManagement({ showSnackbar }) {
                 filtered.map((u) => (
                   <TableRow key={u.id} hover sx={{ opacity: u.suspended ? 0.7 : 1 }}>
                     <TableCell>
-                      <Typography variant="body2" fontWeight={600} noWrap>{u.fullName || "—"}</Typography>
+                      <Typography variant="body2" fontWeight={600} noWrap>{u.full_name || "—"}</Typography>
                       <Typography variant="caption" color="text.secondary" display="block" noWrap>
                         {ROLE_LABELS[u.role] || u.role} · {u.email}
                       </Typography>
@@ -556,7 +598,7 @@ export default function UserManagement({ showSnackbar }) {
                           size="small"
                           onClick={() => handleRegisterUser(u)}
                           disabled={registeringUid === u.id}
-                          color={u.biometricId ? "success" : "default"}
+                          color={u.biometric_id ? "success" : "default"}
                         >
                           {registeringUid === u.id ? <CircularProgress size={14} /> : <FingerprintIcon fontSize="small" />}
                         </IconButton>
