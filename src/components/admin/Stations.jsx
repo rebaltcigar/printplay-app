@@ -13,6 +13,8 @@ import DownloadIcon from '@mui/icons-material/Download';
 import { supabase } from '../../supabase';
 import PageHeader from '../common/PageHeader';
 import ConfirmationReasonDialog from '../ConfirmationReasonDialog';
+import { generateUUID } from '../../utils/uuid';
+
 
 const BLANK_SPECS = { cpu: '', gpu: '', ram: '', monitor: '' };
 const BLANK_FORM = {
@@ -89,7 +91,7 @@ export default function Stations({ showSnackbar }) {
         showSnackbar('Station updated');
       } else {
         const { error } = await supabase.from('stations').insert([{
-          id: crypto.randomUUID(),
+          id: generateUUID(),
           ...data,
           status: 'offline',
           current_session_id: null,

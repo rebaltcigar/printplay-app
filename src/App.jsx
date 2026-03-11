@@ -14,12 +14,15 @@ import AdminDashboard from "./components/AdminDashboard.jsx";
 import ForcePasswordReset from "./components/common/ForcePasswordReset.jsx";
 import { AnalyticsProvider } from "./contexts/AnalyticsContext";
 import { GlobalUIProvider } from "./contexts/GlobalUIContext.jsx";
+import { StaffProvider } from "./contexts/StaffContext.jsx";
+import { ServiceProvider } from "./contexts/ServiceContext.jsx";
 
 import { supabase } from "./supabase";
 
 import { generateDisplayId } from "./services/orderService";
 import { convertLogoUrl } from "./services/brandingService";
 import { canAccessAdmin } from "./utils/permissions";
+import { generateUUID } from "./utils/uuid";
 
 import darkTheme from "./theme";
 import LoadingScreen from "./components/common/LoadingScreen";
@@ -130,10 +133,19 @@ export default function App() {
 
   // Fast-path: if there is no cached Supabase session on mount, skip the loading
   // screen immediately so logged-out users see the login page without delay.
+  // Also add listener for tab visibility to refresh session when waking from sleep.
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) setAuthReady(true);
     });
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        supabase.auth.getSession().catch(console.warn);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, []);
 
   // ------------------ AUTH BOOTSTRAP  // 1. Initial Auth State
@@ -141,7 +153,7 @@ export default function App() {
     let internalAuthReady = false;
 
     console.log("[App] Initializing Auth Bootstrap... authReady:", authReady);
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       internalAuthReady = true;
       const user = session?.user || null;
       console.log(`[App] Auth Event: ${event}`, user ? `(User: ${user.email})` : "(No User)");
@@ -152,7 +164,10 @@ export default function App() {
         setRequiresPasswordReset(true);
       }
 
-      try {
+      // Wrap in an IIFE to prevent Supabase from awaiting this callback,
+      // which can block the `signInWithPassword` promise from resolving!
+      (async () => {
+        try {
         if (!user) {
           // reset everything on sign out
           setCurrentUser(null);
@@ -221,14 +236,15 @@ export default function App() {
       } finally {
         setAuthReady(true);
       }
+      })(); // End IIFE
     });
 
     // Force authReady if the listener stalls completely (e.g. offline, profile fetch hangs, etc.)
-    // Do NOT guard on internalAuthReady — the listener fires before async work completes,
-    // so internalAuthReady=true is no guarantee that setAuthReady(true) will ever run.
+    // Increased from 3s to 8s because token refresh on page reload can sometimes take longer,
+    // causing a premature redirect to the Login page.
     const authTimeout = setTimeout(() => {
       setAuthReady(true);
-    }, 3000);
+    }, 8000);
 
     return () => {
       clearTimeout(authTimeout);
@@ -415,7 +431,7 @@ export default function App() {
 
     // Instead of auto-generating ID, let Postgres generate a UUID and return it
     const { data: shiftDoc, error: shiftError } = await supabase.from('shifts').insert([{
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       display_id: displayId,
       staff_email: user.email,
       shift_period: shiftLabel,
@@ -466,7 +482,7 @@ export default function App() {
 
     // Write clock-in log
     const { data: logRef, error: logError } = await supabase.from('payroll_logs').insert([{
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       staff_uid: user.id,
       staff_email: user.email,
       staff_name: userData?.full_name || user.email,
@@ -533,7 +549,7 @@ export default function App() {
             <Routes>
               {/* Public / Login Route */}
               <Route path="/login" element={
-                !currentUser || (userRole === 'staff' && !activeShiftId && !clockInMode) ? (
+                !currentUser || !userRole || (userRole === 'staff' && !activeShiftId && !clockInMode) ? (
                   <Login
                     onLogin={handleLogin}
                     onStartShift={handleStartShift}
@@ -577,9 +593,13 @@ export default function App() {
               <Route path="/admin/*" element={
                 currentUser && canAccessAdmin(userRole) ? (
                   <Box sx={{ width: "100%", height: "100%", display: "flex" }}>
-                    <AnalyticsProvider>
-                      <AdminDashboard user={currentUser} userRole={userRole} onLogout={handleAdminLogout} appSettings={appSettings} />
-                    </AnalyticsProvider>
+                    <StaffProvider>
+                      <ServiceProvider>
+                        <AnalyticsProvider>
+                          <AdminDashboard user={currentUser} userRole={userRole} onLogout={handleAdminLogout} appSettings={appSettings} />
+                        </AnalyticsProvider>
+                      </ServiceProvider>
+                    </StaffProvider>
                   </Box>
                 ) : (
                   <Navigate to="/login" replace />

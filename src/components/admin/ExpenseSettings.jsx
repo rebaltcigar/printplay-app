@@ -17,6 +17,8 @@ import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
 import BusinessIcon from '@mui/icons-material/Business';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import HighlightOffIcon from '@mui/icons-material/HighlightOff';
+import { generateUUID } from '../../utils/uuid';
+
 
 export default function ExpenseSettings({ showSnackbar }) {
     const [types, setTypes] = useState([]);
@@ -31,7 +33,7 @@ export default function ExpenseSettings({ showSnackbar }) {
             const { data } = await supabase
                 .from('products')
                 .select('*')
-                .eq('financial_category', 'Expense');
+                .eq('category', 'Expense');
             if (data) {
                 const list = [...data].sort((a, b) => {
                     if (a.active === b.active) return a.name.localeCompare(b.name);
@@ -83,8 +85,8 @@ export default function ExpenseSettings({ showSnackbar }) {
         try {
             const payload = {
                 name: form.name.trim(),
-                financial_category: 'Expense',
-                category: form.financialCategory,
+                category: 'Expense',
+                financial_category: form.financialCategory || 'OPEX',
                 active: form.active,
                 updated_at: new Date().toISOString(),
             };
@@ -94,7 +96,7 @@ export default function ExpenseSettings({ showSnackbar }) {
                 showSnackbar('Expense type updated', 'success');
             } else {
                 const { error } = await supabase.from('products').insert([{
-                    id: crypto.randomUUID(),
+                    id: generateUUID(),
                     ...payload,
                     price: 0,
                     sort_order: 999,

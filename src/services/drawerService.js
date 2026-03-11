@@ -1,5 +1,7 @@
 // src/utils/drawerService.js
 import { supabase } from '../supabase';
+import { generateUUID } from '../utils/uuid';
+
 
 /**
  * Triggers the cash drawer to open via the Web Serial API.
@@ -85,7 +87,7 @@ export const openDrawer = async (user, triggerType = 'manual') => {
 
   // 6. LOG TO SUPABASE
   try {
-    const newId = crypto.randomUUID();
+    const newId = generateUUID();
     await supabase.from('drawer_logs').insert([{
       id: newId,
       staff_email: user?.email || 'unknown',

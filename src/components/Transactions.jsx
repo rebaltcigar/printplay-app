@@ -47,8 +47,8 @@ import PageHeader from "./common/PageHeader";
 import { useGlobalUI } from "../contexts/GlobalUIContext";
 import DetailDrawer from "./common/DetailDrawer";
 import SummaryCards from "./common/SummaryCards";
-import { useStaffList } from "../hooks/useStaffList";
-import { useServiceList } from "../hooks/useServiceList";
+import { useStaff } from "../contexts/StaffContext";
+import { useServices } from "../contexts/ServiceContext";
 import { useShiftOptions } from "../hooks/useShiftOptions";
 import {
   fmtCurrency,
@@ -74,6 +74,8 @@ const toTimeInput = (d) => {
 // currency alias for local usage
 const currency = fmtCurrency;
 
+const PAGE_SIZE = 200;
+
 /* ---------- component ---------- */
 const Transactions = ({ isActive = true }) => {
   const { showSnackbar, showConfirm } = useGlobalUI();
@@ -91,9 +93,9 @@ const Transactions = ({ isActive = true }) => {
   // Unified status filter that drives showDeleted / onlyDeleted / onlyEdited
   const [filterStatus, setFilterStatus] = useState("all");
 
-  // Option lists from shared hooks
-  const { staffOptions, userMap } = useStaffList();
-  const { parentServiceNames: serviceItems, expenseServiceNames: expenseServiceItems } = useServiceList();
+  // Option lists from shared context providers
+  const { staffOptions, userMap } = useStaff();
+  const { parentServiceNames: serviceItems, expenseServiceNames: expenseServiceItems } = useServices();
 
   // Shift options via hook (replaces manual useEffect + useState)
   const { shiftOptions } = useShiftOptions({ startDate: start, endDate: end, emailToName: userMap });
@@ -210,11 +212,54 @@ const Transactions = ({ isActive = true }) => {
   };
 
   const fetchNextPage = async (isReset = false, forceAll = false) => {
+    if (forceAll) {
+      await fetchAllTransactions(false);
+      return;
+    }
+
     setLoadingMore(true);
     try {
-      // Not implemented for Supabase yet as merging 3 tables with cursors is non-trivial.
-      // Will just show a snackbar for now.
-      showSnackbar("Pagination not yet supported for merged tables.", 'info');
+      const s = new Date(start); s.setHours(0, 0, 0, 0);
+      const e = new Date(end); e.setHours(23, 59, 59, 999);
+      // cursor = timestamp of last loaded row; null means first page
+      const cursorTs = isReset ? null : lastDoc;
+
+      const buildQuery = (table) => {
+        let q = supabase.from(table).select('*')
+          .gte('timestamp', s.toISOString())
+          .lte('timestamp', e.toISOString())
+          .order('timestamp', { ascending: false })
+          .limit(PAGE_SIZE);
+        if (cursorTs) q = q.lt('timestamp', cursorTs);
+        return q;
+      };
+
+      const [resOrders, resPc, resEx] = await Promise.all([
+        buildQuery('order_items'),
+        buildQuery('pc_transactions'),
+        buildQuery('expenses'),
+      ]);
+
+      const newRows = [
+        ...(resOrders.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name, addedByAdmin: d.added_by_admin, editedBy: d.edited_by, isEdited: d.is_edited, staffEmail: d.staff_email, shiftId: d.shift_id, source: d.source })),
+        ...(resPc.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name, addedByAdmin: d.added_by_admin, editedBy: d.edited_by, isEdited: d.is_edited, staffEmail: d.staff_email, shiftId: d.shift_id, source: d.source })),
+        ...(resEx.data || []).map(d => ({ ...d, item: 'Expenses', paymentMethod: 'Cash', isDeleted: false, amount: Number(d.amount), total: Number(d.amount), expenseType: d.expense_type, expenseStaffName: d.staff_name, editedBy: d.edited_by, isEdited: d.is_edited, staffEmail: d.staff_email, shiftId: d.shift_id, source: d.source })),
+      ];
+
+      newRows.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      const page = newRows.slice(0, PAGE_SIZE);
+
+      setTx(prev => isReset ? page : [...prev, ...page]);
+
+      if (page.length > 0) {
+        setLastDoc(page[page.length - 1].timestamp);
+      }
+
+      // If any table returned a full PAGE_SIZE batch, there may be more rows
+      const anyTableFull = (resOrders.data?.length || 0) >= PAGE_SIZE
+        || (resPc.data?.length || 0) >= PAGE_SIZE
+        || (resEx.data?.length || 0) >= PAGE_SIZE;
+      setHasMore(page.length === PAGE_SIZE && anyTableFull);
 
     } catch (err) {
       console.error("Pagination error", err);

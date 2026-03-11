@@ -20,6 +20,8 @@ export const getFriendlyErrorMessage = (error) => {
             return "This email is already registered.";
         case 'weak_password':
             return "Password should be at least 6 characters.";
+        case 'email_address_invalid':
+            return "Invalid email address. Supabase rejects test/disposable domains — use a real email (e.g. name@company.com).";
         case 'over_confirmation_rate_limit':
             return "Too many requests. Please try again later.";
         case 'network_error':

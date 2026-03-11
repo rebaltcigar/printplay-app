@@ -41,17 +41,18 @@ export default function CustomerSelectionDrawer({ open, onClose, currentCustomer
         setSaving(true);
         try {
             const finalData = {
-                ...formData,
-                fullName: formData.fullName.trim(),
+                email: formData.email,
+                phone: formData.phone,
                 address: formData.address.trim(),
-                tin: formData.tin.trim()
+                tin: formData.tin.trim(),
+                full_name: formData.fullName.trim(),
             };
 
             // Member-specific logic if username is provided
             if (formData.username.trim()) {
                 finalData.username = formData.username.trim().toLowerCase();
-                finalData.minutesRemaining = 0;
-                finalData.forcePasswordChange = true;
+                finalData.minutes_remaining = 0;
+                finalData.force_password_change = true;
             }
 
             const newCust = await createCustomer(finalData);

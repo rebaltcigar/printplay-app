@@ -11,6 +11,8 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import { supabase } from '../../supabase';
 import PageHeader from '../common/PageHeader';
 import ConfirmationReasonDialog from '../ConfirmationReasonDialog';
+import { generateUUID } from '../../utils/uuid';
+
 
 const BLANK = { name: '', color: '#1976d2', sortOrder: 0, rateId: '' };
 
@@ -69,7 +71,7 @@ export default function Zones({ showSnackbar }) {
         showSnackbar('Zone updated');
       } else {
         const { error } = await supabase.from('zones').insert([{
-          id: crypto.randomUUID(),
+          id: generateUUID(),
           ...data,
           created_at: new Date().toISOString(),
         }]);

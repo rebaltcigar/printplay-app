@@ -532,3 +532,34 @@ CREATE INDEX IF NOT EXISTS idx_shifts_start_time ON shifts(start_time);
 CREATE INDEX IF NOT EXISTS idx_payroll_logs_staff_id ON payroll_logs(staff_id);
 CREATE INDEX IF NOT EXISTS idx_payroll_line_items_run_id ON payroll_line_items(run_id);
 CREATE INDEX IF NOT EXISTS idx_station_logs_station_id ON station_logs(station_id);
+
+-- 9. ROW LEVEL SECURITY POLICIES
+-- shift_templates: authenticated users can fully manage
+ALTER TABLE shift_templates ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "shift_templates_select" ON shift_templates FOR SELECT TO authenticated USING (true);
+CREATE POLICY "shift_templates_insert" ON shift_templates FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "shift_templates_update" ON shift_templates FOR UPDATE TO authenticated USING (true);
+CREATE POLICY "shift_templates_delete" ON shift_templates FOR DELETE TO authenticated USING (true);
+
+-- schedules: authenticated users can fully manage
+ALTER TABLE schedules ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "schedules_select" ON schedules FOR SELECT TO authenticated USING (true);
+CREATE POLICY "schedules_insert" ON schedules FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "schedules_update" ON schedules FOR UPDATE TO authenticated USING (true);
+CREATE POLICY "schedules_delete" ON schedules FOR DELETE TO authenticated USING (true);
+
+-- 10. REALTIME PUBLICATION
+-- Enables Supabase Realtime (postgres_changes) for tables that need live updates.
+-- Tables NOT listed here will not fire realtime events even if subscribed to in the app.
+ALTER PUBLICATION supabase_realtime ADD TABLE orders;
+ALTER PUBLICATION supabase_realtime ADD TABLE order_items;
+ALTER PUBLICATION supabase_realtime ADD TABLE pc_transactions;
+ALTER PUBLICATION supabase_realtime ADD TABLE expenses;
+ALTER PUBLICATION supabase_realtime ADD TABLE shifts;
+ALTER PUBLICATION supabase_realtime ADD TABLE settings;
+ALTER PUBLICATION supabase_realtime ADD TABLE profiles;
+ALTER PUBLICATION supabase_realtime ADD TABLE products;
+ALTER PUBLICATION supabase_realtime ADD TABLE customers;
+ALTER PUBLICATION supabase_realtime ADD TABLE invoices;
+ALTER PUBLICATION supabase_realtime ADD TABLE app_status;
+ALTER PUBLICATION supabase_realtime ADD TABLE payroll_runs;

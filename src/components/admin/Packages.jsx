@@ -11,6 +11,8 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import { supabase } from '../../supabase';
 import PageHeader from '../common/PageHeader';
 import ConfirmationReasonDialog from '../ConfirmationReasonDialog';
+import { generateUUID } from '../../utils/uuid';
+
 
 const BLANK_FORM = {
   name: '', minutes: '', price: '', bonusMinutes: 0,
@@ -82,7 +84,7 @@ export default function Packages({ showSnackbar }) {
         showSnackbar('Package updated');
       } else {
         const { error } = await supabase.from('packages').insert([{
-          id: crypto.randomUUID(),
+          id: generateUUID(),
           ...data,
           created_at: new Date().toISOString(),
         }]);

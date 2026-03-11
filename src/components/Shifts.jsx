@@ -1,5 +1,5 @@
 // src/components/Shifts.jsx
-import React, { useEffect, useMemo, useState, useRef } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Box,
   Typography,
@@ -69,8 +69,8 @@ import { useGlobalUI } from "../contexts/GlobalUIContext";
 import { fmtDate } from "../utils/formatters";
 import { fmtPeso, normalize } from "../services/analyticsService";
 import { aggregateShiftTransactions, computeExpectedCash } from "../utils/shiftFinancials";
-import { useStaffList } from "../hooks/useStaffList";
-import { useServiceList } from "../hooks/useServiceList";
+import { useStaff } from "../contexts/StaffContext";
+import { useServices } from "../contexts/ServiceContext";
 
 // Shift period options
 const SHIFT_PERIODS = ["Morning", "Afternoon", "Evening"];
@@ -86,9 +86,9 @@ const Shifts = ({ isActive = true }) => {
   const [loading, setLoading] = useState(true);
   const [viewingShift, setViewingShift] = useState(null);
 
-  // Staff and services from shared hooks
-  const { staffOptions, userMap } = useStaffList();
-  const { serviceMeta } = useServiceList();
+  // Staff and services from shared context providers
+  const { staffOptions, userMap } = useStaff();
+  const { serviceMeta } = useServices();
 
   const [view, setView] = useState("summary");
   const [addOpen, setAddOpen] = useState(false);
@@ -115,7 +115,6 @@ const Shifts = ({ isActive = true }) => {
   const [consolidationTx, setConsolidationTx] = useState([]);
 
   const [txAggByShift, setTxAggByShift] = useState({});
-  const txUnsubsRef = useRef({});
 
   const [currentShift, setCurrentShift] = useState(null);
   const isAnyShiftActive = !!(currentShift && currentShift.activeShiftId);
@@ -163,6 +162,7 @@ const Shifts = ({ isActive = true }) => {
   }, []);
 
   useEffect(() => {
+    let channel;
     setLoading(true);
 
     const fetchShifts = async () => {
@@ -203,47 +203,55 @@ const Shifts = ({ isActive = true }) => {
 
     fetchShifts();
 
-    // Re-fetch when dependencies change; complex filtering via realtime is hard.
+    // Subscribe to realtime changes on the shifts table so UI updates when a shift is added/modified
+    channel = supabase.channel('public:shifts:list')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shifts' }, () => {
+        // Debounce or just simply refetch the list.
+        fetchShifts();
+      })
+      .subscribe();
+
+    // Re-fetch when dependencies change
+    return () => {
+      if (channel) supabase.removeChannel(channel);
+    };
   }, [startDate, endDate]);
 
   useEffect(() => {
-    const desired = new Set(shifts.map((s) => s.id));
-    for (const id of Object.keys(txUnsubsRef.current)) {
-      if (!desired.has(id)) {
-        // We will just clear our cache, no unsubs needed for simple fetches
-        delete txUnsubsRef.current[id];
-      }
-    }
+    if (!shifts.length || !serviceMeta.length) return;
 
-    shifts.forEach((s) => {
-      if (txUnsubsRef.current[s.id]) return;
-      txUnsubsRef.current[s.id] = true; // Mark as fetching
+    const shiftIds = shifts.map((s) => s.id);
 
-      // Fetch from both new tables
-      Promise.all([
-        supabase.from('order_items').select('*').eq('shift_id', s.id),
-        supabase.from('pc_transactions').select('*').eq('shift_id', s.id),
-        supabase.from('expenses').select('*').eq('shift_id', s.id)
-      ]).then(([resOrders, resPc, resEx]) => {
-        const txs = [
-          ...(resOrders.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount) })),
-          ...(resPc.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount) })),
-          ...(resEx.data || []).map(d => ({ ...d, item: 'Expenses', paymentMethod: 'Cash', isDeleted: false, amount: Number(d.amount), total: Number(d.amount) }))
-        ];
+    Promise.all([
+      supabase.from('order_items').select('*').in('shift_id', shiftIds),
+      supabase.from('pc_transactions').select('*').in('shift_id', shiftIds),
+      supabase.from('expenses').select('*').in('shift_id', shiftIds),
+    ]).then(([resOrders, resPc, resEx]) => {
+      // Group raw rows by shift_id
+      const byShift = {};
+      shiftIds.forEach(id => { byShift[id] = []; });
 
+      (resOrders.data || []).forEach(d =>
+        byShift[d.shift_id]?.push({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount) })
+      );
+      (resPc.data || []).forEach(d =>
+        byShift[d.shift_id]?.push({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount) })
+      );
+      (resEx.data || []).forEach(d =>
+        byShift[d.shift_id]?.push({ ...d, item: 'Expenses', paymentMethod: 'Cash', isDeleted: false, amount: Number(d.amount), total: Number(d.amount) })
+      );
+
+      const next = {};
+      shiftIds.forEach(id => {
+        const txs = byShift[id];
         const aggregated = aggregateShiftTransactions(txs, serviceMeta);
-        setTxAggByShift((prev) => ({
-          ...prev,
-          [s.id]: { ...aggregated, fullTransactions: txs }
-        }));
-      }).catch(e => {
-        console.warn("transactions fetch failed for shift", s.id, e);
+        next[id] = { ...aggregated, fullTransactions: txs };
       });
-    });
 
-    return () => {
-      txUnsubsRef.current = {};
-    };
+      setTxAggByShift(next);
+    }).catch(e => {
+      console.warn("batch transactions fetch failed", e);
+    });
   }, [shifts, serviceMeta]);
 
   const lastTwoShiftIds = useMemo(() => filteredShifts.slice(0, 2).map((s) => s.id), [filteredShifts]);
@@ -327,6 +335,7 @@ const Shifts = ({ isActive = true }) => {
       setAddOpen(false);
       setNewStart("");
       setNewEnd("");
+      setShifts(prev => [newShift, ...prev]);
       setViewingShift(newShift);
     } catch (e) {
       showSnackbar(`Failed to add shift: ${e.message}`, 'error');
@@ -347,14 +356,16 @@ const Shifts = ({ isActive = true }) => {
   const handleSaveEdit = async () => {
     if (!editShift) return;
     try {
-      await updateShift(editShift.id, {
+      const updatedData = {
         staffEmail: editStaffEmail.trim(),
         shiftPeriod: editShiftPeriod,
         startTime: editStart,
         endTime: editEnd,
         pcRentalTotal: editPcRental !== "" ? Number(editPcRental) : undefined,
         systemTotal: editSystemTotal !== "" ? Number(editSystemTotal) : undefined,
-      });
+      };
+      await updateShift(editShift.id, updatedData);
+      setShifts(prev => prev.map(s => s.id === editShift.id ? { ...s, ...updatedData } : s));
       setEditOpen(false);
       setEditShift(null);
     } catch (e) {
@@ -372,6 +383,7 @@ const Shifts = ({ isActive = true }) => {
     if (!shiftToDelete) return;
     try {
       await deleteShift(shiftToDelete.id, deleteMode);
+      setShifts(prev => prev.filter(s => s.id !== shiftToDelete.id));
       setDeleteOpen(false);
       setShiftToDelete(null);
     } catch (e) {

@@ -23,6 +23,8 @@ import PageHeader from '../common/PageHeader';
 import SummaryCards from '../common/SummaryCards';
 import { fmtCurrency, fmtDate } from '../../utils/formatters';
 import { POS_ICON_OPTIONS } from '../../utils/posIcons.jsx';
+import { generateUUID } from '../../utils/uuid';
+
 
 const BLANK_FORM = {
   serviceName: '', price: '', active: true,
@@ -67,10 +69,10 @@ export default function ServiceCatalog({ showSnackbar }) {
         event: '*',
         schema: 'public',
         table: 'products',
-        filter: 'financial_category=eq.Sale',
+        filter: 'category=eq.Sale',
       }, () => {
         // Reload on any change
-        supabase.from('products').select('*').eq('financial_category', 'Sale')
+        supabase.from('products').select('*').eq('category', 'Sale')
           .then(({ data }) => {
             if (data) setItems(data);
           });
@@ -78,7 +80,7 @@ export default function ServiceCatalog({ showSnackbar }) {
       .subscribe();
 
     // Initial load
-    supabase.from('products').select('*').eq('financial_category', 'Sale')
+    supabase.from('products').select('*').eq('category', 'Sale')
       .then(({ data }) => {
         if (data) setItems(data);
       });
@@ -195,12 +197,12 @@ export default function ServiceCatalog({ showSnackbar }) {
       trackStock: Boolean(item.track_stock),
       stockCount: item.stock_count || 0,
       lowStockThreshold: item.low_stock_threshold || 5,
-      hasVariants: Boolean(item.hasVariants),
-      posIcon: item.posIcon || '',
-      priceType: item.priceType || (item.price > 0 ? 'fixed' : 'variable'),
-      pricingNote: item.pricingNote || '',
-      variantGroup: item.variantGroup || '',
-      posLabel: item.posLabel || '',
+      hasVariants: Boolean(item.has_variants),
+      posIcon: item.pos_icon || '',
+      priceType: item.price_type || (item.price > 0 ? 'fixed' : 'variable'),
+      pricingNote: item.pricing_note || '',
+      variantGroup: item.variant_group || '',
+      posLabel: item.pos_label || '',
       parent_service_id: item.parent_service_id || null,
       consumables: item.consumables || [],
     });
@@ -253,20 +255,20 @@ export default function ServiceCatalog({ showSnackbar }) {
       name: String(form.serviceName).trim(),
       price: isVariantParent ? 0 : Number(form.price || 0),
       active: Boolean(form.active),
-      financial_category: 'Sale',
+      category: 'Sale',
       parent_service_id: isEditingChild ? editing.parent_service_id : null,
       admin_only: Boolean(form.adminOnly),
-      category: form.type,
+      financial_category: isVariantParent ? 'Service' : (form.type === 'service' ? 'Service' : 'Retail'),
       cost_price: Number(form.costPrice || 0),
       track_stock: Boolean(form.trackStock),
       stock_count: Number(form.stockCount || 0),
       low_stock_threshold: Number(form.lowStockThreshold || 0),
-      hasVariants: isVariantParent,
-      posIcon: isEditingChild ? '' : (form.posIcon || ''),
-      priceType: form.priceType || 'fixed',
-      pricingNote: form.pricingNote?.trim() || '',
-      variantGroup: isEditingChild ? (form.variantGroup?.trim() || '') : '',
-      posLabel: isEditingChild ? (form.posLabel?.trim() || '') : '',
+      has_variants: isVariantParent,
+      pos_icon: isEditingChild ? '' : (form.posIcon || ''),
+      price_type: form.priceType || 'fixed',
+      pricing_note: form.pricingNote?.trim() || '',
+      variant_group: isEditingChild ? (form.variantGroup?.trim() || '') : '',
+      pos_label: isEditingChild ? (form.posLabel?.trim() || '') : '',
       consumables: form.consumables || [],
     };
     if (!payload.name) {
@@ -285,8 +287,7 @@ export default function ServiceCatalog({ showSnackbar }) {
         const topLevel = items.filter(i => !i.parent_service_id);
         const maxSort = topLevel.reduce((m, i) => Math.max(m, i.sort_order || 0), 0);
         payload.sort_order = maxSort + 1;
-        if (isVariantParent) payload.variantGroups = [];
-        const newId = crypto.randomUUID();
+          const newId = generateUUID();
         const { data: newData, error } = await supabase.from('products').insert([{ id: newId, ...payload }]).select().single();
         if (error) throw error;
         if (isVariantParent) {
@@ -319,21 +320,21 @@ export default function ServiceCatalog({ showSnackbar }) {
     const maxSort = siblings.reduce((m, i) => Math.max(m, i.sort_order || 0), 0);
     try {
       const { error } = await supabase.from('products').insert([{
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         name: variantAddForm.serviceName.trim(),
         price: variantAddForm.priceType === 'variable' ? 0 : Number(variantAddForm.price || 0),
         active: variantAddForm.active,
-        financial_category: 'Sale',
+        category: 'Sale',
         parent_service_id: editing.id,
         admin_only: false,
-        category: editing.category || 'service',
+        financial_category: editing.financial_category || 'Service',
         cost_price: 0, track_stock: false, stock_count: 0, low_stock_threshold: 5,
-        hasVariants: false,
-        variantGroup: variantAddForm.variantGroup,
-        posLabel: variantAddForm.posLabel.trim(),
-        posIcon: '',
-        priceType: variantAddForm.priceType,
-        pricingNote: variantAddForm.pricingNote.trim(),
+        has_variants: false,
+        variant_group: variantAddForm.variantGroup,
+        pos_label: variantAddForm.posLabel.trim(),
+        pos_icon: '',
+        price_type: variantAddForm.priceType,
+        pricing_note: variantAddForm.pricingNote.trim(),
         sort_order: maxSort + 1,
       }]);
       if (error) throw error;
@@ -355,10 +356,10 @@ export default function ServiceCatalog({ showSnackbar }) {
         name: variantEditForm.serviceName.trim(),
         price: variantEditForm.priceType === 'variable' ? 0 : Number(variantEditForm.price || 0),
         active: variantEditForm.active,
-        variantGroup: variantEditForm.variantGroup,
-        posLabel: variantEditForm.posLabel.trim(),
-        priceType: variantEditForm.priceType,
-        pricingNote: variantEditForm.pricingNote.trim(),
+        variant_group: variantEditForm.variantGroup,
+        pos_label: variantEditForm.posLabel.trim(),
+        price_type: variantEditForm.priceType,
+        pricing_note: variantEditForm.pricingNote.trim(),
       }).eq('id', editingVariantId);
       if (error) throw error;
       setEditingVariantId(null);
@@ -1013,7 +1014,7 @@ export default function ServiceCatalog({ showSnackbar }) {
                               <TableCell sx={{ pl: item.parent_service_id ? 4 : 2, fontWeight: item.parent_service_id ? 400 : 600 }}>
                                 <Box display="flex" alignItems="center" gap={1}>
                                   {item.name}
-                                  {item.hasVariants && (
+                                  {item.has_variants && (
                                     <Tooltip title={`${sortedAndGroupedItems.filter(i => i.parent_service_id === item.id).length} variant(s) — click Edit to manage`}>
                                       <Chip
                                         size="small"
@@ -1043,9 +1044,9 @@ export default function ServiceCatalog({ showSnackbar }) {
                                 </span>
                               </TableCell>
                               <TableCell>
-                                {item.hasVariants
+                                {item.has_variants
                                   ? <span style={{ opacity: 0.4, fontSize: '0.75rem' }}>varies</span>
-                                  : item.priceType === 'variable' || (!item.priceType && item.price === 0)
+                                  : item.price_type === 'variable' || (!item.price_type && item.price === 0)
                                     ? <span style={{ opacity: 0.6, fontSize: '0.75rem' }}>variable</span>
                                     : item.price > 0 ? fmtCurrency(item.price) : '—'
                                 }

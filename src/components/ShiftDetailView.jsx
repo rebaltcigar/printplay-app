@@ -1,5 +1,5 @@
 // src/components/ShiftDetailView.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Typography,
@@ -47,14 +47,16 @@ import { generateDisplayId } from "../services/orderService";
 import { useGlobalUI } from "../contexts/GlobalUIContext";
 import { fmtCurrency, toDatetimeLocal, fromDatetimeLocal, identifierText, downloadCSV, fmtDateTime, fmtDate, fmtTime } from "../utils/formatters";
 import { computeShiftFinancials } from "../utils/shiftFinancials";
-import { useStaffList } from "../hooks/useStaffList";
-import { useServiceList } from "../hooks/useServiceList";
+import { useStaff } from "../contexts/StaffContext";
+import { useServices } from "../contexts/ServiceContext";
 
 import CustomerSelectionDrawer from "./pos/CustomerSelectionDrawer";
 import ShiftConsolidationDialog from "./ShiftConsolidationDialog";
 import ShiftAuditDebugger from "./ShiftAuditDebugger";
 import DetailDrawer from "./common/DetailDrawer";
 import SummaryCards from "./common/SummaryCards";
+import { generateUUID } from '../utils/uuid';
+
 
 // Local alias for readability in this file:
 const fmtPeso = fmtCurrency;
@@ -74,10 +76,11 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
   const [notes, setNotes] = useState("");
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const itemInputRef = useRef(null);
+  const fetchTxDebounceRef = useRef(null);
 
-  // Services and staff from shared hooks
-  const { parentServices: serviceItems, expenseServiceNames: expenseServiceItems } = useServiceList();
-  const { staffOptions } = useStaffList();
+  // Services and staff from shared context providers
+  const { parentServices: serviceItems, expenseServiceNames: expenseServiceItems } = useServices();
+  const { staffOptions } = useStaff();
   const [currentlyEditing, setCurrentlyEditing] = useState(null);
 
   // dialogs
@@ -107,64 +110,84 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
 
-  // Transactions fetch
-  useEffect(() => {
+  // Transactions fetch — hoisted so realtime channels can call it
+  const fetchTransactions = useCallback(async () => {
     if (!shift?.id) return;
+    try {
+      const [resOrders, resPc, resEx] = await Promise.all([
+        supabase.from('order_items').select('*').eq('shift_id', shift.id).order('timestamp', { ascending: true }),
+        supabase.from('pc_transactions').select('*').eq('shift_id', shift.id).order('timestamp', { ascending: true }),
+        supabase.from('expenses').select('*').eq('shift_id', shift.id).order('timestamp', { ascending: true })
+      ]);
 
-    const fetchTransactions = async () => {
-      try {
-        const [resOrders, resPc, resEx] = await Promise.all([
-          supabase.from('order_items').select('*').eq('shift_id', shift.id).order('timestamp', { ascending: true }),
-          supabase.from('pc_transactions').select('*').eq('shift_id', shift.id).order('timestamp', { ascending: true }),
-          supabase.from('expenses').select('*').eq('shift_id', shift.id).order('timestamp', { ascending: true })
-        ]);
+      const combined = [
+        ...(resOrders.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name, addedBy: d.added_by, addedByAdmin: d.added_by_admin, isEdited: d.is_edited, editedBy: d.edited_by, expenseType: null, expenseStaffName: null, quantity: d.quantity || 1, price: d.amount })),
+        ...(resPc.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name, addedBy: d.added_by, addedByAdmin: d.added_by_admin, isEdited: d.is_edited, editedBy: d.edited_by, expenseType: null, expenseStaffName: null, quantity: 1, price: d.amount })),
+        ...(resEx.data || []).map(d => ({ ...d, item: 'Expenses', paymentMethod: 'Cash', isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: null, addedBy: d.added_by, addedByAdmin: d.added_by_admin, isEdited: d.is_edited, editedBy: d.edited_by, expenseType: d.expense_type, expenseStaffName: d.staff_name, quantity: 1, price: d.amount }))
+      ];
 
-        const combined = [
-          ...(resOrders.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name, addedBy: d.added_by, addedByAdmin: d.added_by_admin, isEdited: d.is_edited, editedBy: d.edited_by, expenseType: null, expenseStaffName: null, quantity: d.quantity || 1, price: d.amount })),
-          ...(resPc.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name, addedBy: d.added_by, addedByAdmin: d.added_by_admin, isEdited: d.is_edited, editedBy: d.edited_by, expenseType: null, expenseStaffName: null, quantity: 1, price: d.amount })),
-          ...(resEx.data || []).map(d => ({ ...d, item: 'Expenses', paymentMethod: 'Cash', isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: null, addedBy: d.added_by, addedByAdmin: d.added_by_admin, isEdited: d.is_edited, editedBy: d.edited_by, expenseType: d.expense_type, expenseStaffName: d.staff_name, quantity: 1, price: d.amount }))
-        ];
+      combined.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      setTransactions(combined);
+    } catch (err) {
+      console.error("Error fetching transactions:", err);
+    }
+  }, [shift?.id]);
 
-        // Sort combined chronologically
-        combined.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-
-        setTransactions(combined);
-      } catch (err) {
-        console.error("Error fetching transactions:", err);
-      }
-    };
-
-    fetchTransactions();
-
-    // In a full implementation, you'd set up 3 channels here for realtime updates
-    // For simplicity of this view, we'll rely on the initial fetch
-  }, [shift]);
-
-  // Orders fetch
-  useEffect(() => {
+  // Orders fetch — hoisted so realtime channel can call it
+  const fetchOrders = useCallback(async () => {
     if (!shift?.id) return;
     setOrdersLoading(true);
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('shift_id', shift.id)
+      .order('timestamp', { ascending: false });
 
-    const fetchOrders = async () => {
-      const { data, error } = await supabase
-        .from('orders')
-        .select('*')
-        .eq('shift_id', shift.id)
-        .order('timestamp', { ascending: false });
+    if (!error && data) {
+      setOrders(data.map(d => ({
+        ...d,
+        orderNumber: d.order_number,
+        customerName: d.customer_name,
+        paymentMethod: d.payment_method
+      })));
+    }
+    setOrdersLoading(false);
+  }, [shift?.id]);
 
-      if (!error && data) {
-        setOrders(data.map(d => ({
-          ...d,
-          orderNumber: d.order_number,
-          customerName: d.customer_name,
-          paymentMethod: d.payment_method
-        })));
-      }
-      setOrdersLoading(false);
+  // Initial fetch + realtime subscriptions for this shift's transactions
+  useEffect(() => {
+    if (!shift?.id) return;
+    fetchTransactions();
+
+    const sid = shift.id;
+    const debouncedFetch = () => {
+      clearTimeout(fetchTxDebounceRef.current);
+      fetchTxDebounceRef.current = setTimeout(fetchTransactions, 300);
     };
 
+    const channel = supabase.channel(`sdv-tx-${sid}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items', filter: `shift_id=eq.${sid}` }, debouncedFetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pc_transactions', filter: `shift_id=eq.${sid}` }, debouncedFetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses', filter: `shift_id=eq.${sid}` }, debouncedFetch)
+      .subscribe();
+
+    return () => {
+      clearTimeout(fetchTxDebounceRef.current);
+      supabase.removeChannel(channel);
+    };
+  }, [shift?.id, fetchTransactions]);
+
+  // Initial fetch + realtime subscription for this shift's orders
+  useEffect(() => {
+    if (!shift?.id) return;
     fetchOrders();
-  }, [shift?.id]);
+
+    const channel = supabase.channel(`sdv-orders-${shift.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `shift_id=eq.${shift.id}` }, fetchOrders)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
+  }, [shift?.id, fetchOrders]);
 
   useEffect(() => {
     if (
@@ -329,7 +352,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
               const { error } = await supabase.from(table).update(updatePayload).eq('id', currentlyEditing.id);
               if (error) throw error;
 
-              showSnackbar("Transaction updated. Refresh to see changes.", 'success');
+              showSnackbar("Transaction updated.", 'success');
               clearForm();
               setTxDrawerOpen(false);
             } catch (err) {
@@ -350,7 +373,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
         const table = isExpense ? 'expenses' : 'order_items'; // Simplify: new added tx are usually order items unless PC
 
         const insertPayload = {
-          id: crypto.randomUUID(),
+          id: generateUUID(),
           display_id: displayId,
           shift_id: shift.id,
           amount: data.total,
@@ -376,7 +399,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
         const { error } = await supabase.from(table).insert([insertPayload]);
         if (error) throw error;
 
-        showSnackbar("Transaction added. Refresh to see changes.", 'success');
+        showSnackbar("Transaction added.", 'success');
       }
       clearForm();
       setTxDrawerOpen(false);
@@ -408,7 +431,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           const { error } = await supabase.from(table).delete().eq('id', tx.id);
           if (error) throw error;
 
-          showSnackbar("Entry deleted. Refresh to see changes.", 'success');
+          showSnackbar("Entry deleted.", 'success');
         } catch (e) {
           console.error(e);
           showSnackbar("Failed to delete entry.", 'error');
@@ -440,7 +463,8 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
 
           if (error) throw error;
 
-          showSnackbar("Transaction unlinked. Refresh to see changes.", 'success');
+          fetchTransactions();
+          showSnackbar("Transaction unlinked.", 'success');
         } catch (e) {
           console.error(e);
           showSnackbar("Failed to unlink transaction.", 'error');
@@ -473,7 +497,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           await Promise.all(promises);
 
           setSelectedTransactions([]);
-          showSnackbar(`${selectedTransactions.length} entries deleted. Refresh to see changes.`, 'success');
+          showSnackbar(`${selectedTransactions.length} entries deleted.`, 'success');
         } catch (e) {
           console.error(e);
           showSnackbar("Failed to bulk delete.", 'error');
@@ -533,7 +557,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
 
           setBulkOpen(false);
           setSelectedTransactions([]);
-          showSnackbar(`${selectedTransactions.length} entries updated. Refresh.`, 'success');
+          showSnackbar(`${selectedTransactions.length} entries updated.`, 'success');
         } catch (e) {
           console.error(e);
           showSnackbar("Failed to update dates.", 'error');
@@ -577,7 +601,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
           await Promise.all(promises);
 
           setSelectedTransactions([]);
-          showSnackbar(`${selectedTransactions.length} entries reset to shift start. Refresh.`, 'success');
+          showSnackbar(`${selectedTransactions.length} entries reset to shift start.`, 'success');
         } catch (e) {
           console.error(e);
           showSnackbar("Failed to set dates to shift start.", 'error');

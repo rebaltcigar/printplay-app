@@ -1,6 +1,8 @@
 // src/services/invoiceService.js
 import { supabase } from '../supabase';
 import { generateDisplayId } from './orderService';
+import { generateUUID } from '../utils/uuid';
+
 
 // ---------------------------------------------------------------------------
 // 1. Calculations & Normalization
@@ -94,7 +96,7 @@ export const normalizeInvoiceData = (order, options = {}) => {
  */
 export const createInvoice = async (order, { staffEmail, shiftId, dueDate }) => {
     const invoiceNumber = await generateDisplayId('invoices', 'INV');
-    const newId = crypto.randomUUID();
+    const newId = generateUUID();
 
     const normalized = normalizeInvoiceData(order);
     const itemsForPg = normalized.items.map(i => ({
@@ -143,7 +145,7 @@ export const createInvoice = async (order, { staffEmail, shiftId, dueDate }) => 
  */
 export const recordPayment = async (invoiceId, { amount, method, note = '', staffEmail, shiftId }, current) => {
     const entry = {
-        paymentId: crypto.randomUUID(),
+        paymentId: generateUUID(),
         amount: Number(amount),
         method,
         date: new Date().toISOString(),
@@ -202,7 +204,7 @@ export const recordPayment = async (invoiceId, { amount, method, note = '', staf
  */
 export const writeOffInvoice = async (invoiceId, { reason, staffEmail }, current) => {
     const entry = {
-        paymentId: crypto.randomUUID(),
+        paymentId: generateUUID(),
         amount: Number(current.balance),
         method: 'write_off',
         date: new Date().toISOString(),

@@ -1,6 +1,8 @@
 import { supabase } from "../supabase";
 import { generateOrderNumber, createOrderObject, generateBatchIds } from "./orderService";
 import { createInvoice } from "./invoiceService";
+import { generateUUID } from '../utils/uuid';
+
 
 // ---------------------------------------------------------------------------
 // Shared helper: create a new customer doc if isNew, otherwise pass through
@@ -8,7 +10,7 @@ import { createInvoice } from "./invoiceService";
 const resolveCustomer = async (customer, userEmail) => {
     if (!customer || !customer.isNew) return customer || null;
 
-    const newCustId = crypto.randomUUID();
+    const newCustId = generateUUID();
     const { error } = await supabase.from('customers').insert([{
         id: newCustId,
         full_name: customer.fullName,
@@ -34,7 +36,7 @@ export const saveCheckout = async ({ currentOrder, paymentData, user, activeShif
 
     const isUnpaid = paymentData.paymentMethod === 'Charge' || paymentData.paymentMethod === 'Pay Later';
     const orderNum = await generateOrderNumber();
-    const orderId = crypto.randomUUID();
+    const orderId = generateUUID();
 
     // 2. Prepare Order Object
     const fullOrder = {

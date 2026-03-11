@@ -11,6 +11,8 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import { supabase } from '../../supabase';
 import PageHeader from '../common/PageHeader';
 import ConfirmationReasonDialog from '../ConfirmationReasonDialog';
+import { generateUUID } from '../../utils/uuid';
+
 
 const DAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const BLANK_SCHEDULE = { label: '', startTime: '08:00', endTime: '17:00', days: [1, 2, 3, 4, 5], ratePerHour: '' };
@@ -94,7 +96,7 @@ export default function Rates({ showSnackbar }) {
         showSnackbar('Rate updated');
       } else {
         const { error } = await supabase.from('rates').insert([{
-          id: crypto.randomUUID(),
+          id: generateUUID(),
           ...data,
           created_at: new Date().toISOString(),
         }]);

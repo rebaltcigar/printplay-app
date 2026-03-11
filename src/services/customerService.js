@@ -1,4 +1,6 @@
 import { supabase } from "../supabase";
+import { generateUUID } from '../utils/uuid';
+
 
 const TABLE_NAME = 'customers';
 
@@ -7,7 +9,7 @@ const TABLE_NAME = 'customers';
  */
 export const createCustomer = async (customerData) => {
     // Generate a unique ID since Firebase used to do this automatically.
-    const newId = crypto.randomUUID();
+    const newId = generateUUID();
 
     const { data, error } = await supabase
         .from(TABLE_NAME)

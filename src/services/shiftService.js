@@ -1,6 +1,7 @@
 // src/services/shiftService.js
 import { supabase } from "../supabase";
 import { sumDenominations } from "../utils/shiftFinancials";
+import { generateDisplayId } from "./orderService";
 
 const generateId = () => `SHIFT-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 
@@ -78,8 +79,10 @@ export const resumeShift = async (shiftId, staffEmail) => {
  */
 export const createShift = async (payload) => {
     const newId = generateId();
+    const displayId = await generateDisplayId('shifts', 'SHF');
     const fullPayload = {
         id: newId,
+        display_id: displayId,
         pc_rental_total: 0,
         system_total: 0,
         staff_email: payload.staffEmail,

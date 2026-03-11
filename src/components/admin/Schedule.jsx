@@ -9,7 +9,7 @@ import {
   Card, CircularProgress, Alert,
 } from '@mui/material';
 import { supabase } from '../../supabase';
-import { useStaffList } from '../../hooks/useStaffList';
+import { useStaff } from '../../contexts/StaffContext';
 import { fmtShortDate, fmtDayOfWeek, fmtDate } from '../../utils/formatters';
 import { getFriendlyErrorMessage } from '../../services/errorService';
 import { ROLES } from '../../utils/permissions';
@@ -29,6 +29,8 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import TuneIcon from '@mui/icons-material/Tune';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import { generateUUID } from '../../utils/uuid';
+
 
 // ---------- Date helpers ----------
 function todayPHT() {
@@ -132,7 +134,7 @@ function StaffChip({ entry, onEdit, onDelete, onAbsent, onCoverage }) {
 
 // ---------- Main component ----------
 export default function Schedule({ showSnackbar }) {
-  const { staffOptions, loading: staffLoading } = useStaffList();
+  const { staffOptions, loading: staffLoading } = useStaff();
   const staffOnly = useMemo(() => staffOptions.filter(s => s.role === ROLES.STAFF), [staffOptions]);
 
   const [tab, setTab] = useState(0);
@@ -197,7 +199,7 @@ export default function Schedule({ showSnackbar }) {
           tplSeededRef.current = true;
           await supabase.from('shift_templates').insert(
             TEMPLATE_SEEDS.map(s => ({
-              id: crypto.randomUUID(),
+              id: generateUUID(),
               ...s,
               is_default: true,
               disabled: false,
@@ -310,7 +312,7 @@ export default function Schedule({ showSnackbar }) {
       };
       if (entryDrawer.mode === 'create') {
         const { error } = await supabase.from('schedules').insert([{
-          id: crypto.randomUUID(),
+          id: generateUUID(),
           ...data,
           created_at: now,
         }]);
@@ -382,7 +384,7 @@ export default function Schedule({ showSnackbar }) {
 
       const now = new Date().toISOString();
       const inserts = data.map(x => ({
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         staff_uid: x.staff_uid || '',
         staff_email: x.staff_email,
         staff_name: x.staff_name || '',
@@ -413,7 +415,7 @@ export default function Schedule({ showSnackbar }) {
         if (error) throw error;
       } else {
         const { error } = await supabase.from('shift_templates').insert([{
-          id: crypto.randomUUID(),
+          id: generateUUID(),
           ...data,
           disabled: false,
           created_at: new Date().toISOString(),

@@ -9,6 +9,8 @@ import PageHeader from '../common/PageHeader';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
+import { generateUUID } from '../../utils/uuid';
+
 
 const SEEDS = [
   { name: 'Morning',   start_time: '08:00', end_time: '14:00' },
@@ -38,7 +40,7 @@ export default function ShiftTemplateSettings({ showSnackbar }) {
           seededRef.current = true;
           await supabase.from('shift_templates').insert(
             SEEDS.map(s => ({
-              id: crypto.randomUUID(),
+              id: generateUUID(),
               ...s,
               is_default: true,
               disabled: false,
@@ -117,7 +119,7 @@ export default function ShiftTemplateSettings({ showSnackbar }) {
         showSnackbar?.('Template updated.', 'success');
       } else {
         const { error } = await supabase.from('shift_templates').insert([{
-          id: crypto.randomUUID(),
+          id: generateUUID(),
           ...data,
           disabled: false,
           created_at: new Date().toISOString(),

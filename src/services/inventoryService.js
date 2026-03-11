@@ -1,6 +1,8 @@
 import { supabase } from "../supabase";
+import { generateUUID } from '../utils/uuid';
 
-const generateId = () => crypto.randomUUID();
+
+const generateId = () => generateUUID();
 
 /**
  * Records a stock adjustment (Damage, Loss, Correction, etc.)

@@ -266,12 +266,19 @@ export default function UserManagement({ showSnackbar }) {
 
   const handleAddUser = async ({ fullName, email, password, role }) => {
     const { createClient } = await import('@supabase/supabase-js');
-    const secondaryClient = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY);
-    const { data: signUpData, error: signUpErr } = await secondaryClient.auth.signUp({ email, password });
-    if (signUpErr) throw signUpErr;
-    await secondaryClient.auth.signOut();
+    const adminClient = createClient(
+      import.meta.env.VITE_SUPABASE_URL,
+      import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    );
+    const { data: createData, error: createErr } = await adminClient.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+    });
+    if (createErr) throw createErr;
     const { error: insertErr } = await supabase.from('profiles').insert([{
-      id: signUpData.user.id,
+      id: createData.user.id,
       email,
       full_name: fullName,
       role,

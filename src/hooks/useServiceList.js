@@ -2,41 +2,84 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../supabase';
 
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+let _cache = null; // { allServices, setAt }
+let _channel = null;
+let _channelRefCount = 0;
+const _listeners = new Set();
+
+function notifyListeners(data) {
+    _listeners.forEach(fn => fn(data));
+}
+
+function mapRow(d) {
+    return {
+        id: d.id,
+        ...d,
+        serviceName: d.name,
+        parentServiceId: d.parent_service_id,
+        sortOrder: d.sort_order,
+        adminOnly: d.admin_only,
+        financialCategory: d.financial_category,
+        costPrice: d.cost_price,
+    };
+}
+
+async function fetchAndCache() {
+    const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .order('sort_order', { ascending: true });
+
+    if (error) { console.error("Error fetching services:", error); return; }
+    if (!data) return;
+
+    const allServices = data.map(mapRow);
+    _cache = { allServices, setAt: Date.now() };
+    notifyListeners(_cache);
+}
+
+function ensureChannel() {
+    if (_channel) return;
+    _channel = supabase.channel('public:products:useServiceList')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => fetchAndCache())
+        .subscribe();
+}
+
+function releaseChannel() {
+    if (_channelRefCount > 0) return;
+    if (_channel) {
+        supabase.removeChannel(_channel);
+        _channel = null;
+    }
+}
+
 export function useServiceList() {
-    const [allServices, setAllServices] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [allServices, setAllServices] = useState(_cache?.allServices ?? []);
+    const [loading, setLoading] = useState(!_cache);
 
     useEffect(() => {
-        const fetchServices = async () => {
-            const { data, error } = await supabase
-                .from('products')
-                .select('*')
-                .order('sort_order', { ascending: true });
-
-            if (data) {
-                const mapped = data.map(d => ({
-                    id: d.id,
-                    ...d,
-                    serviceName: d.name,
-                    parentServiceId: d.parent_service_id,
-                    sortOrder: d.sort_order,
-                    adminOnly: d.admin_only,
-                    financialCategory: d.financial_category,
-                    costPrice: d.cost_price
-                }));
-                setAllServices(mapped);
-            }
-            if (error) console.error("Error fetching services:", error);
+        const applyCache = (c) => {
+            setAllServices(c.allServices);
             setLoading(false);
         };
 
-        fetchServices();
+        _listeners.add(applyCache);
+        _channelRefCount++;
+        ensureChannel();
 
-        const channel = supabase.channel('public:products:useServiceList')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, fetchServices)
-            .subscribe();
+        if (_cache && (Date.now() - _cache.setAt) < CACHE_TTL) {
+            applyCache(_cache);
+        } else {
+            fetchAndCache();
+        }
 
-        return () => supabase.removeChannel(channel);
+        return () => {
+            _listeners.delete(applyCache);
+            _channelRefCount--;
+            releaseChannel();
+        };
     }, []);
 
     // { name, category } for aggregateShiftTransactions (Shifts.jsx)

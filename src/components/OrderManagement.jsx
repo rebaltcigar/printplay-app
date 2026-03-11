@@ -33,7 +33,9 @@ import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice
 import ConfirmationReasonDialog from './ConfirmationReasonDialog';
 import { fmtCurrency as currency, fmtDateTime } from '../utils/formatters';
 import { usePOSServices } from '../hooks/usePOSServices';
-import { useStaffList } from '../hooks/useStaffList';
+import { useStaff } from '../contexts/StaffContext';
+import { generateUUID } from '../utils/uuid';
+
 
 export default function OrderManagement({ showSnackbar }) {
     const theme = useTheme();
@@ -47,9 +49,9 @@ export default function OrderManagement({ showSnackbar }) {
     const [hasMore, setHasMore] = useState(true);
     const [systemSettings, setSystemSettings] = useState({});
 
-    // Services and staff from shared hooks
+    // Services and staff from shared context providers
     const { serviceList: services } = usePOSServices();
-    const { userMap: users } = useStaffList();
+    const { userMap: users } = useStaff();
 
     // Filters
     const [searchTerm, setSearchTerm] = useState('');
@@ -163,6 +165,26 @@ export default function OrderManagement({ showSnackbar }) {
         setLastOffset(0);
         fetchOrders();
     }, [statusFilter]); // Re-fetch on status change. Search/Date we might do manually or debounced.
+
+    // Realtime: new/updated/voided orders appear instantly without manual refresh
+    useEffect(() => {
+        const channel = supabase.channel('order-management-orders')
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, (payload) => {
+                const newOrder = payload.new;
+                if (statusFilter !== 'ALL' && newOrder.status !== statusFilter) return;
+                setOrders(prev => [newOrder, ...prev]);
+            })
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders' }, (payload) => {
+                const updated = payload.new;
+                setOrders(prev => prev.map(o => o.id === updated.id ? updated : o));
+            })
+            .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'orders' }, (payload) => {
+                setOrders(prev => prev.filter(o => o.id !== payload.old.id));
+            })
+            .subscribe();
+
+        return () => supabase.removeChannel(channel);
+    }, [statusFilter]);
 
     // 3. Search & In-Memory Filtering
     const filteredOrders = useMemo(() => {
@@ -313,7 +335,7 @@ export default function OrderManagement({ showSnackbar }) {
             const validItems = editItems.filter(item => !item.isVoided);
             await supabase.from('order_items').insert(
                 validItems.map(item => ({
-                    id: crypto.randomUUID(),
+                    id: generateUUID(),
                     parent_order_id: editingOrder.id,
                     name: item.name,
                     quantity: Number(item.quantity),

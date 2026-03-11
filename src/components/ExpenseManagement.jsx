@@ -39,7 +39,7 @@ import PageHeader from "./common/PageHeader";
 import DetailDrawer from "./common/DetailDrawer";
 import SummaryCards from "./common/SummaryCards";
 import { fmtCurrency, toDateInput, downloadCSV, fmtDateTime } from "../utils/formatters";
-import { useStaffList } from "../hooks/useStaffList";
+import { useStaff } from "../contexts/StaffContext";
 import { generateDisplayId } from "../services/orderService";
 
 const EXPENSE_TYPES_ALL = [
@@ -77,7 +77,7 @@ export default function ExpenseManagement({ user }) {
   const [currentlyEditing, setCurrentlyEditing] = useState(null);
 
   // Staff list from shared hook (replaces manual getDocs block below)
-  const { staffOptions } = useStaffList();
+  const { staffOptions } = useStaff();
   const [creditServices, setCreditServices] = useState([]);
   const dateInputRef = useRef(null);
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Box, Card, Typography, Stack, FormControl, InputLabel, Select, MenuItem, useMediaQuery
 } from "@mui/material";
@@ -105,6 +105,7 @@ export default function AdminHome({ user, isActive = true }) {
   const [currentShiftStatus, setCurrentShiftStatus] = useState(null);
   const [theActiveShift, setTheActiveShift] = useState(null);
   const [activeShiftTx, setActiveShiftTx] = useState([]);
+  const fetchActiveDebounceRef = useRef(null);
 
   /* 3. CURRENT SHIFT STATUS */
   useEffect(() => {
@@ -133,6 +134,35 @@ export default function AdminHome({ user, isActive = true }) {
   }, []);
 
   /* 4. ACTIVE SHIFT DETAILS */
+  const fetchActiveShiftData = useCallback(async () => {
+    if (!currentShiftStatus?.activeShiftId) return;
+    const sid = currentShiftStatus.activeShiftId;
+
+    const { data: shiftData } = await supabase.from('shifts').select('*').eq('id', sid).maybeSingle();
+    if (shiftData) {
+      setTheActiveShift({
+        id: shiftData.id,
+        ...shiftData,
+        pcRentalTotal: Number(shiftData.pc_rental_total),
+        staffEmail: shiftData.staff_email,
+        startTime: shiftData.start_time
+      });
+    }
+
+    const [resOrders, resPc, resEx] = await Promise.all([
+      supabase.from('order_items').select('*').eq('shift_id', sid),
+      supabase.from('pc_transactions').select('*').eq('shift_id', sid),
+      supabase.from('expenses').select('*').eq('shift_id', sid)
+    ]);
+
+    const list = [
+      ...(resOrders.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name })),
+      ...(resPc.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name })),
+      ...(resEx.data || []).map(d => ({ ...d, item: 'Expenses', paymentMethod: 'Cash', isDeleted: false, amount: Number(d.amount), total: Number(d.amount), expenseType: d.expense_type }))
+    ];
+    setActiveShiftTx(list);
+  }, [currentShiftStatus?.activeShiftId]);
+
   useEffect(() => {
     if (!currentShiftStatus?.activeShiftId) {
       setTheActiveShift(null);
@@ -140,39 +170,25 @@ export default function AdminHome({ user, isActive = true }) {
       return;
     }
 
-    // Simplification for active shift tracking. Should theoretically use 4 channels or unified view
-    const fetchData = async () => {
-      const { data: shiftData } = await supabase.from('shifts').select('*').eq('id', currentShiftStatus.activeShiftId).maybeSingle();
-      if (shiftData) {
-        setTheActiveShift({
-          id: shiftData.id,
-          ...shiftData,
-          pcRentalTotal: Number(shiftData.pc_rental_total),
-          staffEmail: shiftData.staff_email,
-          startTime: shiftData.start_time
-        });
-      }
+    fetchActiveShiftData();
 
-      const [resOrders, resPc, resEx] = await Promise.all([
-        supabase.from('order_items').select('*').eq('shift_id', currentShiftStatus.activeShiftId),
-        supabase.from('pc_transactions').select('*').eq('shift_id', currentShiftStatus.activeShiftId),
-        supabase.from('expenses').select('*').eq('shift_id', currentShiftStatus.activeShiftId)
-      ]);
-
-      const list = [
-        ...(resOrders.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name })),
-        ...(resPc.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name })),
-        ...(resEx.data || []).map(d => ({ ...d, item: 'Expenses', paymentMethod: 'Cash', isDeleted: false, amount: Number(d.amount), total: Number(d.amount), expenseType: d.expense_type }))
-      ];
-      setActiveShiftTx(list);
+    const sid = currentShiftStatus.activeShiftId;
+    const debouncedFetch = () => {
+      clearTimeout(fetchActiveDebounceRef.current);
+      fetchActiveDebounceRef.current = setTimeout(fetchActiveShiftData, 300);
     };
 
-    fetchData();
+    const channel = supabase.channel(`admin-tx-${sid}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items', filter: `shift_id=eq.${sid}` }, debouncedFetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pc_transactions', filter: `shift_id=eq.${sid}` }, debouncedFetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses', filter: `shift_id=eq.${sid}` }, debouncedFetch)
+      .subscribe();
 
-    // To prevent rapid polling/complex subscriptions here, just setting up a basic interval 
-    // or relying on Global Analytics context refresh is better, 
-    // but we do a quick fetch on mount.
-  }, [currentShiftStatus?.activeShiftId]);
+    return () => {
+      clearTimeout(fetchActiveDebounceRef.current);
+      supabase.removeChannel(channel);
+    };
+  }, [currentShiftStatus?.activeShiftId, fetchActiveShiftData]);
 
   // Map services from context
   const serviceMap = useMemo(() => buildServiceMap(services), [services]);
