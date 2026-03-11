@@ -5,21 +5,23 @@ import { supabase } from "../supabase";
 // 1. ID Generation Logic 
 // ---------------------------------------------------------------------------
 
+async function getIdPrefix(counterName, defaultPrefix) {
+    let prefix = defaultPrefix;
+    try {
+        const { data } = await supabase.from('settings').select('*').eq('id', 'config').single();
+        if (data?.id_prefixes?.[counterName]) prefix = data.id_prefixes[counterName];
+    } catch (e) {
+        console.warn("Failed to fetch ID prefix config, using default:", e);
+    }
+    return prefix;
+}
+
 /**
  * Generates a unique display ID without needing a locked central counter.
  * Uses base36 timestamp + random hash to guarantee uniqueness and high readability.
  */
 export const generateDisplayId = async (counterName, defaultPrefix = "ID") => {
-    let prefix = defaultPrefix;
-    try {
-        const { data } = await supabase.from('settings').select('*').eq('id', 'config').single();
-        if (data && data.id_prefixes && data.id_prefixes[counterName]) {
-            prefix = data.id_prefixes[counterName];
-        }
-    } catch (e) {
-        console.warn("Failed to fetch ID prefix config, using default:", e);
-    }
-
+    const prefix = await getIdPrefix(counterName, defaultPrefix);
     const timestampPart = Date.now().toString(36).toUpperCase();
     const hashPart = Math.random().toString(36).substring(2, 6).toUpperCase();
     return `${prefix}-${timestampPart}-${hashPart}`;
@@ -30,17 +32,7 @@ export const generateDisplayId = async (counterName, defaultPrefix = "ID") => {
  */
 export const generateBatchIds = async (counterName, defaultPrefix, count) => {
     if (count <= 0) return [];
-
-    let prefix = defaultPrefix;
-    try {
-        const { data } = await supabase.from('settings').select('*').eq('id', 'config').single();
-        if (data && data.id_prefixes && data.id_prefixes[counterName]) {
-            prefix = data.id_prefixes[counterName];
-        }
-    } catch (e) {
-        console.warn("Failed to fetch ID prefix config, using default:", e);
-    }
-
+    const prefix = await getIdPrefix(counterName, defaultPrefix);
     const ids = [];
     const timestampPart = Date.now().toString(36).toUpperCase();
     for (let i = 0; i < count; i++) {
@@ -124,7 +116,7 @@ export const deleteOrder = async (orderId, orderNumber, shiftId, userEmail, reas
     const { data: linkedItems, error: itemsErr } = await supabase
         .from('order_items')
         .select('*')
-        .eq('parent_order_number', orderNumber)
+        .eq('parent_order_id', orderId)
         .eq('shift_id', shiftId);
 
     if (itemsErr) throw itemsErr;
@@ -139,7 +131,7 @@ export const deleteOrder = async (orderId, orderNumber, shiftId, userEmail, reas
             // metadata fallback if needed
             metadata: { deleted_by: userEmail, delete_reason: reason, deleted_at: new Date().toISOString() }
         })
-        .eq('parent_order_number', orderNumber)
+        .eq('parent_order_id', orderId)
         .eq('shift_id', shiftId);
 
     if (updateItemsErr) throw updateItemsErr;
@@ -150,10 +142,10 @@ export const deleteOrder = async (orderId, orderNumber, shiftId, userEmail, reas
     for (const txData of linkedItems) {
         // Revert main item
         if (txData.product_id) {
-            const { data: pData } = await supabase.from('products').select('stockCount').eq('id', txData.product_id).single();
-            if (pData && pData.stockCount !== undefined) {
+            const { data: pData } = await supabase.from('products').select('stock_count').eq('id', txData.product_id).single();
+            if (pData && pData.stock_count !== undefined) {
                 await supabase.from('products')
-                    .update({ stockCount: Number(pData.stockCount) + Number(txData.quantity || 1) })
+                    .update({ stock_count: Number(pData.stock_count) + Number(txData.quantity || 1) })
                     .eq('id', txData.product_id);
             }
         }
@@ -161,11 +153,11 @@ export const deleteOrder = async (orderId, orderNumber, shiftId, userEmail, reas
         // Revert snapshotted consumables (stored in metadata/consumables usually)
         if (txData.metadata && txData.metadata.consumables && txData.metadata.consumables.length > 0) {
             for (const c of txData.metadata.consumables) {
-                const { data: cData } = await supabase.from('products').select('stockCount').eq('id', c.itemId).single();
-                if (cData && cData.stockCount !== undefined) {
+                const { data: cData } = await supabase.from('products').select('stock_count').eq('id', c.itemId).single();
+                if (cData && cData.stock_count !== undefined) {
                     const toRestore = Number(c.qty || 0) * Number(txData.quantity || 1);
                     await supabase.from('products')
-                        .update({ stockCount: Number(cData.stockCount) + toRestore })
+                        .update({ stock_count: Number(cData.stock_count) + toRestore })
                         .eq('id', c.itemId);
                 }
             }

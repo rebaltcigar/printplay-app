@@ -14,7 +14,6 @@ import EmailIcon from "@mui/icons-material/Email";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
 import LoginIcon from "@mui/icons-material/Login";
 import AccessTimeIcon from "@mui/icons-material/AccessTime";
-import { convertLogoUrl } from "../services/brandingService";
 
 const SHIFT_OPTIONS = ["Morning", "Afternoon", "Evening"];
 
@@ -155,7 +154,7 @@ const CARD_SX = {
 //   onStartShift(type, entry, period, note) → Promise<void>
 //   onClockIn()                             → Promise<void>
 //   onCancelLogin()                         → Promise<void>
-export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin }) {
+export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin, appSettings }) {
     // Phase machine: 'credentials' | 'confirm' | 'fallback' | 'clockin' | 'forgot-password'
   const [phase, setPhase] = useState("credentials");
 
@@ -176,22 +175,13 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState(""); // Success messages
-  const [branding, setBranding] = useState({ storeName: "Kunek", logoUrl: "/logo.png" });
+
+  const branding = {
+    storeName: appSettings?.storeName || "Kunek",
+    logoUrl: appSettings?.logoUrl || "/logo.png",
+  };
 
   useEffect(() => {
-    const fetchBranding = async () => {
-      try {
-        const { data } = await supabase.from('settings').select('*').eq('id', 'config').maybeSingle();
-        if (data) {
-          setBranding({
-            storeName: data.store_name || "Kunek",
-            logoUrl: convertLogoUrl(data.logo_url) || "/logo.png"
-          });
-        }
-      } catch { }
-    };
-    fetchBranding();
-
     // Parse hash errors (e.g. #error=access_denied&error_code=otp_expired)
     const hash = window.location.hash;
     if (hash && hash.includes("error=")) {
@@ -214,8 +204,9 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
   const handleCredentialSubmit = async (e) => {
     e.preventDefault();
     setErr(""); setMsg(""); setLoading(true);
+    const cleanEmail = email.trim().toLowerCase();
     try {
-      const result = await onLogin(email, password);
+      const result = await onLogin(cleanEmail, password);
       if (result?.type !== "admin") {
         setLoginResult(result);
         if (result.type === "fallback") setPhase("fallback");
@@ -233,8 +224,9 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
     e.preventDefault();
     if (!email) { setErr("Please enter your email first."); return; }
     setErr(""); setMsg(""); setLoading(true);
+    const cleanEmail = email.trim().toLowerCase();
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
         redirectTo: `${window.location.origin}/login`,
       });
       if (error) throw error;
@@ -428,10 +420,10 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
           <Button
             type="submit" variant="contained" fullWidth
             disabled={credDisabled}
-            startIcon={<LoginIcon />}
+            startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <LoginIcon />}
             sx={{ height: 42, mt: 0.5 }}
           >
-            Sign In
+            {loading ? "Signing in..." : "Sign In"}
           </Button>
 
           {window.location.hostname === "localhost" && (
@@ -491,10 +483,10 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
           <Button
             type="submit" variant="contained" fullWidth
             disabled={loading || !email}
-            startIcon={<EmailIcon />}
+            startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <EmailIcon />}
             sx={{ height: 42 }}
           >
-            Send Reset Link
+            {loading ? "Sending..." : "Send Reset Link"}
           </Button>
         </Box>
 
@@ -554,8 +546,8 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
 
           <Stack direction="row" spacing={1.5}>
             <Button fullWidth variant="outlined" onClick={handleBack} disabled={loading}>← Back</Button>
-            <Button fullWidth variant="contained" onClick={handleStartShift} disabled={shiftDisabled}>
-              {isRelogin ? "Continue" : "Start Shift"}
+            <Button fullWidth variant="contained" onClick={handleStartShift} disabled={shiftDisabled} startIcon={loading ? <CircularProgress size={16} color="inherit" /> : undefined}>
+              {loading ? "Processing..." : isRelogin ? "Continue" : "Start Shift"}
             </Button>
           </Stack>
         </>
@@ -600,9 +592,9 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
             <Button
               fullWidth variant="contained"
               onClick={handleClockInConfirm} disabled={loading}
-              startIcon={<LoginIcon />}
+              startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <LoginIcon />}
             >
-              Clock In
+              {loading ? "Processing..." : "Clock In"}
             </Button>
           </Stack>
         </>
@@ -649,8 +641,8 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
 
         <Stack direction="row" spacing={1.5}>
           <Button fullWidth variant="outlined" onClick={handleBack} disabled={loading}>← Back</Button>
-          <Button fullWidth variant="contained" onClick={handleStartShift} disabled={shiftDisabled}>
-            Start Shift
+          <Button fullWidth variant="contained" onClick={handleStartShift} disabled={shiftDisabled} startIcon={loading ? <CircularProgress size={16} color="inherit" /> : undefined}>
+            {loading ? "Starting..." : "Start Shift"}
           </Button>
         </Stack>
       </>
@@ -740,23 +732,7 @@ export default function Login({ onLogin, onStartShift, onClockIn, onCancelLogin 
         </Box>
       </Box>
 
-      {/* Loading overlay */}
-      {loading && (
-        <Box aria-busy="true" sx={{
-          position: "fixed", inset: 0, zIndex: 99,
-          background: "linear-gradient(180deg,rgba(0,0,0,.55),rgba(0,0,0,.75))",
-          backdropFilter: "blur(1px)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          flexDirection: "column", gap: 1.5,
-        }}>
-          <CircularProgress size={32} sx={{ color: "primary.main" }} />
-          <Typography variant="caption" sx={{ color: "rgba(255,255,255,0.65)" }}>
-            {phase === "credentials" ? "Signing in…"
-              : phase === "clockin" ? "Clocking in…"
-                : "Starting shift…"}
-          </Typography>
-        </Box>
-      )}
+
     </Box>
   );
 }

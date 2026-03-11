@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../supabase';
 import { getRange } from '../services/analyticsService';
+import debounce from 'lodash.debounce';
 import dayjs from 'dayjs';
 
 const AnalyticsContext = createContext();
@@ -156,14 +157,17 @@ export function AnalyticsProvider({ children }) {
 
         console.log(`[Analytics] Subscribing to REAL-TIME updates for ${preset}...`);
 
+        const debouncedFetch = debounce(fetchAnalyticsData, 1500, { leading: true, trailing: true });
+
         // Subscribe to changes and simply re-fetch the range to ensure data consistency
         const channel = supabase.channel(`analytics_changes_${preset}`)
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, fetchAnalyticsData)
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'shifts' }, fetchAnalyticsData)
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, fetchAnalyticsData)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, debouncedFetch)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'shifts' }, debouncedFetch)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, debouncedFetch)
             .subscribe();
 
         return () => {
+            debouncedFetch.cancel();
             supabase.removeChannel(channel);
         };
 

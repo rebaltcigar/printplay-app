@@ -72,7 +72,7 @@ export const saveCheckout = async ({ currentOrder, paymentData, user, activeShif
     const txIds = await generateBatchIds("transactions", "TX", currentOrder.items.length);
     const orderItemsPayload = currentOrder.items.map((item, index) => ({
         id: txIds[index] || `TX-${Date.now()}-${index}`,
-        parent_order_number: orderNum,
+        parent_order_id: orderId,
         name: item.serviceName || item.name,
         product_id: item.serviceId || null,
         price: Number(item.price),
@@ -104,25 +104,25 @@ export const saveCheckout = async ({ currentOrder, paymentData, user, activeShif
         if (txErr) throw txErr;
     }
 
-    // 6. Inventory Deduction (Sequential)
+    // 6. Inventory Deduction (Parallel — atomic RPC avoids read-then-write race condition)
     const deductStock = async (svcId, q) => {
         if (!svcId) return;
-        const { data } = await supabase.from('products').select('stockCount').eq('id', svcId).single();
-        if (data && data.stockCount !== undefined) {
-            await supabase.from('products').update({ stockCount: Number(data.stockCount) - q }).eq('id', svcId);
-        }
+        const { error } = await supabase.rpc('decrement_stock', { p_product_id: svcId, p_qty: q });
+        if (error) throw error;
     };
 
+    const deductionPromises = [];
     for (const item of currentOrder.items) {
         if (item.trackStock && item.serviceId) {
-            await deductStock(item.serviceId, Number(item.quantity));
+            deductionPromises.push(deductStock(item.serviceId, Number(item.quantity)));
         }
         if (item.consumables && item.consumables.length > 0) {
             for (const c of item.consumables) {
-                await deductStock(c.itemId, Number(c.qty) * Number(item.quantity));
+                deductionPromises.push(deductStock(c.itemId, Number(c.qty) * Number(item.quantity)));
             }
         }
     }
+    await Promise.all(deductionPromises);
 
     return { ...fullOrder, id: orderId };
 };
@@ -162,7 +162,7 @@ export const updateCheckout = async ({ order, paymentData, user, activeShiftId, 
             const displayId = newIds[newIdIndex++] || `TX-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
             newItemsToInsert.push({
                 id: displayId,
-                parent_order_number: order.orderNumber, // Assume it maps from original order
+                parent_order_id: order.originalId,
                 name: item.name || item.serviceName,
                 product_id: item.serviceId || null,
                 price: Number(item.price),
@@ -198,8 +198,8 @@ export const updateCheckout = async ({ order, paymentData, user, activeShiftId, 
         if (insErr) throw insErr;
     }
 
-    // Update existing items sequentially in order_items
-    for (const upItem of itemsToUpdate) {
+    // Update existing items in parallel in order_items
+    const updatePromises = itemsToUpdate.map(upItem => {
         const payload = {
             payment_method: upItem.payment_method,
             amount: upItem.amount,
@@ -207,8 +207,9 @@ export const updateCheckout = async ({ order, paymentData, user, activeShiftId, 
             price: upItem.price,
             updated_at: new Date().toISOString()
         };
-        await supabase.from('order_items').update(payload).eq('id', upItem.id);
-    }
+        return supabase.from('order_items').update(payload).eq('id', upItem.id);
+    });
+    await Promise.all(updatePromises);
 
     // 4. Process Deletions
     if (order.deletedItems && order.deletedItems.length > 0) {

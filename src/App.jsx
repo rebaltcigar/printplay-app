@@ -43,7 +43,12 @@ export default function App() {
   const [staffDisplayName, setStaffDisplayName] = useState('');
 
   // App-wide settings (fetched once, passed to all pages — avoids per-component flash)
-  const [appSettings, setAppSettings] = useState(null);
+  const [appSettings, setAppSettings] = useState({
+    storeName: "Kunek",
+    pcRentalEnabled: true,
+    currencySymbol: "₱",
+    paymentMethods: {},
+  });
 
   useEffect(() => {
     console.log("[App] Subscribing to Settings...");
@@ -102,16 +107,42 @@ export default function App() {
 
     fetchSettings();
 
+    // Fallback: If settings fail to load after 3 seconds, forcefully mount with defaults
+    // to prevent the app from freezing on a white loading screen if RLS drops the query.
+    const settingsTimeout = setTimeout(() => {
+      setAppSettings(prev => prev || {
+        storeName: "Kunek",
+        pcRentalEnabled: true,
+        currencySymbol: "₱",
+        paymentMethods: {}
+      });
+    }, 3000);
+
     const channel = supabase.channel('public:settings')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'settings', filter: 'id=eq.config' }, fetchSettings)
       .subscribe();
 
-    return () => supabase.removeChannel(channel);
+    return () => {
+      clearTimeout(settingsTimeout);
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  // Fast-path: if there is no cached Supabase session on mount, skip the loading
+  // screen immediately so logged-out users see the login page without delay.
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) setAuthReady(true);
+    });
   }, []);
 
   // ------------------ AUTH BOOTSTRAP  // 1. Initial Auth State
   useEffect(() => {
+    let internalAuthReady = false;
+
+    console.log("[App] Initializing Auth Bootstrap... authReady:", authReady);
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      internalAuthReady = true;
       const user = session?.user || null;
       console.log(`[App] Auth Event: ${event}`, user ? `(User: ${user.email})` : "(No User)");
 
@@ -135,15 +166,15 @@ export default function App() {
           setStaffDisplayName('');
         } else {
           // Look up user role
-          const { data: userData, error } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle();
+          const { data: userData, error: profileError } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle();
 
-          if (error || !userData) {
-            // Unknown user — sign out for safety
-            await supabase.auth.signOut();
-          } else {
-            const role = userData?.role || null;
-            setCurrentUser(user);
-            setUserRole(role);
+          if (profileError) {
+            console.warn("[App] Profile fetch error (RLS or network):", profileError.message);
+          }
+          // Always set the user — if profile is missing/blocked, role=null routes to login
+          const role = userData?.role || null;
+          setCurrentUser(user);
+          setUserRole(role);
             
             // Only set from profile if not currently in a recovery flow
             if (isRecovery) {
@@ -183,7 +214,6 @@ export default function App() {
               setActiveShiftId(null);
               setActiveShiftPeriod("");
             }
-          }
         }
 
       } catch (err) {
@@ -193,8 +223,16 @@ export default function App() {
       }
     });
 
+    // Force authReady if the listener stalls completely (e.g. offline, profile fetch hangs, etc.)
+    // Do NOT guard on internalAuthReady — the listener fires before async work completes,
+    // so internalAuthReady=true is no guarantee that setAuthReady(true) will ever run.
+    const authTimeout = setTimeout(() => {
+      setAuthReady(true);
+    }, 3000);
+
     return () => {
-      subscription.unsubscribe();
+      clearTimeout(authTimeout);
+      if (subscription) subscription.unsubscribe();
     };
   }, []);
 
@@ -211,6 +249,16 @@ export default function App() {
    * - Staff role   → checks schedule, returns { type: 'scheduled'|'covered'|'relogin'|'fallback', ... }
    * Throws on auth failure, suspension, or shift conflict.
    */
+  // Supabase queries can hang indefinitely if RLS blocks or network stalls.
+  // This races a query against a timeout so the UI never gets stuck.
+  const withTimeout = (promise, ms, label) =>
+    Promise.race([
+      promise,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms)
+      ),
+    ]);
+
   const handleLogin = async (email, password) => {
     // Supabase sign-in
     const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email, password });
@@ -222,19 +270,25 @@ export default function App() {
     const { user } = authData;
 
     // 1. Try finding by ID (standard Supabase way)
-    let { data: userData } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle();
+    let { data: userData } = await withTimeout(
+      supabase.from('profiles').select('*').eq('id', user.id).maybeSingle(),
+      10000, 'Profile fetch'
+    );
 
     // 2. If not found by ID, try finding by Email (Migration Fallback)
     if (!userData) {
       console.log(`[App] Profile not found by ID, attempting Email lookup for: ${user.email}`);
-      const { data: emailMatch, error: emailErr } = await supabase.from('profiles').select('*').eq('email', user.email).maybeSingle();
+      const { data: emailMatch } = await withTimeout(
+        supabase.from('profiles').select('*').eq('email', user.email).maybeSingle(),
+        10000, 'Profile email lookup'
+      );
       
       if (emailMatch) {
         console.log(`[App] Found profile by email! Bridging the session for: ${user.email}`);
         
         // Attempt to heal the link, but don't block login if RLS stops us
-        supabase.from('profiles').update({ id: user.id }).eq('email', user.email).then(({ error }) => {
-          if (error) console.error("[App] Link repair blocked by RLS (Expected):", error.message);
+        supabase.from('profiles').update({ id: user.id }).eq('email', user.email).then(({ error: updateError }) => {
+          if (updateError) console.error("[App] Link repair blocked by RLS (Expected):", updateError.message);
           else console.log("[App] Link repair successful.");
         });
 
@@ -245,14 +299,14 @@ export default function App() {
 
     if (!userData) {
       console.error("[App] Login blocked: No profile found for", user.email);
-      await supabase.auth.signOut().catch(() => { });
+      await supabase.auth.signOut().catch((err) => { console.warn("forced signout err", err); });
       const e = new Error(`Access Denied: No profile found for ${user.email}. Please ensure your email is correct in the database.`);
       e.code = "auth/user-not-found";
       throw e;
     }
 
     if (userData.suspended === true) {
-      await supabase.auth.signOut().catch(() => { });
+      await supabase.auth.signOut().catch((err) => { console.warn("forced signout err", err); });
       const e = new Error("This account has been suspended. Please contact your administrator.");
       e.code = "auth/account-suspended";
       throw e;
@@ -268,7 +322,7 @@ export default function App() {
 
     // ── Staff path ──
     if (role !== "staff") {
-      await supabase.auth.signOut().catch(() => { });
+      await supabase.auth.signOut().catch((err) => { console.warn("forced signout err", err); });
       const e = new Error("Unrecognized account role. Contact your administrator.");
       e.code = "auth/user-disabled";
       throw e;
@@ -459,11 +513,11 @@ export default function App() {
 
   // ------------------ RENDER ------------------
 
-  if (!authReady || !appSettings) {
+  if (!authReady) {
     return (
       <ThemeProvider theme={darkTheme}>
         <CssBaseline />
-        <LoadingScreen message="Initializing Setup..." />
+        <LoadingScreen message="Loading Kunek Setup..." />
       </ThemeProvider>
     );
   }
@@ -485,6 +539,7 @@ export default function App() {
                     onStartShift={handleStartShift}
                     onClockIn={handleClockIn}
                     onCancelLogin={handleCancelLogin}
+                    appSettings={appSettings}
                   />
                 ) : (
                   <Navigate to={canAccessAdmin(userRole) ? "/admin" : "/pos"} replace />

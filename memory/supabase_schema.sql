@@ -1,5 +1,11 @@
--- PrintPlay Supabase Schema (v2.0) - COMPREHENSIVE
+-- PrintPlay Supabase Schema (v2.1) - COMPREHENSIVE
 -- Handles all 21 collections from Firestore
+-- Last updated: 2026-03-11 — reflects Phase 2 ALTER columns and code-derived fields
+-- NOTE: To get the live schema from Supabase:
+--   Option A (CLI): supabase db dump --schema public > live_schema.sql
+--   Option B (SQL Editor): SELECT table_name, column_name, data_type, column_default
+--                          FROM information_schema.columns WHERE table_schema = 'public'
+--                          ORDER BY table_name, ordinal_position;
 
 -- 1. DROP EXISTING TABLES
 -- Group E: Payroll
@@ -122,7 +128,8 @@ CREATE TABLE daily_stats (
 -- 4. HR, ROSTER, & PAYROLL
 
 CREATE TABLE shifts (
-    id TEXT PRIMARY KEY, 
+    id TEXT PRIMARY KEY,
+    display_id TEXT,                          -- Phase 2 ALTER: human-readable shift ID
     staff_email TEXT NOT NULL,
     shift_period TEXT,
     notes TEXT,
@@ -329,6 +336,7 @@ CREATE TABLE schedules (
     end_time TEXT,
     status TEXT DEFAULT 'scheduled',
     notes TEXT,
+    shift_id TEXT REFERENCES shifts(id),      -- Phase 2 ALTER: links schedule to actual shift
     covered_by_uid TEXT,
     covered_by_email TEXT,
     covered_by_name TEXT,
@@ -352,13 +360,21 @@ CREATE TABLE products (
     track_stock BOOLEAN DEFAULT FALSE,
     stock_count INT DEFAULT 0,
     low_stock_threshold INT DEFAULT 5,
+    -- Phase 2 ALTER: POS/variant columns
+    has_variants BOOLEAN DEFAULT FALSE,
+    pos_icon TEXT,
+    price_type TEXT DEFAULT 'fixed',          -- 'fixed' | 'variable'
+    pricing_note TEXT,
+    consumables JSONB DEFAULT '[]',           -- [{ itemId, qty }]
+    variant_group TEXT,
+    pos_label TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE orders (
-    id TEXT PRIMARY KEY, 
-    order_number TEXT UNIQUE NOT NULL, 
+    id TEXT PRIMARY KEY,
+    order_number TEXT UNIQUE NOT NULL,
     customer_id TEXT REFERENCES customers(id),
     customer_name TEXT,
     customer_phone TEXT,
@@ -369,6 +385,7 @@ CREATE TABLE orders (
     staff_name TEXT,
     shift_id TEXT REFERENCES shifts(id),
     subtotal DECIMAL(12, 2) NOT NULL,
+    discount JSONB DEFAULT '{}',              -- { type, value, amount }
     total DECIMAL(12, 2) NOT NULL,
     amount_tendered DECIMAL(12, 2) DEFAULT 0,
     change DECIMAL(12, 2) DEFAULT 0,
@@ -376,11 +393,15 @@ CREATE TABLE orders (
     payment_details JSONB DEFAULT '{}',
     invoice_status TEXT,
     status TEXT DEFAULT 'completed',
-    timestamp TIMESTAMPTZ DEFAULT NOW()
+    items JSONB DEFAULT '[]',                 -- denormalized snapshot for receipts
+    is_deleted BOOLEAN DEFAULT FALSE,
+    deleted_by TEXT,
+    timestamp TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ
 );
 
 CREATE TABLE order_items (
-    id TEXT PRIMARY KEY, -- Use Firestore ID to avoid collisions
+    id TEXT PRIMARY KEY, -- TX-prefixed display ID
     parent_order_id TEXT REFERENCES orders(id) ON DELETE CASCADE,
     product_id TEXT REFERENCES products(id),
     name TEXT,
@@ -400,7 +421,9 @@ CREATE TABLE order_items (
     payment_method TEXT,
     invoice_status TEXT,
     reconciliation_status TEXT DEFAULT 'Verified',
-    timestamp TIMESTAMPTZ DEFAULT NOW()
+    metadata JSONB DEFAULT '{}',              -- { note, parentServiceId, variantGroup, variantLabel, paymentDetails, consumables }
+    timestamp TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ
 );
 
 CREATE TABLE pc_transactions (
@@ -421,16 +444,17 @@ CREATE TABLE pc_transactions (
 );
 
 CREATE TABLE expenses (
-    id TEXT PRIMARY KEY, 
+    id TEXT PRIMARY KEY,
     category TEXT,
     expense_type TEXT,
-    item TEXT NOT NULL,  
+    item TEXT NOT NULL,
     amount DECIMAL(12, 2) NOT NULL,
     quantity INT DEFAULT 1,
     staff_email TEXT,
     shift_id TEXT REFERENCES shifts(id) ON DELETE SET NULL,
     is_deleted BOOLEAN DEFAULT FALSE,
     financial_category TEXT,
+    notes TEXT,                               -- Phase 2 ALTER: staff name / reason appended here
     timestamp TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -485,7 +509,15 @@ CREATE TABLE drawer_logs (
     timestamp TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 7. PERFORMANCE INDEXES
+-- 7. FUNCTIONS
+
+-- Atomic stock decrement — avoids read-then-write race condition in concurrent checkouts.
+CREATE OR REPLACE FUNCTION decrement_stock(p_product_id TEXT, p_qty INT)
+RETURNS VOID AS $$
+    UPDATE products SET stock_count = stock_count - p_qty WHERE id = p_product_id;
+$$ LANGUAGE SQL;
+
+-- 8. PERFORMANCE INDEXES
 CREATE INDEX IF NOT EXISTS idx_order_items_order_num ON order_items(parent_order_id);
 CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id);
 CREATE INDEX IF NOT EXISTS idx_orders_shift_id ON orders(shift_id);

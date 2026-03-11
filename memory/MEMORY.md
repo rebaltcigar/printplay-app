@@ -1,5 +1,12 @@
 # PrintPlay App — Claude Memory
 
+## Active Fix Plan
+See [fix-plan-supabase-migration.md](fix-plan-supabase-migration.md) — 4 phases:
+- Phase 1: Auth stuck on loading screen (App.jsx authTimeout bug)
+- Phase 2: SQL ALTERs for missing columns (shifts.display_id, schedules.shift_id, expenses.notes, products POS columns)
+- Phase 3: Code column mismatches (parent_order_number→id, stockCount→stock_count)
+- Phase 4: Supabase RLS SELECT policies for all tables
+
 ## Project Overview
 - Print shop POS app built with React + MUI + Firebase (Firestore)
 - Platform name: **Kunek** (PrintPlay is the first tenant/business)

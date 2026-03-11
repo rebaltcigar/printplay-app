@@ -75,31 +75,56 @@ export const deleteTransactions = async (ids, userEmail, reason) => {
         // but standard soft delete just sets is_deleted.
     };
 
-    // Sequential updates across the 3 split tables. 
+    // Concurrent updates across the 3 split tables. 
     // If the ID isn't in the table, Supabase just silently updates 0 rows.
-    await supabase.from('order_items').update(updatePayload).in('id', ids);
-    await supabase.from('pc_transactions').update(updatePayload).in('id', ids);
-    await supabase.from('expenses').update(updatePayload).in('id', ids);
+    await Promise.all([
+        supabase.from('order_items').update(updatePayload).in('id', ids),
+        supabase.from('pc_transactions').update(updatePayload).in('id', ids),
+        supabase.from('expenses').update(updatePayload).in('id', ids)
+    ]);
 };
+
+// Per-table allowed columns — prevents 400 errors when a field doesn't exist in that table.
+const ORDER_ITEM_COLS = new Set([
+    'name', 'price', 'cost_price', 'amount', 'quantity',
+    'is_deleted', 'is_edited', 'added_by_admin', 'staff_email',
+    'shift_id', 'financial_category', 'customer_id', 'customer_name',
+    'category', 'payment_method', 'invoice_status', 'reconciliation_status',
+    'metadata', 'updated_at'
+]);
+const PC_TX_COLS = new Set([
+    'customer_id', 'customer_name', 'type', 'category', 'payment_method',
+    'amount', 'staff_email', 'shift_id', 'is_deleted', 'financial_category',
+    'reconciliation_status', 'metadata'
+]);
+const EXPENSE_COLS = new Set([
+    'category', 'expense_type', 'item', 'amount', 'quantity',
+    'staff_email', 'shift_id', 'is_deleted', 'financial_category', 'notes'
+]);
+const pick = (obj, cols) => Object.fromEntries(Object.entries(obj).filter(([k]) => cols.has(k)));
 
 /**
  * Updates a transaction document.
- * Tries all 3 tables sequentially since the UI lacks context of which table the generic "transaction ID" belongs to.
- * 
+ * Strips fields to each table's known columns to avoid 400 errors on unknown fields.
+ *
  * @param {string} id Transaction document ID
  * @param {Object} updates Fields to update
  * @returns {Promise<void>}
  */
 export const updateTransaction = async (id, updates) => {
-    // Map camcelCase to snake_case if necessary for updates
-    // Assume caller mapped it or we map common fields
-    const payload = { ...updates, updated_at: new Date().toISOString() };
-    if (payload.isDeleted !== undefined) {
-        payload.is_deleted = payload.isDeleted;
-        delete payload.isDeleted;
+    const base = { ...updates };
+    if (base.isDeleted !== undefined) {
+        base.is_deleted = base.isDeleted;
+        delete base.isDeleted;
     }
 
-    await supabase.from('order_items').update(payload).eq('id', id);
-    await supabase.from('pc_transactions').update(payload).eq('id', id);
-    await supabase.from('expenses').update(payload).eq('id', id);
+    const orderItemPayload = pick({ ...base, updated_at: new Date().toISOString() }, ORDER_ITEM_COLS);
+    const pcTxPayload = pick(base, PC_TX_COLS);
+    const expensePayload = pick(base, EXPENSE_COLS);
+
+    await Promise.all([
+        supabase.from('order_items').update(orderItemPayload).eq('id', id),
+        supabase.from('pc_transactions').update(pcTxPayload).eq('id', id),
+        supabase.from('expenses').update(expensePayload).eq('id', id)
+    ]);
 };

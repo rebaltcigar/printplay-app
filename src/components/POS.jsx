@@ -72,9 +72,7 @@ import { usePOSServices } from '../hooks/usePOSServices';
 import { useStaffList } from '../hooks/useStaffList';
 import { usePOSCart } from '../hooks/usePOSCart';
 import { useShiftTimer } from '../hooks/useShiftTimer';
-import { saveCheckout, updateCheckout } from '../services/checkoutService';
-import { recordExpense, deleteTransactions, updateTransaction } from '../services/transactionService';
-
+import { usePOSHandlers } from '../hooks/usePOSHandlers';
 import { useGlobalUI } from '../contexts/GlobalUIContext';
 import { canViewFinancials } from '../utils/permissions';
 import { getFriendlyErrorMessage } from '../services/errorService';
@@ -109,19 +107,6 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
   const services = serviceList;
   const { staffOptions } = useStaffList();
 
-  // --- LEGACY INPUT STATE (Left Panel) ---
-  const [item, setItem] = useState('');
-  const [expenseType, setExpenseType] = useState('');
-  const [expenseStaffId, setExpenseStaffId] = useState('');
-  const [expenseStaffName, setExpenseStaffName] = useState('');
-  const [expenseStaffEmail, setExpenseStaffEmail] = useState('');
-  const [quantity, setQuantity] = useState('');
-  const [price, setPrice] = useState('');
-  const [notes, setNotes] = useState('');
-  const [selectedCustomer, setSelectedCustomer] = useState(null);
-  const quantityInputRef = useRef(null);
-  const priceInputRef = useRef(null);
-
   // --- SHIFT TIMER ---
   const {
     elapsed, elapsedMs, shiftAlertState, minsRemaining
@@ -138,30 +123,27 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
   const [openDrawerDialog, setOpenDrawerDialog] = useState(false);
   const [openEndShiftDialog, setOpenEndShiftDialog] = useState(false);
   const [openCustomerDialog, setOpenCustomerDialog] = useState(false); // For Debt Log
-  // --- CUSTOMERS ---
-  const [openCustomerSelection, setOpenCustomerSelection] = useState(false);
+  // --- NEW POS GRID DIALOGS ---
+  const [openHistoryDrawer, setOpenHistoryDrawer] = useState(false);
+
   const [openInvoiceLookup, setOpenInvoiceLookup] = useState(false);
 
   const [openCheckout, setOpenCheckout] = useState(false);
   const [openExpense, setOpenExpense] = useState(false); // For header button
 
-  // --- EDIT LINE ITEM (Price/Qty) ---
-  const [editItemDialog, setEditItemDialog] = useState(false);
-  const [editingLineItem, setEditingLineItem] = useState(null);
-
-  // --- NEW POS GRID DIALOGS ---
-  const [openHistoryDrawer, setOpenHistoryDrawer] = useState(false);
-  const [variablePriceItem, setVariablePriceItem] = useState(null);
-
-  // --- EDIT PAST TX ---
-  const [editTxDialog, setEditTxDialog] = useState(false);
-  const [editingTx, setEditingTx] = useState(null);
-  const [deleteTxDialog, setDeleteTxDialog] = useState(false);
-  const [deleteCartItemState, setDeleteCartItemState] = useState(null); // { tabIndex, itemIndex }
-  const [editItemError, setEditItemError] = useState('');
-  const [selectedOrders, setSelectedOrders] = useState([]);
-  const [deleteOrderDialog, setDeleteOrderDialog] = useState(false);
-
+  // --- UI STATE (Specific to POS.jsx) ---
+  const [posView, setPosView] = useState(() => localStorage.getItem('kunek_posView') || 'legacy');
+  const [gridTab, setGridTab] = useState(0); 
+  const [manualEntryOpen, setManualEntryOpen] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState(null);
+  
+  const togglePosView = () => {
+    const next = posView === 'new' ? 'legacy' : 'new';
+    setPosView(next);
+    setGridTab(0); // always reset so cart is visible
+    localStorage.setItem('kunek_posView', next);
+  };
+  
   // --- PRINTING ---
   const [printOrder, setPrintOrder] = useState(null);
   const [printInvoiceData, setPrintInvoiceData] = useState(null); // ADDED
@@ -205,33 +187,7 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
   }, [printInvoiceData]);
 
   // --- UI STATE ---
-  const [manualEntryOpen, setManualEntryOpen] = useState(false);
-  const [gridTab, setGridTab] = useState(0); // 0=Sale, 1=PC Rental
-  const [posView, setPosView] = useState('legacy'); // Changed from localStorage to enforce Classic as default on load
-  const [menuAnchor, setMenuAnchor] = useState(null);
-  const [selectedTransactions, setSelectedTransactions] = useState([]);
-  const [shiftOrders, setShiftOrders] = useState([]);
 
-  // Change Dialog State
-  const [changeDialogOpen, setChangeDialogOpen] = useState(false);
-  const [lastChange, setLastChange] = useState(0);
-
-  // Loading State
-  const [isLoading, setIsLoading] = useState(false);
-
-  // Removed OrderDetailsDialog state
-
-
-
-  const togglePosView = () => {
-    const next = posView === 'new' ? 'legacy' : 'new';
-    setPosView(next);
-    setGridTab(0); // always reset so cart is visible
-    localStorage.setItem('kunek_posView', next);
-  };
-
-
-  // Removed OrderDetailsDialog state
 
   // Hotkey for Drawer (Dynamic)
   useEffect(() => {
@@ -280,8 +236,51 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [systemSettings.checkoutHotkey, gridTab, orders, activeTab, openCheckout]);
 
-  const isManualEntryItem = posItems.some(i => i.serviceName === item) || item === '';
   const canViewFin = canViewFinancials(userRole);
+
+  // --- CHANGE DIALOG STATE (used by usePOSHandlers + JSX) ---
+  const [changeDialogOpen, setChangeDialogOpen] = useState(false);
+  const [lastChange, setLastChange] = useState(0);
+
+  // --- CUSTOM HOOK FOR HANDLERS --
+  const {
+      isLoading,
+      item, setItem,
+      expenseType, setExpenseType,
+      expenseStaffId, setExpenseStaffId,
+      expenseStaffName, setExpenseStaffName,
+      expenseStaffEmail, setExpenseStaffEmail,
+      quantity, setQuantity,
+      price, setPrice,
+      notes, setNotes,
+      quantityInputRef, priceInputRef,
+      variablePriceItem, setVariablePriceItem,
+      selectedCustomer, setSelectedCustomer,
+      selectedTransactions, setSelectedTransactions,
+      deleteTxDialog, setDeleteTxDialog,
+      selectedOrders, setSelectedOrders,
+      deleteOrderDialog, setDeleteOrderDialog,
+      deleteCartItemState, setDeleteCartItemState,
+      editItemDialog, setEditItemDialog,
+      editingLineItem, setEditingLineItem,
+      editItemError, setEditItemError,
+      editTxDialog, setEditTxDialog,
+      editingTx, setEditingTx,
+      handleItemChange, handleGridItemClick, handlePCSession, handleAddEntry,
+      closeOrderTab, removeFromCart, handleConfirmDeleteCartItem,
+      openLineItemEdit, saveLineItemEdit,
+      handleCheckout, handleUpdateOrder, actuallyUpdateOrder,
+      handleDeleteLogs, handleConfirmDelete, handleDeleteOrders, handleConfirmDeleteOrders,
+      handleOpenEditTx, handleEditTx
+  } = usePOSHandlers({
+      user, activeShiftId, currentOrder, currentTotal,
+      orders, setOrders, activeTab, setActiveTab,
+      updateCurrentOrder, addItemToCart, removeItemFromCart, updateItemInCart, closeTabHook,
+      showSnackbar, setChangeDialogOpen, setLastChange, setOpenCheckout,
+      shiftOrders: [], staffDisplayName, sessionStaffEmail,
+      setPrintOrder, loadOrder,
+      services, canViewFin
+  });
 
   // =========================================================================
   // 1. DATA LOADING & INITIALIZATION
@@ -393,372 +392,6 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
   // =========================================================================
   // 2. LEFT PANEL HANDLERS (LEGACY INPUT)
   // =========================================================================
-
-  const handleItemChange = (e) => {
-    const val = e.target.value;
-    setItem(val);
-
-    const svc = services.find(s => s.serviceName === val);
-    if (svc && svc.price) setPrice(svc.price);
-    else setPrice('');
-
-    if (val !== 'Expenses') {
-      setExpenseType('');
-      setExpenseStaffId('');
-    }
-
-    // UX: Auto-focus Quantity after selecting item
-    if (val) {
-      setTimeout(() => {
-        quantityInputRef.current?.focus();
-        quantityInputRef.current?.select();
-      }, 100);
-    }
-  };
-
-  // Receives leaf items only — variant drill-down is handled inside POSItemGrid
-  const handleGridItemClick = (item, qty = 1) => {
-    if (item.priceType === 'variable') {
-      setVariablePriceItem(item);
-    } else {
-      addItemToCart(item, qty);
-    }
-  };
-
-  const handlePCSession = ({ pcName, customer, amount }) => {
-    addItemToCart({
-      id: null,
-      serviceName: `PC Rental — ${pcName}`,
-      price: amount,
-      priceType: 'fixed',
-      costPrice: 0,
-      trackStock: false,
-    }, 1, amount);
-    showSnackbar(`${pcName} billed — ${fmtCurrency(amount)}`);
-  };
-
-  const handleAddEntry = async () => {
-    if (!item) return showSnackbar("Please select an item.", "error");
-    if (!quantity || !price) return showSnackbar("Quantity and Price are required.", "error");
-
-    const qtyNum = Number(quantity);
-    const priceNum = Number(price);
-    if (isNaN(qtyNum) || qtyNum <= 0) return showSnackbar("Invalid quantity.", "error");
-    if (isNaN(priceNum) || priceNum < 0) return showSnackbar("Invalid price.", "error");
-
-    // A. DIRECT DATABASE WRITES (Expenses)
-    if (item === 'Expenses') {
-
-      // Expense Validation
-      if (!expenseType) return showSnackbar("Select Expense Type.", "error");
-
-      // Validation with Admin Override
-      if (expenseType !== 'Salary Advance' && !canViewFin && !notes) {
-        return showSnackbar("Notes required for expenses.", "error");
-      }
-
-      if ((expenseType === 'Salary' || expenseType === 'Salary Advance') && !expenseStaffId) return showSnackbar("Select Staff.", "error");
-
-      setIsLoading(true); // START LOADING
-      try {
-        await recordExpense({
-          item,
-          expenseType,
-          expenseStaffId,
-          expenseStaffName,
-          quantity: qtyNum,
-          price: priceNum,
-          notes,
-          userEmail: user.email,
-          activeShiftId
-        });
-        setItem(''); setQuantity(''); setPrice(''); setNotes('');
-        setExpenseType('');
-        showSnackbar(`${item} recorded successfully.`);
-      } catch (e) {
-        console.error(e);
-        showSnackbar(getFriendlyErrorMessage(e), "error");
-      } finally {
-        setIsLoading(false); // STOP LOADING
-      }
-      return;
-    }
-
-    // B. ADD TO CART (Standard Services)
-    const svc = services.find(s => s.serviceName === item);
-    const cartItem = {
-      id: Date.now(),
-      serviceId: svc?.id || null, // CAPTURE ID
-      serviceName: item,
-      price: priceNum,
-      costPrice: svc?.costPrice || 0, // CAPTURE COST
-      trackStock: svc?.trackStock || false, // CAPTURE FLAG
-      quantity: qtyNum,
-    };
-
-    const newItems = [...currentOrder.items];
-    const existing = newItems.find(i => i.serviceName === item && i.price === priceNum);
-    if (existing) {
-      existing.quantity += qtyNum;
-    } else {
-      newItems.push(cartItem);
-    }
-    updateCurrentOrder({ items: newItems });
-    showSnackbar(`Added ${qtyNum}x ${item} to cart`);
-    setItem(''); setQuantity(''); setPrice(''); setNotes('');
-  };
-
-  // =========================================================================
-  // 3. POS / MIDDLE PANEL LOGIC
-  // =========================================================================
-
-  const closeOrderTab = (e, index) => {
-    if (e?.stopPropagation) e.stopPropagation();
-    closeTabHook(index);
-  };
-
-  const removeFromCart = (index) => {
-    const item = currentOrder.items[index];
-    if (currentOrder.isExisting && item.transactionId) {
-      setDeleteCartItemState({ tabIndex: activeTab, itemIndex: index });
-    } else {
-      removeItemFromCart(index);
-    }
-  };
-
-  const openLineItemEdit = (item, index) => {
-    setEditingLineItem({ ...item, index });
-    setEditItemError('');
-    setEditItemDialog(true);
-  };
-
-  const saveLineItemEdit = () => {
-    const idx = editingLineItem.index;
-    if (idx >= 0) {
-      updateItemInCart(idx, {
-        price: Number(editingLineItem.price),
-        quantity: Number(editingLineItem.quantity),
-        serviceName: editingLineItem.serviceName,
-        note: editingLineItem.note,
-        editReason: editingLineItem.editReason
-      });
-    }
-    setEditItemDialog(false);
-  };
-
-  const handleCheckout = async (paymentData, shouldPrint = false) => {
-    setIsLoading(true);
-    try {
-      const fullOrder = await saveCheckout({
-        currentOrder,
-        paymentData,
-        user: { ...user, email: sessionStaffEmail, displayName: staffDisplayName },
-        activeShiftId,
-        currentTotal
-      });
-
-      if (paymentData.paymentMethod === 'Cash' || paymentData.change > 0) {
-        setLastChange(paymentData.change);
-        setChangeDialogOpen(true);
-      }
-      showSnackbar("Transaction completed!", "success");
-
-      openDrawer(user, 'transaction').then(success => {
-        if (!success) {
-          showSnackbar("Drawer connection check failed. Click 'Drawer' manually if needed.", "warning");
-        }
-      }).catch(console.warn);
-
-      setOpenCheckout(false);
-
-      if (shouldPrint) {
-        setPrintOrder(normalizeReceiptData(fullOrder, {
-          staffName: staffDisplayName,
-          isReprint: false
-        }));
-      }
-
-      if (orders.length > 1) {
-        closeOrderTab({ stopPropagation: () => { } }, activeTab);
-      } else {
-        updateCurrentOrder({ items: [], customer: null });
-      }
-
-    } catch (err) {
-      console.error(err);
-      showSnackbar(getFriendlyErrorMessage(err), 'error');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // =========================================================================
-  // 4. LOGS & ACTIONS
-  // =========================================================================
-
-  const handleDeleteLogs = () => {
-    if (selectedTransactions.length === 0) return;
-    setDeleteTxDialog(true);
-  };
-
-  const handleConfirmDelete = async (reason) => {
-    try {
-      await deleteTransactions(selectedTransactions, user.email, reason);
-      setSelectedTransactions([]);
-      showSnackbar("Transaction(s) successfully deleted.");
-    } catch (e) {
-      console.error("Error deleting transactions:", e);
-      showSnackbar(getFriendlyErrorMessage(e), 'error');
-    }
-  };
-  // --- ORDER DELETION HANDLERS ---
-  const handleDeleteOrders = () => {
-    if (selectedOrders.length === 0) return;
-    setDeleteOrderDialog(true);
-  };
-
-  const handleConfirmDeleteOrders = async (reason) => {
-    try {
-      await Promise.all(selectedOrders.map(async (id) => {
-        const orderNum = shiftOrders.find(o => o.id === id)?.orderNumber;
-        if (orderNum) {
-          await deleteOrder(id, orderNum, activeShiftId, user.email, reason);
-        }
-      }));
-      setSelectedOrders([]);
-      showSnackbar("Order(s) and linked transactions successfully deleted.");
-    } catch (e) {
-      console.error("Error deleting orders:", e);
-      showSnackbar(getFriendlyErrorMessage(e), 'error');
-    }
-  };
-
-  const handleOpenEditTx = (tx) => {
-    setEditingTx(tx);
-    setEditTxDialog(true);
-  };
-
-  const handleEditTx = async (id, updates) => {
-    try {
-      await updateTransaction(id, updates);
-      setEditTxDialog(false);
-      setEditingTx(null);
-      showSnackbar("Transaction successfully updated.");
-    } catch (e) {
-      console.error("Error editing transaction:", e);
-      showSnackbar(getFriendlyErrorMessage(e), 'error');
-    }
-  };
-
-  const handleOpenOrderAsTab = async (order) => {
-    try {
-      const { data } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('order_number', order.orderNumber);
-
-      const transactions = (data || []).map(d => ({
-        ...d,
-        orderNumber: d.order_number,
-        paymentMethod: d.payment_method
-      }));
-      loadOrder(order, transactions);
-    } catch (e) {
-      console.error("Error opening order:", e);
-      showSnackbar(getFriendlyErrorMessage(e), 'error');
-    }
-  };
-
-  const handleUpdateOrder = async () => {
-    const order = currentOrder;
-    if (!order.isExisting) return;
-    setOpenCheckout(true);
-  };
-
-  const actuallyUpdateOrder = async (paymentData, shouldPrint = false) => {
-    const order = currentOrder;
-    if (!order.isExisting) return;
-    setIsLoading(true);
-    try {
-      const updatedOrder = await updateCheckout({
-        order,
-        paymentData,
-        user: { ...user, email: sessionStaffEmail, displayName: staffDisplayName },
-        activeShiftId,
-        currentTotal
-      });
-
-      openDrawer(user, 'transaction').then(success => {
-        if (!success) {
-          showSnackbar("Drawer not connected. Click 'Drawer' to connect.", "warning");
-        }
-      }).catch(console.warn);
-
-      if (paymentData.paymentMethod === 'Cash' || paymentData.change > 0) {
-        setLastChange(paymentData.change);
-        setChangeDialogOpen(true);
-      }
-      setOpenCheckout(false);
-
-      if (shouldPrint) {
-        handlePrintExistingOrder({
-          ...order,
-          ...updatedOrder,
-          timestamp: new Date()
-        });
-      }
-
-      // Close Tab Logic
-      if (orders.length === 1) {
-        setOrders([{ id: 1, items: [], customer: null }]);
-        setActiveTab(0);
-      } else {
-        const newOrders = orders.filter((_, i) => i !== activeTab);
-        setOrders(newOrders);
-        setActiveTab(Math.max(0, activeTab - 1));
-      }
-      showSnackbar("Order has been updated successfully.", "success");
-
-    } catch (e) {
-      console.error("Update failed:", e);
-      showSnackbar(getFriendlyErrorMessage(e), 'error');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handlePrintExistingOrder = (orderData) => {
-    // Use the shared normalizer to ensure consistent receipt format
-    const printData = normalizeReceiptData(orderData, {
-      staffName: staffDisplayName,
-      isReprint: true // Use original timestamp if available
-    });
-    setPrintOrder(printData);
-  };
-
-  const handlePrintExistingInvoice = (orderData) => {
-    // Normalization logic for Invoice
-    const invData = normalizeInvoiceData(orderData, {
-      staffName: staffDisplayName,
-      isReprint: true
-    });
-    setPrintInvoiceData(invData);
-  };
-
-  const handleConfirmDeleteCartItem = (reason) => {
-    const { tabIndex, itemIndex } = deleteCartItemState;
-    setOrders(prev => {
-      const copy = [...prev];
-      const ord = { ...copy[tabIndex], items: [...copy[tabIndex].items] };
-      const item = ord.items[itemIndex];
-      ord.deletedItems = [...(ord.deletedItems || []), { ...item, deleteReason: reason }];
-      ord.items = ord.items.filter((_, i) => i !== itemIndex);
-      copy[tabIndex] = ord;
-      return copy;
-    });
-    setDeleteCartItemState(null);
-  };
-
 
   const onShiftEnded = (data) => {
     setEndShiftReceiptData(data);
