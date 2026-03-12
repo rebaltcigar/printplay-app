@@ -84,6 +84,9 @@ ALTER TABLE shifts DROP CONSTRAINT IF EXISTS shifts_staff_id_fkey;
 ALTER TABLE app_status DROP CONSTRAINT IF EXISTS app_status_staff_id_fkey;
 ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_staff_id_fkey;
 
+-- Ensure sequential_id column exists on profiles before trigger/backfill
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS sequential_id TEXT;
+
 -- Auto-assign sequential_id to new profiles (fixes FK violations for accounts created post-migration)
 CREATE OR REPLACE FUNCTION assign_profile_sequential_id()
 RETURNS TRIGGER AS $$
@@ -149,15 +152,15 @@ $$;
 -- This prevents the null-ID bug when the counters table is missing rows.
 INSERT INTO counters (id, current_value, prefix, padding)
 VALUES
-    ('shifts',        100000000000, 'SH', 12),
-    ('orders',        100000000000, 'OR', 12),
-    ('transactions',  100000000000, 'TX', 12),
-    ('expenses',      100000000000, 'EX', 12),
-    ('customers',     100000000000, 'CU', 12),
-    ('pc_transactions',100000000000,'PX', 12),
-    ('invoices',      100000000000, 'IV', 12),
-    ('payroll_runs',  100000000000, 'PY', 12),
-    ('profiles',      100000000000, 'ST', 12)
+    ('shifts',          10000000, 'SH', 8),
+    ('orders',          10000000, 'OR', 8),
+    ('transactions',    10000000, 'TX', 8),
+    ('expenses',        10000000, 'EX', 8),
+    ('customers',       10000000, 'CU', 8),
+    ('pc_transactions', 10000000, 'PX', 8),
+    ('invoices',        10000000, 'IV', 8),
+    ('payroll_runs',    10000000, 'PY', 8),
+    ('profiles',        10000000, 'ST', 8)
 ON CONFLICT (id) DO NOTHING;
 
 -- Sync each counter so it is never lower than the highest existing sequential ID
@@ -184,7 +187,28 @@ BEGIN
   END LOOP;
 END $$;
 
--- 7. Realtime publication — idempotent, skips tables already in the publication
+-- 7. Cash difference column on shifts
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS cash_difference NUMERIC;
+
+-- 8. Metadata + soft-delete columns on transaction tables
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
+ALTER TABLE pc_transactions ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;
+ALTER TABLE pc_transactions ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;
+
+-- 9. Performance indexes
+CREATE INDEX IF NOT EXISTS idx_order_items_shift_id ON order_items(shift_id);
+CREATE INDEX IF NOT EXISTS idx_order_items_timestamp ON order_items(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_pc_transactions_shift_id ON pc_transactions(shift_id);
+CREATE INDEX IF NOT EXISTS idx_pc_transactions_timestamp ON pc_transactions(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_expenses_shift_id ON expenses(shift_id);
+CREATE INDEX IF NOT EXISTS idx_expenses_timestamp ON expenses(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);
+CREATE INDEX IF NOT EXISTS idx_shifts_start_time ON shifts(start_time DESC);
+
+-- 10. Realtime publication — idempotent, skips tables already in the publication
 DO $$
 DECLARE t TEXT;
 BEGIN

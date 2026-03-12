@@ -29,7 +29,27 @@
       "Bash(firebase --version)",
       "Bash(firebase projects:list)",
       "Bash(node -e \"console.log\\(require\\(''./package.json''\\).version\\)\")",
-      "Bash(grep -E \"\\\\.\\(js|jsx\\)$\")"
+      "Bash(grep -E \"\\\\.\\(js|jsx\\)$\")",
+      "Bash(nslookup db.euckwqeyfhtfzbmbdzqg.supabase.co)",
+      "Bash(curl -s --max-time 10 -o /dev/null -w \"%{http_code}\" \"https://api.supabase.com/v1/projects\" -H \"Authorization: Bearer sbp_6949006bcff5977a86bc5d5aa94c3b8b819fb15a\")",
+      "Bash(node scripts/run_sql.js --inline \"SELECT column_name, data_type FROM information_schema.columns WHERE table_name = ''profiles'' ORDER BY ordinal_position;\")",
+      "Bash(node scripts/run_sql.js --inline \"SELECT id, email, sequential_id FROM profiles ORDER BY created_at;\")",
+      "Bash(node scripts/run_sql.js --inline \"ALTER TABLE profiles ADD CONSTRAINT profiles_sequential_id_unique UNIQUE \\(sequential_id\\);\")",
+      "Bash(node scripts/run_sql.js scripts/optimize_inventory_revert.sql)",
+      "Bash(VITE_SUPABASE_URL=https://euckwqeyfhtfzbmbdzqg.supabase.co SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV1Y2t3cWV5Zmh0ZnpibWJkenFnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MzE2MTIxNSwiZXhwIjoyMDg4NzM3MjE1fQ.LDy0OPVFu5cgU8oGiNeyWOlIRulFbs7fCaGKQGSyTS0 node scripts/backfill_cash_difference.js)",
+      "Bash(VITE_SUPABASE_URL=https://euckwqeyfhtfzbmbdzqg.supabase.co SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV1Y2t3cWV5Zmh0ZnpibWJkenFnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MzE2MTIxNSwiZXhwIjoyMDg4NzM3MjE1fQ.LDy0OPVFu5cgU8oGiNeyWOlIRulFbs7fCaGKQGSyTS0 node scripts/repair_expenses.js)",
+      "Bash(VITE_SUPABASE_URL=https://euckwqeyfhtfzbmbdzqg.supabase.co SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV1Y2t3cWV5Zmh0ZnpibWJkenFnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MzE2MTIxNSwiZXhwIjoyMDg4NzM3MjE1fQ.LDy0OPVFu5cgU8oGiNeyWOlIRulFbs7fCaGKQGSyTS0 node --dns-result-order=ipv4first scripts/repair_expenses.js)",
+      "Bash(VITE_SUPABASE_URL=https://euckwqeyfhtfzbmbdzqg.supabase.co SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV1Y2t3cWV5Zmh0ZnpibWJkenFnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MzE2MTIxNSwiZXhwIjoyMDg4NzM3MjE1fQ.LDy0OPVFu5cgU8oGiNeyWOlIRulFbs7fCaGKQGSyTS0 node --dns-result-order=ipv4first scripts/audit_orders_tx.js)",
+      "Bash(node scripts/run_sql.js scripts/resequence_data.sql)",
+      "Bash(node scripts/run_sql.js --inline \"SELECT column_name FROM information_schema.columns WHERE table_name = ''orders'' AND column_name IN \\(''staff_email'',''staff_id''\\) ORDER BY column_name;\")",
+      "Bash(node scripts/run_sql.js --inline \":*)",
+      "Bash(node scripts/run_sql.js --inline \"SELECT column_name FROM information_schema.columns WHERE table_name = ''inventory_logs'' ORDER BY ordinal_position;\")",
+      "Bash(node scripts/run_sql.js scripts/sequential_ids_and_optimization.sql)",
+      "Read(//c/Users/alber/.claude/projects/c--repo-kunek-app/memory/**)",
+      "Bash(psql --version)",
+      "Bash(node scripts/run_sql.js --inline \"DROP TABLE IF EXISTS paystubs CASCADE;\")",
+      "Bash(node -e \"fetch\\(''https://euckwqeyfhtfzbmbdzqg.supabase.co/rest/v1/'', {headers: {''apikey'': ''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV1Y2t3cWV5Zmh0ZnpibWJkenFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMxNjEyMTUsImV4cCI6MjA4ODczNzIxNX0.weHwaO4QgRy0ZBY5pIQGkzcn4Q52Tr4HSCjwHvOt8Hs''}}\\).then\\(r => console.log\\(''REST API status:'', r.status\\)\\).catch\\(e => console.error\\(''Error:'', e.cause?.code || e.message\\)\\)\")",
+      "Bash(node -e \"import\\(''pg''\\).then\\(m => console.log\\(''pg available''\\)\\).catch\\(\\(\\) => console.log\\(''pg not available''\\)\\)\")"
     ]
   }
 }

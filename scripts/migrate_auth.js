@@ -98,7 +98,9 @@ async function migrateAuth() {
             const profileData = {
                 id: supaUserId,
                 email: fbu.email,
-                full_name: fbu.displayName || (fsUser ? fsUser.displayName : 'Unknown Staff'),
+                full_name: fbu.displayName
+                    || (fsUser ? (fsUser.fullName || fsUser.full_name || fsUser.name || fsUser.displayName) : null)
+                    || fbu.email.split('@')[0],
                 role: role,
                 pin_code: fsUser ? fsUser.pinCode : null,
                 requires_password_reset: true // Force them to set a real password via UI later

@@ -40,7 +40,9 @@ const db = admin.firestore();
 const registry = {
     customers: new Set(),
     shifts: new Set(),
+    shiftFsIdMap: new Map(), // Firebase fsId → displayId (for FK resolution in orders/expenses)
     orders: new Set(),
+    orderIds: new Map(), // orderNumber → order displayId
     products: new Set(),
     zones: new Set(),
     rates: new Set(),
@@ -252,7 +254,7 @@ const mapShift = (d) => ({
     expenses_total: Number(d.expensesTotal) || 0,
     total_ar: Number(d.totalAr) || 0,
     total_cash: Number(d.totalCash) || 0,
-    total_gcash: Number(d.totalGcash) || 0,
+    total_digital: Number(d.totalGcash) || 0,
     ar_payments_total: Number(d.arPaymentsTotal) || 0,
     denominations: d.denominations || {},
     last_consolidated_at: mapTimestamp(d.lastConsolidatedAt)
@@ -295,22 +297,32 @@ const mapSession = (d) => ({
     updated_at: mapTimestamp(d.updatedAt) || new Date().toISOString()
 });
 
+const resolveShiftId = (rawShiftId) => {
+    if (!rawShiftId) return null;
+    // Direct match (shiftId is already the displayId)
+    if (registry.shifts.has(rawShiftId)) return rawShiftId;
+    // Indirect: Firebase fsId → displayId
+    const mapped = registry.shiftFsIdMap.get(rawShiftId);
+    if (mapped && registry.shifts.has(mapped)) return mapped;
+    return null;
+};
+
 const mapOrder = (d) => {
     let customerId = d.customerId;
     if (customerId === 'walk-in') customerId = null;
-    const shiftId = d.shiftId ? resolveId({ fsId: d.shiftId }) : null;
     return {
         id: resolveId(d),
-        order_number: resolveOrderNumber(d.orderNumber || d.displayId || d.fsId),
+        order_number: d.orderNumber || resolveId(d),
         customer_id: registry.customers.has(customerId) ? customerId : null,
         customer_name: d.customerName,
         customer_phone: d.customerPhone,
         customer_address: d.customerAddress,
         customer_tin: d.customerTin,
-        staff_id: d.staffId,
+        // staff_id intentionally omitted — Firebase UID is useless here.
+        // resequence_data.sql resolves staff_email → sequential_id after migration.
         staff_email: d.staffEmail,
         staff_name: d.staffName,
-        shift_id: (shiftId && registry.shifts.has(shiftId)) ? shiftId : null,
+        shift_id: resolveShiftId(d.shiftId),
         subtotal: Number(d.subtotal) || 0,
         total: Number(d.total) || 0,
         amount_tendered: Number(d.amountTendered) || 0,
@@ -351,7 +363,7 @@ const processTransactions = (allTx) => {
         const itemObj = {
             id: rawId,
             staff_email: d.staffEmail,
-            shift_id: registry.shifts.has(d.shiftId) ? d.shiftId : null,
+            shift_id: resolveShiftId(d.shiftId),
             financial_category: d.financialCategory,
             timestamp: mapTimestamp(d.timestamp) || mapTimestamp(d.date) || new Date().toISOString(),
             is_deleted: d.isDeleted === true,
@@ -376,16 +388,16 @@ const processTransactions = (allTx) => {
         }
 
         if (prefix === 'TX') {
-            let parent_order_number = null;
+            let parent_order_id = null;
             if (d.orderNumber && registry.orders.has(resolveOrderNumber(d.orderNumber))) {
-                parent_order_number = resolveOrderNumber(d.orderNumber);
+                parent_order_id = registry.orderIds.get(resolveOrderNumber(d.orderNumber)) || null;
             }
             orderItems.push({
                 ...itemObj,
                 price: Number(d.price) || 0,
                 cost_price: Number(d.costPrice) || 0,
                 quantity: Number(d.quantity) || 1,
-                parent_order_number,
+                parent_order_id,
                 product_id: registry.products.has(d.serviceId) ? d.serviceId : null,
                 name: d.item || d.description || 'Unknown',
                 customer_id: custId,
@@ -445,7 +457,6 @@ const mapInvoice = (d) => ({
 
 const mapPayrollRun = (d) => ({
     id: d.fsId,
-    display_id: d.displayId || d.fsId,
     period_start: mapTimestamp(d.periodStart),
     period_end: mapTimestamp(d.periodEnd),
     pay_date: mapTimestamp(d.payDate),
@@ -519,7 +530,14 @@ const runMigration = async () => {
         console.log('\n--- WAVE 3: Shifts & Sessions ---');
         raw = await extractDocuments('shifts');
         const mkShifts = raw.map(mapShift);
-        mkShifts.forEach(x => registry.shifts.add(x.id));
+        raw.forEach((d, i) => {
+            const displayId = mkShifts[i].id;
+            registry.shifts.add(displayId);
+            // Map the raw Firebase doc ID to the displayId so orders/expenses can resolve it
+            if (d.fsId && d.fsId !== displayId) {
+                registry.shiftFsIdMap.set(d.fsId, displayId);
+            }
+        });
         await batchUpsert('shifts', mkShifts);
 
         raw = await extractDocuments('sessions');
@@ -531,7 +549,10 @@ const runMigration = async () => {
         console.log('\n--- WAVE 4: Financials ---');
         raw = await extractDocuments('orders');
         const mkOrders = raw.map(mapOrder);
-        mkOrders.forEach(x => registry.orders.add(x.order_number));
+        mkOrders.forEach(x => {
+            registry.orders.add(x.order_number);
+            registry.orderIds.set(x.order_number, x.id);
+        });
         await batchUpsert('orders', mkOrders);
 
         raw = await extractDocuments('transactions');
@@ -621,7 +642,9 @@ const runMigration = async () => {
             timestamp: mapTimestamp(d.timestamp) || new Date().toISOString()
         })));
 
-        raw = await extractDocuments('payroll_logs');
+        // Firebase collection may be camelCase — try both
+        raw = await extractDocuments('payrollLogs');
+        if (raw.length === 0) raw = await extractDocuments('payroll_logs');
         await batchUpsert('payroll_logs', raw.map(d => ({
             id: d.fsId,
             staff_id: d.staffId || d.staffUid,

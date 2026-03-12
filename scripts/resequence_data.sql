@@ -13,15 +13,15 @@ DECLARE
     prefix_val TEXT;
     v_counter_id TEXT;
     p RECORD;
-    v_start_offset BIGINT := 100000000000; -- Starting base
+    v_start_offset BIGINT := 10000000; -- 8-digit base: 10000000–99999999
     v_sort_col TEXT;
 BEGIN
     -- 0. INITIALIZE COUNTERS
     CREATE TABLE IF NOT EXISTS counters (
         id TEXT PRIMARY KEY,
-        current_value BIGINT DEFAULT 100000000000,
+        current_value BIGINT DEFAULT 10000000,
         prefix TEXT,
-        padding INTEGER DEFAULT 12,
+        padding INTEGER DEFAULT 8,
         updated_at TIMESTAMPTZ DEFAULT NOW()
     );
 
@@ -35,26 +35,26 @@ BEGIN
 
     -- Upsert all required counters
     -- Numeric-only tables have empty prefix, others have 2-character prefix
-    INSERT INTO counters (id, current_value, prefix, padding) VALUES 
-        ('shifts', v_start_offset, 'SH', 12),
-        ('profiles', v_start_offset, 'ST', 12),
-        ('orders', v_start_offset, 'OR', 12),
-        ('transactions', v_start_offset, 'TX', 12),
-        ('invoices', v_start_offset, 'IV', 12),
-        ('expenses', v_start_offset, 'EX', 12),
-        ('pc_transactions', v_start_offset, 'PX', 12),
-        ('sessions', v_start_offset, 'SN', 12),
-        ('payroll_runs', v_start_offset, 'PY', 12),
-        ('customers', v_start_offset, 'CU', 12),
-        ('drawer_logs', v_start_offset, '', 12),
-        ('payroll_stubs', v_start_offset, 'PS', 12),
-        ('products', v_start_offset, 'PR', 12),
-        ('rates', v_start_offset, '', 12),
-        ('schedules', v_start_offset, '', 12),
-        ('shift_templates', v_start_offset, '', 12),
-        ('stations', v_start_offset, '', 12),
-        ('zones', v_start_offset, '', 12),
-        ('station_logs', v_start_offset, '', 12)
+    INSERT INTO counters (id, current_value, prefix, padding) VALUES
+        ('shifts',          v_start_offset, 'SH', 8),
+        ('profiles',        v_start_offset, 'ST', 8),
+        ('orders',          v_start_offset, 'OR', 8),
+        ('transactions',    v_start_offset, 'TX', 8),
+        ('invoices',        v_start_offset, 'IV', 8),
+        ('expenses',        v_start_offset, 'EX', 8),
+        ('pc_transactions', v_start_offset, 'PX', 8),
+        ('sessions',        v_start_offset, 'SN', 8),
+        ('payroll_runs',    v_start_offset, 'PY', 8),
+        ('customers',       v_start_offset, 'CU', 8),
+        ('drawer_logs',     v_start_offset, '',   8),
+        ('paystubs',        v_start_offset, 'PS', 8),
+        ('products',        v_start_offset, 'PR', 8),
+        ('rates',           v_start_offset, '',   8),
+        ('schedules',       v_start_offset, '',   8),
+        ('shift_templates', v_start_offset, '',   8),
+        ('stations',        v_start_offset, '',   8),
+        ('zones',           v_start_offset, '',   8),
+        ('station_logs',    v_start_offset, '',   8)
     ON CONFLICT (id) DO UPDATE SET 
         prefix = EXCLUDED.prefix, 
         padding = EXCLUDED.padding;
@@ -70,7 +70,7 @@ BEGIN
         ]) as tname
     ) LOOP
         IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = temp_row.tname) THEN
-            EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS padding INTEGER DEFAULT 12', temp_row.tname);
+            EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS padding INTEGER DEFAULT 8', temp_row.tname);
         END IF;
     END LOOP;
 
@@ -113,8 +113,8 @@ BEGIN
     END LOOP;
 
     -- 2. STANDARDIZE COLUMN NAMES
-    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='order_items' AND column_name='parent_order_number') THEN
-        ALTER TABLE order_items RENAME COLUMN parent_order_number TO order_id;
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='order_items' AND column_name='parent_order_id') THEN
+        ALTER TABLE order_items RENAME COLUMN parent_order_id TO order_id;
     END IF;
 
     -- Standardize staff_id
@@ -178,6 +178,7 @@ BEGIN
     CREATE TEMP TABLE stat_map (old_id TEXT, new_id TEXT);
     CREATE TEMP TABLE tpl_map (old_id TEXT, new_id TEXT);
     CREATE TEMP TABLE profile_map (old_id TEXT, new_id TEXT);
+    CREATE TEMP TABLE payroll_run_map (old_id TEXT, new_id TEXT);
 
     -- 5. RE-SEQUENCE PROFILES (BASE FOR ALL STAFF REFERENCES)
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profiles' AND column_name='sequential_id') THEN
@@ -189,7 +190,7 @@ BEGIN
     
     idx := v_start_offset + 1;
     FOR p IN EXECUTE format('SELECT id FROM profiles ORDER BY %I ASC', v_sort_col) LOOP
-        new_id := 'ST-' || LPAD(idx::text, 12, '0');
+        new_id := 'ST-' || LPAD(idx::text, 8, '0');
         UPDATE profiles SET sequential_id = new_id WHERE id = p.id;
         INSERT INTO profile_map VALUES (p.id::text, new_id);
         idx := idx + 1;
@@ -227,19 +228,22 @@ BEGIN
 
             idx := v_start_offset + 1;
             FOR r IN EXECUTE format('SELECT id FROM %I ORDER BY %I ASC', temp_row.tname, v_sort_col) LOOP
-                new_id := CASE WHEN prefix_val = '' THEN LPAD(idx::text, 12, '0') ELSE prefix_val || '-' || LPAD(idx::text, 12, '0') END;
+                new_id := CASE WHEN prefix_val = '' THEN LPAD(idx::text, 8, '0') ELSE prefix_val || '-' || LPAD(idx::text, 8, '0') END;
                 
                 -- Capture for mapping
+                -- NOTE: r.id has been prefixed with 'OLD-' above, so strip it to get the original ID
+                --       so that FK columns in other tables (which still hold the original ID) can match.
                 CASE temp_row.tname
-                    WHEN 'shifts' THEN INSERT INTO shift_map VALUES (r.id, new_id);
-                    WHEN 'orders' THEN INSERT INTO order_map VALUES (r.id, new_id);
-                    WHEN 'customers' THEN INSERT INTO cust_map VALUES (r.id, new_id);
-                    WHEN 'sessions' THEN INSERT INTO sess_map VALUES (r.id, new_id);
-                    WHEN 'products' THEN INSERT INTO prod_map VALUES (r.id, new_id);
-                    WHEN 'zones' THEN INSERT INTO zone_map VALUES (r.id, new_id);
-                    WHEN 'rates' THEN INSERT INTO rate_map VALUES (r.id, new_id);
-                    WHEN 'stations' THEN INSERT INTO stat_map VALUES (r.id, new_id);
-                    WHEN 'shift_templates' THEN INSERT INTO tpl_map VALUES (r.id, new_id);
+                    WHEN 'shifts' THEN INSERT INTO shift_map VALUES (REPLACE(r.id, 'OLD-', ''), new_id);
+                    WHEN 'orders' THEN INSERT INTO order_map VALUES (REPLACE(r.id, 'OLD-', ''), new_id);
+                    WHEN 'customers' THEN INSERT INTO cust_map VALUES (REPLACE(r.id, 'OLD-', ''), new_id);
+                    WHEN 'sessions' THEN INSERT INTO sess_map VALUES (REPLACE(r.id, 'OLD-', ''), new_id);
+                    WHEN 'products' THEN INSERT INTO prod_map VALUES (REPLACE(r.id, 'OLD-', ''), new_id);
+                    WHEN 'zones' THEN INSERT INTO zone_map VALUES (REPLACE(r.id, 'OLD-', ''), new_id);
+                    WHEN 'rates' THEN INSERT INTO rate_map VALUES (REPLACE(r.id, 'OLD-', ''), new_id);
+                    WHEN 'stations' THEN INSERT INTO stat_map VALUES (REPLACE(r.id, 'OLD-', ''), new_id);
+                    WHEN 'shift_templates' THEN INSERT INTO tpl_map VALUES (REPLACE(r.id, 'OLD-', ''), new_id);
+                    WHEN 'payroll_runs' THEN INSERT INTO payroll_run_map VALUES (REPLACE(r.id, 'OLD-', ''), new_id);
                     ELSE -- No specific map needed
                 END CASE;
 
@@ -252,11 +256,19 @@ BEGIN
 
     -- 7. UPDATE DISTRIBUTED REFERENCES
     -- Profiles (Staff) References
-    FOR temp_row IN (SELECT table_name, column_name FROM information_schema.columns WHERE column_name IN ('staff_id', 'created_by') AND table_name IN ('orders', 'order_items', 'expenses', 'pc_transactions', 'sessions', 'invoices', 'inventory_logs', 'payroll_runs', 'payroll_lines', 'payroll_stubs', 'station_logs', 'drawer_logs')) LOOP
+    FOR temp_row IN (SELECT table_name, column_name FROM information_schema.columns WHERE column_name IN ('staff_id', 'created_by') AND table_name IN ('orders', 'order_items', 'expenses', 'pc_transactions', 'sessions', 'invoices', 'inventory_logs', 'payroll_runs', 'payroll_line_items', 'paystubs', 'station_logs', 'drawer_logs')) LOOP
         EXECUTE format('UPDATE %I s SET %I = m.new_id FROM profile_map m WHERE s.%I = m.old_id', temp_row.table_name, temp_row.column_name, temp_row.column_name);
-        -- Also handle email-based old refs if still present
+        -- Also handle email-based refs (staff_email stored in staff_id column after rename)
         EXECUTE format('UPDATE %I s SET %I = p.sequential_id FROM profiles p WHERE s.%I = p.email', temp_row.table_name, temp_row.column_name, temp_row.column_name);
     END LOOP;
+
+    -- Payroll Run References (run_id in paystubs and payroll_line_items)
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'paystubs') THEN
+        UPDATE paystubs s SET run_id = m.new_id FROM payroll_run_map m WHERE s.run_id = m.old_id;
+    END IF;
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'payroll_line_items') THEN
+        UPDATE payroll_line_items s SET run_id = m.new_id FROM payroll_run_map m WHERE s.run_id = m.old_id;
+    END IF;
 
     -- Shift References
     FOR temp_row IN (SELECT table_name FROM information_schema.columns WHERE column_name = 'shift_id' AND table_name != 'shifts') LOOP
@@ -279,7 +291,11 @@ BEGIN
     -- Product Self-Reference (Variants)
     UPDATE products s SET parent_service_id = m.new_id FROM prod_map m WHERE s.parent_service_id = m.old_id;
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'inventory_logs') THEN
-        UPDATE inventory_logs s SET product_id = m.new_id FROM prod_map m WHERE s.product_id = m.old_id;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='inventory_logs' AND column_name='product_id') THEN
+            UPDATE inventory_logs s SET product_id = m.new_id FROM prod_map m WHERE s.product_id = m.old_id;
+        ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='inventory_logs' AND column_name='item_id') THEN
+            UPDATE inventory_logs s SET item_id = m.new_id FROM prod_map m WHERE s.item_id = m.old_id;
+        END IF;
     END IF;
 
     -- PC System References
@@ -317,7 +333,7 @@ BEGIN
     END IF;
 
     -- [!] INTEGRITY CLEANUP: Clear orphans & 'unknown' staff
-    FOR temp_row IN (SELECT unnest(ARRAY['orders', 'order_items', 'expenses', 'pc_transactions', 'sessions', 'invoices', 'inventory_logs', 'payroll_runs', 'payroll_lines', 'payroll_stubs', 'schedules', 'station_logs', 'drawer_logs', 'products', 'zones', 'stations']) as tname) LOOP
+    FOR temp_row IN (SELECT unnest(ARRAY['orders', 'order_items', 'expenses', 'pc_transactions', 'sessions', 'invoices', 'inventory_logs', 'payroll_runs', 'payroll_line_items', 'paystubs', 'schedules', 'station_logs', 'drawer_logs', 'products', 'zones', 'stations']) as tname) LOOP
         IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = temp_row.tname) THEN
             -- Staff Cleanup
             IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name=temp_row.tname AND column_name='staff_id') THEN
@@ -414,8 +430,8 @@ BEGIN
     END IF;
 
     -- DROP maps
-    DROP TABLE shift_map; DROP TABLE order_map; DROP TABLE cust_map; DROP TABLE sess_map; 
-    DROP TABLE prod_map; DROP TABLE zone_map; DROP TABLE rate_map; DROP TABLE stat_map; 
-    DROP TABLE tpl_map; DROP TABLE profile_map;
+    DROP TABLE shift_map; DROP TABLE order_map; DROP TABLE cust_map; DROP TABLE sess_map;
+    DROP TABLE prod_map; DROP TABLE zone_map; DROP TABLE rate_map; DROP TABLE stat_map;
+    DROP TABLE tpl_map; DROP TABLE profile_map; DROP TABLE payroll_run_map;
 
 END $$;

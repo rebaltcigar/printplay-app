@@ -1,6 +1,9 @@
 # PrintPlay App — Claude Memory
 
-## Active Fix Plan
+## Prod DB Migration Plan
+See [prod-migration-plan.md](prod-migration-plan.md) — 6 phases: Schema setup → Auth migration → Data migration → Backfill fixups → Local-to-prod testing → Go-live.
+
+## Active Fix Plan (legacy dev reference)
 See [fix-plan-supabase-migration.md](fix-plan-supabase-migration.md) — 4 phases:
 - Phase 1: Auth stuck on loading screen (App.jsx authTimeout bug)
 - Phase 2: SQL ALTERs for missing columns (shifts.display_id, schedules.shift_id, expenses.notes, products POS columns)

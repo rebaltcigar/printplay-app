@@ -5,8 +5,8 @@
  * shifts that were already consolidated (have denominations) but predate the
  * column being added.
  *
- * cash_difference = cashOnHand - expectedCash
- *   Positive = overage, Negative = shortage, NULL = not consolidated.
+ * cash_difference = expectedCash - cashOnHand
+ *   Positive = shortage, Negative = overage, NULL = not consolidated.
  *
  * DB schema (confirmed from supabase_schema.sql):
  *   order_items  → item name: "name",  payment: "payment_method"
@@ -184,7 +184,7 @@ const run = async () => {
             expByShift[s.id]    || [],
             s.pc_rental_total
         );
-        const cashDifference = Number((cashOnHand - expectedCash).toFixed(2));
+        const cashDifference = Number((expectedCash - cashOnHand).toFixed(2));
         return { id: s.id, cashOnHand, expectedCash, cashDifference };
     });
 
@@ -196,7 +196,7 @@ const run = async () => {
             cash_on_hand:    u.cashOnHand,
             expected_cash:   u.expectedCash,
             cash_difference: u.cashDifference,
-            status:          u.cashDifference < 0 ? 'SHORT' : u.cashDifference > 0 ? 'OVER' : 'EXACT',
+            status:          u.cashDifference > 0 ? 'SHORT' : u.cashDifference < 0 ? 'OVER' : 'EXACT',
         }))
     );
 

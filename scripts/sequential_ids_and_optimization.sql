@@ -1,58 +1,78 @@
--- 1. Counters Table for sequential IDs
-CREATE TABLE IF NOT EXISTS counters (
-    id TEXT PRIMARY KEY,
-    current_value BIGINT DEFAULT 0,
-    prefix TEXT,
-    padding INTEGER DEFAULT 12,
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
+-- Seed counter starting values and sync them above the highest existing sequential ID.
+-- Run LAST in Phase 4 — after all data is migrated AND after resequence_data.sql has run.
+-- resequence_data.sql assigns sequential IDs to every row and updates counters as it goes,
+-- so this script's sync block is a safety net to guarantee no counter is below its table's max.
 
--- Initialize counters with new 12-digit requirements
-INSERT INTO counters (id, current_value, prefix, padding) 
-VALUES 
-    ('orders', 100000000000, 'OR', 12),
-    ('transactions', 100000000000, 'TX', 12),
-    ('expenses', 100000000000, 'EX', 12),
-    ('customers', 100000000000, 'CU', 12),
-    ('pc_transactions', 100000000000, 'PX', 12),
-    ('invoices', 100000000000, 'IV', 12),
-    ('shifts', 100000000000, 'SH', 12),
-    ('payroll_runs', 100000000000, 'PY', 12),
-    ('profiles', 100000000000, 'ST', 12)
-ON CONFLICT (id) DO UPDATE SET 
-    prefix = EXCLUDED.prefix,
+-- 1. Ensure all required counters exist with correct prefix/padding
+--    ON CONFLICT only updates prefix and padding — never lowers current_value.
+INSERT INTO counters (id, current_value, prefix, padding)
+VALUES
+    ('shifts',          10000000, 'SH', 8),
+    ('orders',          10000000, 'OR', 8),
+    ('transactions',    10000000, 'TX', 8),
+    ('expenses',        10000000, 'EX', 8),
+    ('customers',       10000000, 'CU', 8),
+    ('pc_transactions', 10000000, 'PX', 8),
+    ('invoices',        10000000, 'IV', 8),
+    ('payroll_runs',    10000000, 'PY', 8),
+    ('profiles',        10000000, 'ST', 8),
+    ('sessions',        10000000, 'SN', 8)
+ON CONFLICT (id) DO UPDATE SET
+    prefix  = EXCLUDED.prefix,
     padding = EXCLUDED.padding;
 
--- 2. RPC to get a batch of sequential IDs atomically
-CREATE OR REPLACE FUNCTION get_next_sequence_batch(p_counter_id TEXT, p_count INT DEFAULT 1)
-RETURNS TABLE (new_prefix TEXT, first_val BIGINT, current_padding INTEGER) AS $$
+-- 2. Sync each counter so it is never lower than the highest existing sequential ID.
+--    This prevents duplicate-ID errors if any rows were inserted outside the counter flow.
+DO $$
 DECLARE
-    v_prefix TEXT;
-    v_current BIGINT;
-    v_padding INTEGER;
+    max_seq BIGINT;
+    cur     BIGINT;
+    rec     RECORD;
 BEGIN
-    UPDATE counters 
-    SET current_value = current_value + p_count,
-        updated_at = NOW()
-    WHERE id = p_counter_id
-    RETURNING prefix, current_value - p_count + 1, padding INTO v_prefix, v_current, v_padding;
-    
-    RETURN QUERY SELECT v_prefix, v_current, v_padding;
-END;
-$$ LANGUAGE plpgsql;
-
--- 3. Optimized Batch Inventory Deduction RPC
--- This takes a JSONB array of {id, qty} and processes all in one transaction
-CREATE OR REPLACE FUNCTION batch_decrement_stock(p_items JSONB)
-RETURNS VOID AS $$
-DECLARE
-    v_item RECORD;
-BEGIN
-    FOR v_item IN SELECT * FROM jsonb_to_recordset(p_items) AS x(id TEXT, qty DECIMAL)
+    FOR rec IN
+        SELECT id AS ctr_id, prefix AS ctr_prefix
+        FROM counters
+        WHERE id IN (
+            'shifts', 'orders', 'expenses', 'customers',
+            'pc_transactions', 'invoices', 'payroll_runs', 'sessions'
+        )
     LOOP
-        UPDATE products 
-        SET stock_count = stock_count - v_item.qty
-        WHERE id = v_item.id;
+        EXECUTE format(
+            $q$SELECT COALESCE(MAX(CAST(SPLIT_PART(id, '-', 2) AS BIGINT)), 0)
+               FROM %I
+               WHERE id ~ ('^' || %L || '-[0-9]+$')$q$,
+            rec.ctr_id, rec.ctr_prefix
+        ) INTO max_seq;
+
+        SELECT current_value INTO cur FROM counters WHERE id = rec.ctr_id;
+
+        IF max_seq > cur THEN
+            UPDATE counters SET current_value = max_seq WHERE id = rec.ctr_id;
+            RAISE NOTICE 'Counter % synced: % → %', rec.ctr_id, cur, max_seq;
+        END IF;
     END LOOP;
-END;
-$$ LANGUAGE plpgsql;
+
+    -- order_items uses 'transactions' counter but table is 'order_items'
+    SELECT COALESCE(MAX(CAST(SPLIT_PART(id, '-', 2) AS BIGINT)), 0)
+    INTO max_seq
+    FROM order_items
+    WHERE id ~ '^TX-[0-9]+$';
+
+    SELECT current_value INTO cur FROM counters WHERE id = 'transactions';
+    IF max_seq > cur THEN
+        UPDATE counters SET current_value = max_seq WHERE id = 'transactions';
+        RAISE NOTICE 'Counter transactions synced: % → %', cur, max_seq;
+    END IF;
+
+    -- profiles uses sequential_id column, not id
+    SELECT COALESCE(MAX(CAST(SPLIT_PART(sequential_id, '-', 2) AS BIGINT)), 0)
+    INTO max_seq
+    FROM profiles
+    WHERE sequential_id ~ '^ST-[0-9]+$';
+
+    SELECT current_value INTO cur FROM counters WHERE id = 'profiles';
+    IF max_seq > cur THEN
+        UPDATE counters SET current_value = max_seq WHERE id = 'profiles';
+        RAISE NOTICE 'Counter profiles synced: % → %', cur, max_seq;
+    END IF;
+END $$;
