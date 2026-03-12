@@ -10,7 +10,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { supabase } from '../../supabase';
 import PageHeader from '../common/PageHeader';
-import ConfirmationReasonDialog from '../ConfirmationReasonDialog';
+import ConfirmationReasonDialog from '../dialogs/ConfirmationReasonDialog';
 import { generateUUID } from '../../utils/uuid';
 
 

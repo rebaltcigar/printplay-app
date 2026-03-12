@@ -1,7 +1,121 @@
 // src/services/invoiceService.js
 import { supabase } from '../supabase';
-import { generateDisplayId } from './orderService';
+import { generateDisplayId, getStaffIdentity } from '../utils/idUtils';
 import { generateUUID } from '../utils/uuid';
+
+// ... (existing code OMITTED for brevity in contiguous block, but I need to replace from line 1)
+
+/**
+ * Creates a new invoice document from a completed order.
+ */
+export const createInvoice = async (order, { staffId, staffEmail, user, shiftId, dueDate }) => {
+    const newId = await generateDisplayId('invoices', 'IV');
+    const invoiceNumber = newId;
+
+    const normalized = normalizeInvoiceData(order);
+    const itemsForPg = normalized.items.map(i => ({
+        description: i.name,
+        quantity: i.quantity,
+        price: i.price,
+        total: i.total
+    }));
+
+    const total = normalized.total;
+    const finalStaffId = staffId || getStaffIdentity(user) || staffEmail;
+
+    // Mapping payload to Supabase schema v2.0
+    const invoiceDoc = {
+        id: newId,
+        invoice_number: invoiceNumber,
+        order_id: order.id || null,
+
+        customer_id: normalized.customerId || normalized.customer_id || null,
+        customer_name: normalized.customerName,
+
+        items: itemsForPg,
+        subtotal: total,
+        total,
+        amount_paid: 0,
+        balance: total,
+
+        status: 'unpaid',
+        due_date: dueDate instanceof Date ? dueDate.toISOString() : (dueDate ? new Date(dueDate).toISOString() : null),
+
+        notes: '',
+        created_at: new Date().toISOString(),
+        staff_id: finalStaffId,
+        shift_id: shiftId,
+
+        payments: [],
+    };
+
+    const { error } = await supabase.from('invoices').insert([invoiceDoc]);
+    if (error) throw error;
+
+    return newId;
+};
+
+/**
+ * Records a payment against an invoice.
+ */
+export const recordPayment = async (invoiceId, { amount, method, note = '', staffId, staffEmail, user, shiftId }, current) => {
+    const finalStaffId = staffId || getStaffIdentity(user) || staffEmail;
+    
+    const entry = {
+        paymentId: generateUUID(),
+        amount: Number(amount),
+        method,
+        date: new Date().toISOString(),
+        staffId: finalStaffId,
+        note,
+    };
+
+    const currentPayments = Array.isArray(current.payments) ? current.payments : [];
+    const newPayments = [...currentPayments, entry];
+
+    const currentAmountPaid = Number(current.amountPaid || current.amount_paid || 0);
+    const newAmountPaid = currentAmountPaid + Number(amount);
+    const newBalance = Math.max(0, Number(current.total) - newAmountPaid);
+    const newStatus = calcInvoiceStatus(current.total, newAmountPaid);
+
+    const { error: invErr } = await supabase
+        .from('invoices')
+        .update({
+            payments: newPayments,
+            amount_paid: newAmountPaid,
+            balance: newBalance,
+            status: newStatus,
+            updated_at: new Date().toISOString()
+        })
+        .eq('id', invoiceId);
+
+    if (invErr) throw invErr;
+
+    if (shiftId) {
+        const txId = await generateDisplayId('transactions', 'TX');
+        const tx = {
+            id: txId,
+            price: Number(amount),
+            quantity: 1,
+            amount: Number(amount),
+            name: 'AR Payment',
+            metadata: {
+                note: `Payment for Invoice #${current.invoiceNumber || current.invoice_number || invoiceId.slice(-6).toUpperCase()}${note ? ` - ${note}` : ''}`,
+            },
+            payment_method: method === 'gcash' ? 'GCash' : 'Cash',
+            customer_id: current.customerId || current.customer_id || null,
+            customer_name: current.customerName || current.customer_name || 'Walk-in',
+            staff_id: finalStaffId,
+            shift_id: shiftId,
+            timestamp: new Date().toISOString(),
+            is_deleted: false,
+            financial_category: 'Revenue',
+            category: 'Revenue'
+        };
+        const { error: txErr } = await supabase.from('order_items').insert([tx]);
+        if (txErr) console.error("Failed to insert AR Payment tx:", txErr);
+    }
+};
 
 
 // ---------------------------------------------------------------------------
@@ -92,123 +206,17 @@ export const normalizeInvoiceData = (order, options = {}) => {
 // ---------------------------------------------------------------------------
 
 /**
- * Creates a new invoice document from a completed order.
- */
-export const createInvoice = async (order, { staffEmail, shiftId, dueDate }) => {
-    const invoiceNumber = await generateDisplayId('invoices', 'INV');
-    const newId = generateUUID();
-
-    const normalized = normalizeInvoiceData(order);
-    const itemsForPg = normalized.items.map(i => ({
-        description: i.name,
-        quantity: i.quantity,
-        price: i.price,
-        total: i.total
-    }));
-
-    const total = normalized.total;
-
-    // Mapping payload to Supabase schema v2.0
-    const invoiceDoc = {
-        id: newId,
-        invoice_number: invoiceNumber,
-        order_id: order.id || null,
-
-        customer_id: normalized.customerId || normalized.customer_id || null,
-        customer_name: normalized.customerName,
-
-        items: itemsForPg,
-        subtotal: total,
-        total,
-        amount_paid: 0,
-        balance: total,
-
-        status: 'unpaid',
-        due_date: dueDate instanceof Date ? dueDate.toISOString() : (dueDate ? new Date(dueDate).toISOString() : null),
-
-        notes: '',
-        created_at: new Date().toISOString(),
-        staff_email: staffEmail,
-        shift_id: shiftId,
-
-        payments: [],
-    };
-
-    const { error } = await supabase.from('invoices').insert([invoiceDoc]);
-    if (error) throw error;
-
-    return newId;
-};
-
-/**
- * Records a payment against an invoice.
- */
-export const recordPayment = async (invoiceId, { amount, method, note = '', staffEmail, shiftId }, current) => {
-    const entry = {
-        paymentId: generateUUID(),
-        amount: Number(amount),
-        method,
-        date: new Date().toISOString(),
-        staffEmail,
-        note,
-    };
-
-    const currentPayments = Array.isArray(current.payments) ? current.payments : [];
-    const newPayments = [...currentPayments, entry];
-
-    const currentAmountPaid = Number(current.amountPaid || current.amount_paid || 0);
-    const newAmountPaid = currentAmountPaid + Number(amount);
-    const newBalance = Math.max(0, Number(current.total) - newAmountPaid);
-    const newStatus = calcInvoiceStatus(current.total, newAmountPaid);
-
-    const { error: invErr } = await supabase
-        .from('invoices')
-        .update({
-            payments: newPayments,
-            amount_paid: newAmountPaid,
-            balance: newBalance,
-            status: newStatus,
-            updated_at: new Date().toISOString()
-        })
-        .eq('id', invoiceId);
-
-    if (invErr) throw invErr;
-
-    if (shiftId) {
-        const tx = {
-            id: `TX-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-            price: Number(amount),
-            quantity: 1,
-            amount: Number(amount),
-            name: 'AR Payment',
-            metadata: {
-                note: `Payment for Invoice #${current.invoiceNumber || current.invoice_number || invoiceId.slice(-6).toUpperCase()}${note ? ` - ${note}` : ''}`,
-            },
-            payment_method: method === 'gcash' ? 'GCash' : 'Cash',
-            customer_id: current.customerId || current.customer_id || null,
-            customer_name: current.customerName || current.customer_name || 'Walk-in',
-            staff_email: staffEmail,
-            shift_id: shiftId,
-            timestamp: new Date().toISOString(),
-            is_deleted: false,
-            financial_category: 'Revenue',
-            category: 'Revenue'
-        };
-        const { error: txErr } = await supabase.from('order_items').insert([tx]);
-        if (txErr) console.error("Failed to insert AR Payment tx:", txErr);
-    }
-};
-
-/**
  * Writes off the balance of an invoice.
  */
-export const writeOffInvoice = async (invoiceId, { reason, staffEmail }, current) => {
+export const writeOffInvoice = async (invoiceId, { reason, staffId, staffEmail, user }, current) => {
+    const finalStaffId = staffId || getStaffIdentity(user) || staffEmail;
+    
     const entry = {
         paymentId: generateUUID(),
         amount: Number(current.balance),
         method: 'write_off',
         date: new Date().toISOString(),
-        staffEmail,
+        staffId: finalStaffId,
         note: reason,
     };
 

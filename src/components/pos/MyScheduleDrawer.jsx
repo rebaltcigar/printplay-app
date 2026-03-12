@@ -33,12 +33,12 @@ const STATUS_CFG = {
   covered: { label: 'Covered', color: 'warning' },
 };
 
-export default function MyScheduleDrawer({ open, onClose, userEmail }) {
+export default function MyScheduleDrawer({ open, onClose, staffId }) {
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!open || !userEmail) return;
+    if (!open || !staffId) return;
     setLoading(true);
     (async () => {
       try {
@@ -49,7 +49,7 @@ export default function MyScheduleDrawer({ open, onClose, userEmail }) {
         const { data } = await supabase
           .from('schedules')
           .select('*')
-          .eq('staff_email', userEmail);
+          .eq('staff_id', staffId);
 
         const list = (data || [])
           .map(e => ({
@@ -69,7 +69,7 @@ export default function MyScheduleDrawer({ open, onClose, userEmail }) {
         setLoading(false);
       }
     })();
-  }, [open, userEmail]);
+  }, [open, staffId]);
 
   return (
     <DetailDrawer

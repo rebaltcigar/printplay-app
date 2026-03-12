@@ -8,7 +8,7 @@ import PaymentsIcon from '@mui/icons-material/Payments';
 import AssignmentReturnIcon from '@mui/icons-material/AssignmentReturn';
 import { fmtCurrency, fmtDate } from '../../utils/formatters';
 import { displayStatus, writeOffInvoice } from '../../services/invoiceService';
-import RecordPaymentDialog from '../RecordPaymentDialog';
+import RecordPaymentDialog from '../dialogs/RecordPaymentDialog';
 import { safePrintInvoice } from '../../services/printService';
 import DetailDrawer from '../common/DetailDrawer';
 import { useGlobalUI } from '../../contexts/GlobalUIContext';

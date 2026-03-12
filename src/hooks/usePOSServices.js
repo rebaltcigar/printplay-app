@@ -78,11 +78,9 @@ export function usePOSServices() {
     // --- Legacy: expenseTypes ---
     const expenseTypes = useMemo(() =>
         allServices.filter(
-            (i) =>
-                i.parentServiceId === expenseParentId &&
-                i.adminOnly === false
+            (i) => i.category === 'Expense' && i.active !== false
         ),
-        [allServices, expenseParentId]
+        [allServices]
     );
 
     // --- Legacy: categories ---

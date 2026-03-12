@@ -58,6 +58,7 @@ import {
 } from "../../utils/payrollHelpers";
 import { fmtDate, fmtCurrency } from "../../utils/formatters";
 import { generateDisplayId, generateBatchIds } from "../../services/orderService";
+import { generateUUID } from "../../utils/uuid";
 import LoadingScreen from "../common/LoadingScreen";
 import { useGlobalUI } from "../../contexts/GlobalUIContext";
 import AttachMoneyIcon from "@mui/icons-material/AttachMoney";
@@ -66,7 +67,7 @@ import ScheduleIcon from "@mui/icons-material/Schedule";
 import SellIcon from "@mui/icons-material/Sell";
 import ReceiptIcon from "@mui/icons-material/Receipt";
 import AccountBalanceIcon from "@mui/icons-material/AccountBalance";
-import PaystubDialog from "../Paystub";
+import PaystubDialog from "../pages/Paystub";
 
 export default function RunPayroll({
   user,
@@ -325,52 +326,10 @@ export default function RunPayroll({
       const start = tsFromYMD(periodStart, false);
       const end = tsFromYMD(periodEnd, true);
 
-      updateBusy("Querying shifts and transactions...");
-      const [sRes, adminRes] = await Promise.all([
-        supabase.from('shifts')
-          .select('*')
-          .gte('start_time', start)
-          .lte('start_time', end),
-        supabase.from('expenses')
-          .select('*')
-          .eq('expense_type', 'Salary Advance')
-          .gte('timestamp', start)
-          .lte('timestamp', end)
-          .is('shift_id', null)
-      ]);
-
-      if (sRes.error) throw sRes.error;
-      if (adminRes.error) throw adminRes.error;
-
-      const rawShifts = sRes.data;
-      const ongoing = rawShifts.filter((s) => !s.end_time);
-
-      if (ongoing.length > 0 && decision === null) {
-        setOngoingPrompt({ open: true, shifts: ongoing });
-        stopBusy();
-        return;
-      }
-
-      const shiftsToProcess = rawShifts.filter((s) => {
-        if (s.end_time) return true;
-        if (decision === "include") return true;
-        return false;
-      });
-
-      if (shiftsToProcess.length === 0) {
-        showSnackbar("No eligible shifts found in this period.", "info");
-        stopBusy();
-        return;
-      }
-
-      updateBusy("Processing shifts...");
-
-      const byStaff = new Map();
-      const shiftsById = new Map();
-
       shiftsToProcess.forEach((s) => {
         if (!s.start_time) return;
         const email = s.staff_email || "unknown";
+        const staffId = s.staff_id || email;
         const isOngoing = !s.end_time;
         const effectiveEnd = isOngoing ? new Date().toISOString() : s.end_time;
         const minutes = minutesBetween(s.start_time, effectiveEnd);
@@ -391,15 +350,15 @@ export default function RunPayroll({
           shortage,
           denominations: s.denominations || {},
           systemTotal: Number(s.system_total || 0),
-          staffUid: s.staff_id || null,
+          staffUid: staffId,
           staffName: s.staff_name || s.staff_full_name || email,
           staffEmail: email,
           expenseDate: null,
         };
         shiftsById.set(s.id, row);
 
-        const bucket = byStaff.get(email) || {
-          staffUid: s.staff_id || null,
+        const bucket = byStaff.get(staffId) || {
+          staffUid: staffId,
           staffName: row.staffName,
           staffEmail: email,
           minutes: 0,
@@ -408,7 +367,7 @@ export default function RunPayroll({
         };
         bucket.minutes += minutes;
         bucket.shiftRows.push(row);
-        byStaff.set(email, bucket);
+        byStaff.set(staffId, bucket);
       });
 
       updateBusy("Fetching staff records and salary advances...");
@@ -519,22 +478,17 @@ export default function RunPayroll({
       adminRes.data.forEach((tx) => {
         if (tx.voided || tx.isDeleted) return;
         const amt = Number(tx.total || 0);
-        const staffEmail = tx.expense_staff_email || tx.staff_email;
-        const staffUid = tx.expense_staff_id;
+        const staffId = tx.staff_id; // Standardized
 
-        let key = staffEmail;
-        if (!key && staffUid) {
-          const userObj = Array.from(usersByEmail.values()).find((u) => u.uid === staffUid);
-          key = userObj ? userObj.email : `uid:${staffUid}`;
-        }
+        let key = staffId;
         if (!key) return;
 
         if (!byStaff.has(key)) {
           const name = tx.expense_staff_name || (usersByEmail.get(key)?.name) || "Unknown Staff";
           byStaff.set(key, {
-            staffUid: staffUid || null,
+            staffUid: staffId,
             staffName: name,
-            staffEmail: staffEmail || key,
+            staffEmail: tx.expense_staff_email || tx.staff_email || key,
             minutes: 0,
             shiftRows: [],
             extraAdvances: [],
@@ -932,9 +886,12 @@ export default function RunPayroll({
       const { data: { user: currentUser } } = await supabase.auth.getUser();
       const userId = currentUser?.id || "admin";
 
-      const displayId = await generateDisplayId("payrollRuns", "PAY");
+      updateBusy("Generating Payroll ID...");
+      const newRunId = await generateDisplayId("payroll", "PY");
+      
       const run = {
-        display_id: displayId,
+        id: newRunId,
+        display_id: newRunId,
         period_start: periodStart,
         period_end: periodEnd,
         status: "draft",

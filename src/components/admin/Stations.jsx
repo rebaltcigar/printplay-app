@@ -12,7 +12,7 @@ import VpnKeyIcon from '@mui/icons-material/VpnKey';
 import DownloadIcon from '@mui/icons-material/Download';
 import { supabase } from '../../supabase';
 import PageHeader from '../common/PageHeader';
-import ConfirmationReasonDialog from '../ConfirmationReasonDialog';
+import ConfirmationReasonDialog from '../dialogs/ConfirmationReasonDialog';
 import { generateUUID } from '../../utils/uuid';
 
 

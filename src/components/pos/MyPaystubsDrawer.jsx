@@ -7,29 +7,29 @@ import {
 } from '@mui/material';
 import { supabase } from '../../supabase';
 import DetailDrawer from '../common/DetailDrawer';
-import { Paystub } from '../Paystub';
+import { Paystub } from '../pages/Paystub';
 import { fmtDate } from '../../utils/formatters';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 
-export default function MyPaystubsDrawer({ open, onClose, userEmail }) {
+export default function MyPaystubsDrawer({ open, onClose, staffId }) {
   const [stubs, setStubs] = useState([]);
   const [active, setActive] = useState(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!open || !userEmail) { setStubs([]); setActive(null); return; }
+    if (!open || !staffId) { setStubs([]); setActive(null); return; }
     setLoading(true);
     (async () => {
       try {
         const { data } = await supabase
           .from('paystubs')
           .select('*')
-          .eq('staff_email', userEmail)
+          .eq('staff_id', staffId)
           .order('pay_date', { ascending: false });
 
         const list = (data || []).map(d => ({
           ...d,
-          staffEmail: d.staff_email,
+          staffEmail: d.staff_email || d.staff_id,
           payDate: d.pay_date
         }));
 
@@ -41,7 +41,7 @@ export default function MyPaystubsDrawer({ open, onClose, userEmail }) {
         setLoading(false);
       }
     })();
-  }, [open, userEmail]);
+  }, [open, staffId]);
 
   const activeStub = useMemo(() => stubs.find(s => s.id === active) || null, [stubs, active]);
 

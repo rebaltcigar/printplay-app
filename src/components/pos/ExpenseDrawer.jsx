@@ -65,6 +65,7 @@ export default function ExpenseDrawer({ open, onClose, user, activeShiftId, expe
                 price: Number(form.amount),
                 notes: form.notes,
                 userEmail: user.email,
+                user: user,
                 activeShiftId: activeShiftId,
                 financialCategory: 'OPEX' // recordExpense auto-detects CAPEX if type mentions 'capital'
             });

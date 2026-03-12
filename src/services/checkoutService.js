@@ -1,7 +1,7 @@
 import { supabase } from "../supabase";
-import { generateOrderNumber, createOrderObject, generateBatchIds } from "./orderService";
+import { createOrderObject } from "./orderService";
 import { createInvoice } from "./invoiceService";
-import { generateUUID } from '../utils/uuid';
+import { generateDisplayId, generateBatchIds, getStaffIdentity } from "../utils/idUtils";
 
 
 // ---------------------------------------------------------------------------
@@ -10,7 +10,7 @@ import { generateUUID } from '../utils/uuid';
 const resolveCustomer = async (customer, userEmail) => {
     if (!customer || !customer.isNew) return customer || null;
 
-    const newCustId = generateUUID();
+    const newCustId = await generateDisplayId('customers', 'CU');
     const { error } = await supabase.from('customers').insert([{
         id: newCustId,
         full_name: customer.fullName,
@@ -35,8 +35,12 @@ export const saveCheckout = async ({ currentOrder, paymentData, user, activeShif
     const finalCustomer = await resolveCustomer(currentOrder.customer, user?.email);
 
     const isUnpaid = paymentData.paymentMethod === 'Charge' || paymentData.paymentMethod === 'Pay Later';
-    const orderNum = await generateOrderNumber();
-    const orderId = generateUUID();
+    
+    // Use the same sequential ID for both PK and display number
+    const orderId = await generateDisplayId('orders', 'OR');
+    const orderNum = orderId; 
+
+    const staffId = getStaffIdentity(user);
 
     // 2. Prepare Order Object
     const fullOrder = {
@@ -55,7 +59,8 @@ export const saveCheckout = async ({ currentOrder, paymentData, user, activeShif
             user,
             discount,
             subtotal
-        )
+        ),
+        staff_id: staffId // Override if createOrderObject uses old mapping
     };
 
     // 3. Add Order to DB
@@ -66,15 +71,15 @@ export const saveCheckout = async ({ currentOrder, paymentData, user, activeShif
     if (paymentData.paymentMethod === 'Charge') {
         await createInvoice(
             { ...fullOrder, id: orderId },
-            { staffEmail: user.email, shiftId: activeShiftId, dueDate: paymentData.dueDate || null }
+            { staffId, shiftId: activeShiftId, dueDate: paymentData.dueDate || null }
         );
     }
 
     // 5. Process Line Items (Bulk Insert to order_items)
     const txIds = await generateBatchIds("transactions", "TX", currentOrder.items.length);
     const orderItemsPayload = currentOrder.items.map((item, index) => ({
-        id: txIds[index] || `TX-${Date.now()}-${index}`,
-        parent_order_id: orderId,
+        id: txIds[index],
+        order_id: orderId,
         name: item.serviceName || item.name,
         product_id: item.serviceId || null,
         price: Number(item.price),
@@ -82,7 +87,7 @@ export const saveCheckout = async ({ currentOrder, paymentData, user, activeShif
         quantity: Number(item.quantity),
         amount: Number(item.price) * Number(item.quantity),
         timestamp: new Date().toISOString(),
-        staff_email: user.email,
+        staff_id: staffId,
         customer_name: finalCustomer?.fullName || 'Walk-in',
         customer_id: finalCustomer?.id || null,
         shift_id: activeShiftId,
@@ -106,25 +111,25 @@ export const saveCheckout = async ({ currentOrder, paymentData, user, activeShif
         if (txErr) throw txErr;
     }
 
-    // 6. Inventory Deduction (Parallel — atomic RPC avoids read-then-write race condition)
-    const deductStock = async (svcId, q) => {
-        if (!svcId) return;
-        const { error } = await supabase.rpc('decrement_stock', { p_product_id: svcId, p_qty: q });
-        if (error) throw error;
-    };
-
-    const deductionPromises = [];
+    // 6. Inventory Deduction (Atomic Batch RPC)
+    const inventoryItems = [];
     for (const item of currentOrder.items) {
         if (item.trackStock && item.serviceId) {
-            deductionPromises.push(deductStock(item.serviceId, Number(item.quantity)));
+            inventoryItems.push({ id: item.serviceId, qty: Number(item.quantity) });
         }
         if (item.consumables && item.consumables.length > 0) {
             for (const c of item.consumables) {
-                deductionPromises.push(deductStock(c.itemId, Number(c.qty) * Number(item.quantity)));
+                inventoryItems.push({ id: c.itemId, qty: Number(c.qty) * Number(item.quantity) });
             }
         }
     }
-    await Promise.all(deductionPromises);
+
+    if (inventoryItems.length > 0) {
+        const { error: invErr } = await supabase.rpc('batch_decrement_stock', { p_items: inventoryItems });
+        if (invErr) {
+            console.error("Batch inventory deduction failed:", invErr);
+        }
+    }
 
     return { ...fullOrder, id: orderId };
 };
@@ -164,14 +169,14 @@ export const updateCheckout = async ({ order, paymentData, user, activeShiftId, 
             const displayId = newIds[newIdIndex++] || `TX-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
             newItemsToInsert.push({
                 id: displayId,
-                parent_order_id: order.originalId,
+                order_id: order.originalId || order.id,
                 name: item.name || item.serviceName,
                 product_id: item.serviceId || null,
                 price: Number(item.price),
                 quantity: Number(item.quantity),
                 amount: itemAmount,
                 timestamp: new Date().toISOString(),
-                staff_email: user.email,
+                staff_id: getStaffIdentity(user),
                 customer_name: finalCustomer?.fullName || 'Walk-in',
                 customer_id: finalCustomer?.id || null,
                 shift_id: activeShiftId,
@@ -226,15 +231,13 @@ export const updateCheckout = async ({ order, paymentData, user, activeShiftId, 
 
     // 5. Update Order Doc
     const updateObj = {
-        items: finalItems,
         subtotal: paymentData.subtotal || currentTotal,
-        discount: paymentData.discount || { type: 'none', value: 0, amount: 0 },
         total: paymentData.total || currentTotal,
         payment_method: paymentData.paymentMethod,
         payment_details: paymentData.paymentDetails || {},
         amount_tendered: Number(paymentData.amountTendered),
         change: Number(paymentData.change),
-        customer_id: finalCustomer?.id || 'walk-in',
+        customer_id: finalCustomer?.id || null,
         customer_name: finalCustomer?.fullName || 'Walk-in Customer',
         customer_phone: finalCustomer?.phone || '',
         customer_address: finalCustomer?.address || '',

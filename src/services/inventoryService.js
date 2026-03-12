@@ -1,5 +1,6 @@
 import { supabase } from "../supabase";
 import { generateUUID } from '../utils/uuid';
+import { generateDisplayId } from "./orderService";
 
 
 const generateId = () => generateUUID();
@@ -32,12 +33,12 @@ export const recordStockAdjustment = async ({ itemId, itemName, qtyChange, type,
     // 3. Create log entry
     await supabase.from('inventory_logs').insert([{
         id: generateId(),
-        item_id: itemId,
+        product_id: itemId,
         item_name: itemName,
         qty_change: qtyChange,
         type: type, // 'Adjustment', 'Damage', 'Loss', 'Correction', 'Sale'
         reason: reason,
-        staff_email: staffEmail,
+        staff_id: staffEmail,
         timestamp: new Date().toISOString()
     }]);
 };
@@ -72,27 +73,28 @@ export const restockItem = async ({ item, qtyAdded, unitCost, totalCost, staffEm
     // 3. Create Audit Log
     await supabase.from('inventory_logs').insert([{
         id: generateId(),
-        item_id: item.id,
+        product_id: item.id,
         item_name: item.name || item.serviceName,
         qty_change: qtyAdded,
         type: 'Restock',
         reason: 'Manual Restock',
         cost: unitCost,
         total_cost: totalCost,
-        staff_email: staffEmail,
+        staff_id: staffEmail,
         timestamp: new Date().toISOString()
     }]);
 
     // 4. Create Financial Transaction (Credit/Asset) -> 'expenses' table
+    const expId = await generateDisplayId('expenses', 'EX');
     await supabase.from('expenses').insert([{
-        id: `EXP-${Date.now()}-${generateId().slice(0, 4)}`,
+        id: expId,
         item: `Restock: ${item.name || item.serviceName}`,
         quantity: qtyAdded,
         amount: totalCost,
         financial_category: 'InventoryAsset',
         category: 'Credit',
         expense_type: 'Restock',
-        staff_email: staffEmail,
+        staff_id: staffEmail,
         timestamp: new Date().toISOString()
     }]);
 
@@ -108,9 +110,9 @@ export const getInventoryLogs = async (itemId = null, maxLogs = 50) => {
         .select('*')
         .order('timestamp', { ascending: false })
         .limit(maxLogs);
-
+    
     if (itemId) {
-        query = query.eq('item_id', itemId);
+        query = query.eq('product_id', itemId);
     }
 
     const { data, error } = await query;

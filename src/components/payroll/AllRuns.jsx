@@ -39,10 +39,10 @@ import {
   toHours,
 } from "../../utils/payrollHelpers";
 import { fmtDate, fmtCurrency } from "../../utils/formatters";
-import ConfirmationReasonDialog from "../ConfirmationReasonDialog";
+import ConfirmationReasonDialog from "../dialogs/ConfirmationReasonDialog";
 import DetailDrawer from "../common/DetailDrawer";
 import { useGlobalUI } from "../../contexts/GlobalUIContext";
-import PaystubDialog from "../Paystub";
+import PaystubDialog from "../pages/Paystub";
 
 export default function AllRuns({ onEditRun }) {
   const { showSnackbar } = useGlobalUI();

@@ -20,7 +20,7 @@ import { useGlobalUI } from '../../contexts/GlobalUIContext';
 
 export default function POSSidebar({
   open, onClose,
-  user, onLogout,
+  user, staffId, onLogout,
   onOpenInvoices, // callback to open POSInvoiceLookupDrawer
 }) {
   const { showSnackbar } = useGlobalUI();
@@ -106,12 +106,12 @@ export default function POSSidebar({
       <MyScheduleDrawer
         open={scheduleOpen}
         onClose={() => setScheduleOpen(false)}
-        userEmail={user?.email}
+        staffId={staffId}
       />
       <MyPaystubsDrawer
         open={paystubsOpen}
         onClose={() => setPaystubsOpen(false)}
-        userEmail={user?.email}
+        staffId={staffId}
       />
       <MyAccountDrawer
         open={accountOpen}

@@ -131,6 +131,7 @@ export function usePOSHandlers({
                     price: priceNum,
                     notes,
                     userEmail: user.email,
+                    user: user,
                     activeShiftId
                 });
                 setItem(''); setQuantity(''); setPrice(''); setNotes('');

@@ -7,7 +7,7 @@ import {
 import { alpha } from '@mui/material/styles';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import SearchIcon from '@mui/icons-material/Search';
-import { getPosIcon } from '../../utils/posIcons';
+import { getPosIcon } from '../../assets/icons/posIcons';
 import { fmtCurrency } from '../../utils/formatters';
 import POSPCRentalTab from './POSPCRentalTab';
 

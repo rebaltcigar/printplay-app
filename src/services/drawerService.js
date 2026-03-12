@@ -1,6 +1,6 @@
-// src/utils/drawerService.js
 import { supabase } from '../supabase';
 import { generateUUID } from '../utils/uuid';
+import { getStaffIdentity } from '../utils/idUtils';
 
 
 /**
@@ -90,7 +90,7 @@ export const openDrawer = async (user, triggerType = 'manual') => {
     const newId = generateUUID();
     await supabase.from('drawer_logs').insert([{
       id: newId,
-      staff_email: user?.email || 'unknown',
+      staff_id: getStaffIdentity(user),
       trigger_type: triggerType,
       success: success,
       error_message: errorMsg || null,

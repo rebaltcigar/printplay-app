@@ -1,7 +1,6 @@
 // src/hooks/useShiftFilters.js
 import { useState, useMemo } from 'react';
 import { getThisMonthDefaults, calculateOnHand } from '../services/shiftService';
-import { computeExpectedCash } from '../utils/shiftFinancials';
 
 export function useShiftFilters(shifts, txAggByShift, serviceMeta) {
     const { startStr: defaultStart, endStr: defaultEnd } = getThisMonthDefaults();
@@ -22,18 +21,12 @@ export function useShiftFilters(shifts, txAggByShift, serviceMeta) {
             // Period Filter
             if (filterShiftPeriod.length > 0 && !filterShiftPeriod.includes(s.shiftPeriod)) return false;
 
-            const agg = txAggByShift[s.id] || {};
-            const onHand = calculateOnHand(s.denominations);
-
-            // Short/Overage Filters
-            if (onHand === null) {
+            // Short/Overage Filters — use DB cash_difference (null = not consolidated)
+            if (s.cash_difference == null) {
                 if (!filterShowShort || !filterShowOverage) return false;
             } else {
-                const expectedCash = computeExpectedCash(s, agg);
-                const difference = onHand - expectedCash;
-                const isShort = difference < 0;
-                const isOverage = difference > 0;
-
+                const isShort = s.cash_difference < 0;
+                const isOverage = s.cash_difference > 0;
                 if (!filterShowShort && isShort) return false;
                 if (!filterShowOverage && isOverage) return false;
             }
@@ -45,7 +38,7 @@ export function useShiftFilters(shifts, txAggByShift, serviceMeta) {
     const grand = useMemo(() => {
         let pcRental = 0, sales = 0, expenses = 0, system = 0, onHand = 0;
         let shiftsWithDenominations = 0;
-        let totalExpectedCash = 0;
+        let difference = 0;
 
         for (const s of filteredShifts) {
             const agg = txAggByShift[s.id];
@@ -56,9 +49,11 @@ export function useShiftFilters(shifts, txAggByShift, serviceMeta) {
             if (onHandVal !== null) {
                 onHand += onHandVal;
                 shiftsWithDenominations++;
-                if (agg) {
-                    totalExpectedCash += computeExpectedCash(s, agg);
-                }
+            }
+
+            // Sum DB-stored differences (only consolidated shifts contribute)
+            if (s.cash_difference != null) {
+                difference += Number(s.cash_difference);
             }
 
             if (agg) {
@@ -69,7 +64,6 @@ export function useShiftFilters(shifts, txAggByShift, serviceMeta) {
             }
         }
 
-        const difference = onHand - totalExpectedCash;
         return { pcRental, sales, expenses, system, onHand, difference, shiftsWithDenominations };
     }, [filteredShifts, txAggByShift]);
 

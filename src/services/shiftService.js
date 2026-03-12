@@ -1,13 +1,10 @@
 // src/services/shiftService.js
 import { supabase } from "../supabase";
 import { sumDenominations } from "../utils/shiftFinancials";
-import { generateDisplayId } from "./orderService";
-
-const generateId = () => `SHIFT-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+import { generateDisplayId, getStaffIdentity } from "../utils/idUtils";
 
 /**
  * Calculates on-hand cash from denominations.
- * Returns null if no denominations are provided.
  */
 export const calculateOnHand = (denoms) => {
     if (!denoms || typeof denoms !== 'object') return null;
@@ -53,22 +50,22 @@ export const toTimestamp = (str) => {
 /**
  * Sets the active shift in app_status.
  */
-export const resumeShift = async (shiftId, staffEmail) => {
+export const resumeShift = async (shiftId, staffId) => {
     const { error } = await supabase
         .from('app_status')
         .update({
             active_shift_id: shiftId,
-            staff_email: staffEmail,
+            staff_id: staffId,
             updated_at: new Date().toISOString()
         })
         .eq('id', 'current_shift');
 
     if (error) {
         // If row doesn't exist, insert it
-        await supabase.from('app_status').insert([{
+        await supabase.from('app_status').upsert([{
             id: 'current_shift',
             active_shift_id: shiftId,
-            staff_email: staffEmail,
+            staff_id: staffId,
             updated_at: new Date().toISOString()
         }]);
     }
@@ -78,14 +75,13 @@ export const resumeShift = async (shiftId, staffEmail) => {
  * Creates a new shift document.
  */
 export const createShift = async (payload) => {
-    const newId = generateId();
-    const displayId = await generateDisplayId('shifts', 'SHF');
+    const newId = await generateDisplayId('shifts', 'SH');
     const fullPayload = {
         id: newId,
-        display_id: displayId,
+        display_id: newId,
         pc_rental_total: 0,
         system_total: 0,
-        staff_email: payload.staffEmail,
+        staff_id: payload.staffId || payload.staff_id || 'unknown',
         shift_period: payload.shiftPeriod,
         notes: payload.notes,
         schedule_id: payload.scheduleId,
@@ -95,7 +91,7 @@ export const createShift = async (payload) => {
         expenses_total: 0,
         total_ar: 0,
         total_cash: 0,
-        total_gcash: 0,
+        total_digital: 0,
         ar_payments_total: 0
     };
 

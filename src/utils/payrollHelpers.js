@@ -142,23 +142,18 @@ export const resolveHourlyRate = (payroll, asOfDate) => {
 /**
  * Computes the cash shortage for a shift based on expected vs actual cash.
  * @param {Object} shift - Shift document data.
- * @returns {number} Shortage amount (max of 0 and difference).
+ * @returns {number} Shortage amount (0 if no shortage or not consolidated).
  */
 export const shortageForShift = (shift) => {
-  if (shift?.total_cash !== undefined || shift?.totalCash !== undefined) {
-    const totalCash = Number(shift.total_cash || shift.totalCash || 0);
-    const expensesTotal = Number(shift.expenses_total || shift.expensesTotal || 0);
-    const expectedCash = totalCash - expensesTotal;
-    const actualCash = sumDenominations(shift?.denominations || {});
-    const delta = expectedCash - actualCash;
-    return delta > 0 ? Number(delta.toFixed(2)) : 0;
+  // Prefer the authoritative DB-stored cash_difference (set at consolidation).
+  // cash_difference = onHand - expectedCash, so shortage = negative difference.
+  if (shift?.cash_difference != null) {
+    const diff = Number(shift.cash_difference);
+    return diff < 0 ? Number((-diff).toFixed(2)) : 0;
   }
 
-  // Legacy fallback
-  const systemTotal = Number(shift?.system_total || shift?.systemTotal || 0);
-  const denomTotal = sumDenominations(shift?.denominations || {});
-  const delta = systemTotal - denomTotal;
-  return delta > 0 ? Number(delta.toFixed(2)) : 0;
+  // Not yet consolidated — no shortage to apply.
+  return 0;
 };
 
 /**

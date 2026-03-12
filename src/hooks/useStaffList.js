@@ -16,16 +16,19 @@ function notifyListeners(data) {
 function buildMaps(data) {
     const byEmail = {};
     const byId = {};
+    const bySeqId = {};
     const opts = [];
 
     data.forEach((v) => {
-        if (!v.email) return;
-        const fullName = v.full_name || v.name || v.email;
-        byEmail[v.email] = fullName;
-        byId[v.id] = fullName;
+        const fullName = v.full_name || v.name || v.email || 'Unknown';
+        if (v.email) byEmail[v.email] = fullName;
+        if (v.id) byId[v.id] = fullName;
+        if (v.sequential_id) bySeqId[v.sequential_id] = fullName;
+
         opts.push({
             id: v.id,
             uid: v.id,
+            sequential_id: v.sequential_id,
             email: v.email,
             fullName,
             role: v.role || 'staff',
@@ -36,7 +39,7 @@ function buildMaps(data) {
         (a.fullName || '').localeCompare(b.fullName || '', 'en', { sensitivity: 'base' })
     );
 
-    return { staffOptions: opts, emailToName: byEmail, idToName: byId };
+    return { staffOptions: opts, emailToName: byEmail, idToName: byId, seqIdToName: bySeqId };
 }
 
 async function fetchAndCache() {
@@ -68,6 +71,7 @@ export function useStaffList() {
     const [staffOptions, setStaffOptions] = useState(_cache?.staffOptions ?? []);
     const [emailToName, setEmailToName] = useState(_cache?.emailToName ?? {});
     const [idToName, setIdToName] = useState(_cache?.idToName ?? {});
+    const [seqIdToName, setSeqIdToName] = useState(_cache?.seqIdToName ?? {});
     const [loading, setLoading] = useState(!_cache);
 
     useEffect(() => {
@@ -75,6 +79,7 @@ export function useStaffList() {
             setStaffOptions(c.staffOptions);
             setEmailToName(c.emailToName);
             setIdToName(c.idToName);
+            setSeqIdToName(c.seqIdToName);
             setLoading(false);
         };
 
@@ -98,5 +103,5 @@ export function useStaffList() {
     }, []);
 
     // userMap kept as alias for back-compat
-    return { staffOptions, userMap: emailToName, emailToName, idToName, loading };
+    return { staffOptions, userMap: emailToName, emailToName, idToName, seqIdToName, loading };
 }

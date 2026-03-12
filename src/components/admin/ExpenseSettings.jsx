@@ -9,7 +9,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import { supabase } from '../../supabase';
-import ConfirmationReasonDialog from '../ConfirmationReasonDialog';
+import ConfirmationReasonDialog from '../dialogs/ConfirmationReasonDialog';
 import PageHeader from '../common/PageHeader';
 import SummaryCards from '../common/SummaryCards';
 import DetailDrawer from '../common/DetailDrawer';
@@ -55,9 +55,9 @@ export default function ExpenseSettings({ showSnackbar }) {
 
     const summaryCards = useMemo(() => {
         const total = types.length;
-        const opexCount = types.filter(t => t.category === 'OPEX' || !t.category).length;
-        const capexCount = types.filter(t => t.category === 'CAPEX').length;
-        const cogsCount = types.filter(t => t.category === 'COGS').length;
+        const opexCount = types.filter(t => t.financial_category === 'OPEX' || !t.financial_category).length;
+        const capexCount = types.filter(t => t.financial_category === 'CAPEX').length;
+        const cogsCount = types.filter(t => t.financial_category === 'COGS').length;
         const inactive = types.filter(t => t.active === false).length;
         return [
             { label: "Total Budget Types", value: String(total), icon: <ReceiptLongIcon />, color: "primary.main", highlight: true },
@@ -70,7 +70,7 @@ export default function ExpenseSettings({ showSnackbar }) {
     const handleOpen = (item = null) => {
         if (item) {
             setEditing(item);
-            setForm({ name: item.name, financialCategory: item.category || 'OPEX', active: item.active !== false });
+            setForm({ name: item.name, financialCategory: item.financial_category || 'OPEX', active: item.active !== false });
         } else {
             setEditing(null);
             setForm({ name: '', financialCategory: 'OPEX', active: true });
@@ -158,7 +158,7 @@ export default function ExpenseSettings({ showSnackbar }) {
                                 <TableRow key={t.id} hover>
                                     <TableCell>{t.name}</TableCell>
                                     <TableCell>
-                                        <Chip label={t.category || 'OPEX'} color={t.category === 'CAPEX' ? 'secondary' : 'default'} size="small" variant="outlined" />
+                                        <Chip label={t.financial_category || 'OPEX'} color={t.financial_category === 'CAPEX' ? 'secondary' : 'default'} size="small" variant="outlined" />
                                     </TableCell>
                                     <TableCell>
                                         {t.active !== false

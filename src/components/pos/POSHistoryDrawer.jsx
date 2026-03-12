@@ -89,7 +89,7 @@ export default function POSHistoryDrawer({
                                             ) : (
                                                 <TableCell sx={{ opacity: 0.3 }}><Checkbox size="small" disabled checked={false} /></TableCell>
                                             )}
-                                            <TableCell>{tx.timestamp?.seconds ? new Date(tx.timestamp.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</TableCell>
+                                            <TableCell>{tx.timestamp ? new Date(tx.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</TableCell>
                                             <TableCell>
                                                 {tx.item === 'Expenses' ? (
                                                     <Box display="flex" alignItems="center" gap={0.5}>
@@ -165,10 +165,10 @@ export default function POSHistoryDrawer({
                                                     <Checkbox size="small" disabled checked={false} />
                                                 </TableCell>
                                             )}
-                                            <TableCell>{o.timestamp?.seconds ? new Date(o.timestamp.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</TableCell>
+                                            <TableCell>{o.timestamp ? new Date(o.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</TableCell>
                                             <TableCell>#{o.orderNumber}</TableCell>
                                             <TableCell>{o.customerName || 'Walk-in'}</TableCell>
-                                            <TableCell align="right">{currency(o.items?.reduce((s, i) => s + (i.price * i.quantity), 0))}</TableCell>
+                                            <TableCell align="right">{currency(o.totalDue)}</TableCell>
                                         </TableRow>
                                     ))}
                                     {shiftOrders.length === 0 && (

@@ -1,21 +1,8 @@
 import { supabase } from "../supabase";
-
-const generateExpId = () => `EXP-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+import { generateDisplayId, getStaffIdentity } from "../utils/idUtils";
 
 /**
  * Records an expense transaction.
- * 
- * @param {Object} params
- * @param {string} params.item Item name (usually 'Expenses')
- * @param {string} params.expenseType Type of expense (Salary, OPEX, etc.)
- * @param {string} params.expenseStaffId Linked staff ID (for Salary/Advance)
- * @param {string} params.expenseStaffName Linked staff name
- * @param {number} params.quantity Quantity
- * @param {number} params.price Price/Unit Cost
- * @param {string} params.notes Additional notes
- * @param {string} params.userEmail Email of the staff recording the expense
- * @param {string} params.activeShiftId Current shift ID
- * @returns {Promise<string>} The ID of the created transaction
  */
 export const recordExpense = async ({
     item = "Expenses",
@@ -27,27 +14,27 @@ export const recordExpense = async ({
     price,
     notes,
     userEmail,
+    user, // Added user object for better identity resolution
     activeShiftId,
     financialCategory = 'OPEX'
 }) => {
-    const newId = generateExpId();
+    const newId = await generateDisplayId('expenses', 'EX');
     const finalFinancialCategory = (expenseType?.toLowerCase().includes('capital')) ? 'CAPEX' : financialCategory;
+
+    const staffId = expenseStaffId || getStaffIdentity(user) || userEmail;
 
     const payload = {
         id: newId,
         item,
         expense_type: expenseType,
         quantity: Number(quantity),
-        amount: Number(quantity) * Number(price), // 'amount' in supabase instead of price/total
-        staff_email: userEmail,
+        amount: Number(quantity) * Number(price), 
+        staff_id: staffId,
         shift_id: activeShiftId,
         financial_category: finalFinancialCategory,
         category: 'Credit',
-        // In Supabase schema v2.0 we dropped the complex staffing names on expenses to unify, 
-        // but we can shove it in notes or if the schema accepts it via metadata
         is_deleted: false,
         timestamp: new Date().toISOString(),
-        // Just appending extra details to notes securely
         notes: (notes ? notes + '. ' : '') + (expenseStaffName ? `For: ${expenseStaffName} (${expenseStaffEmail || expenseStaffId})` : '')
     };
 
@@ -87,19 +74,19 @@ export const deleteTransactions = async (ids, userEmail, reason) => {
 // Per-table allowed columns — prevents 400 errors when a field doesn't exist in that table.
 const ORDER_ITEM_COLS = new Set([
     'name', 'price', 'cost_price', 'amount', 'quantity',
-    'is_deleted', 'is_edited', 'added_by_admin', 'staff_email',
+    'is_deleted', 'is_edited', 'added_by_admin', 'staff_id',
     'shift_id', 'financial_category', 'customer_id', 'customer_name',
     'category', 'payment_method', 'invoice_status', 'reconciliation_status',
     'metadata', 'updated_at'
 ]);
 const PC_TX_COLS = new Set([
     'customer_id', 'customer_name', 'type', 'category', 'payment_method',
-    'amount', 'staff_email', 'shift_id', 'is_deleted', 'financial_category',
+    'amount', 'staff_id', 'shift_id', 'is_deleted', 'financial_category',
     'reconciliation_status', 'metadata'
 ]);
 const EXPENSE_COLS = new Set([
     'category', 'expense_type', 'item', 'amount', 'quantity',
-    'staff_email', 'shift_id', 'is_deleted', 'financial_category', 'notes'
+    'staff_id', 'shift_id', 'is_deleted', 'financial_category', 'notes'
 ]);
 const pick = (obj, cols) => Object.fromEntries(Object.entries(obj).filter(([k]) => cols.has(k)));
 

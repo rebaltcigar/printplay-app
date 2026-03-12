@@ -7,10 +7,10 @@ import {
 
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
-import Login from "./components/Login.jsx";
-import POS from "./components/POS.jsx";
-import ClockInDashboard from "./components/ClockInDashboard.jsx";
-import AdminDashboard from "./components/AdminDashboard.jsx";
+import Login from "./components/pages/Login.jsx";
+import POS from "./components/pages/POS.jsx";
+import ClockInDashboard from "./components/pages/ClockInDashboard.jsx";
+import AdminDashboard from "./components/pages/AdminDashboard.jsx";
 import ForcePasswordReset from "./components/common/ForcePasswordReset.jsx";
 import { AnalyticsProvider } from "./contexts/AnalyticsContext";
 import { GlobalUIProvider } from "./contexts/GlobalUIContext.jsx";
@@ -19,7 +19,7 @@ import { ServiceProvider } from "./contexts/ServiceContext.jsx";
 
 import { supabase } from "./supabase";
 
-import { generateDisplayId } from "./services/orderService";
+import { generateDisplayId, getStaffIdentity } from "./utils/idUtils";
 import { convertLogoUrl } from "./services/brandingService";
 import { canAccessAdmin } from "./utils/permissions";
 import { generateUUID } from "./utils/uuid";
@@ -42,8 +42,9 @@ export default function App() {
   const [clockInMode, setClockInMode] = useState(false);
   const [clockInLogId, setClockInLogId] = useState(null);
 
-  // Staff display name (extracted from user doc during auth bootstrap — no extra fetch in POS)
+  // Staff display name and sequential ID (extracted from user doc during auth bootstrap — no extra fetch in POS)
   const [staffDisplayName, setStaffDisplayName] = useState('');
+  const [staffSequentialId, setStaffSequentialId] = useState(null);
 
   // App-wide settings (fetched once, passed to all pages — avoids per-component flash)
   const [appSettings, setAppSettings] = useState({
@@ -179,6 +180,7 @@ export default function App() {
           setClockInMode(false);
           setClockInLogId(null);
           setStaffDisplayName('');
+          setStaffSequentialId(null);
         } else {
           // Look up user role
           const { data: userData, error: profileError } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle();
@@ -199,26 +201,35 @@ export default function App() {
             }
             
             setStaffDisplayName(userData?.full_name || userData?.email || user.email || '');
+            setStaffSequentialId(userData?.sequential_id || null);
 
             if (role === "staff") {
-              // If staff, fetch current active shift if any
               const { data: statusData } = await supabase.from('app_status').select('*').eq('id', 'current_shift').maybeSingle();
 
-              if (
-                statusData &&
-                statusData.active_shift_id &&
-                statusData.staff_email === user.email
-              ) {
+              if (statusData?.active_shift_id && (statusData.staff_id === user.id || statusData.staff_id === userData?.sequential_id)) {
                 const shiftId = statusData.active_shift_id;
-                setActiveShiftId(shiftId);
+                
+                // Accept both UUID format and sequential IDs (e.g. SH-100000000001)
+                const isValidShiftId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(shiftId)
+                  || /^[A-Z]{2}-\d+$/.test(shiftId);
 
-                // Fetch period and start time to display
-                const { data: shiftData } = await supabase.from('shifts').select('*').eq('id', shiftId).maybeSingle();
+                let shiftData = null;
+                if (isValidShiftId) {
+                  const { data } = await supabase.from('shifts').select('*').eq('id', shiftId).maybeSingle();
+                  shiftData = data;
+                }
+
                 if (shiftData) {
+                  setActiveShiftId(shiftId);
                   setActiveShiftPeriod(shiftData.shift_period || "");
                   if (shiftData.start_time) {
                     setShiftStartTime(new Date(shiftData.start_time));
                   }
+                } else {
+                  console.warn("[App] Active shift ID found in app_status but missing or invalid in shifts table. Clearing stale lock.");
+                  await supabase.from('app_status').update({ active_shift_id: null }).eq('id', 'current_shift');
+                  setActiveShiftId(null);
+                  setActiveShiftPeriod("");
                 }
               } else {
                 setActiveShiftId(null);
@@ -348,31 +359,31 @@ export default function App() {
     const { data: statusSnap } = await supabase.from('app_status').select('*').eq('id', 'current_shift').single();
     const lock = statusSnap || null;
 
-    if (lock?.active_shift_id && lock.staff_email !== email) {
+    const staffOwnsShift = lock?.staff_id === user.id || lock?.staff_id === userData.sequential_id;
+
+    if (lock?.active_shift_id && !staffOwnsShift) {
       // Another staff owns this shift — offer clock-in instead of blocking
       const { data: shiftSnap } = await supabase.from('shifts').select('shift_period').eq('id', lock.active_shift_id).single();
       const shiftPeriod = shiftSnap ? shiftSnap.shift_period || "" : "";
 
-      // Try to get the cashier's display name
-      let cashierName = lock.staff_email;
+      // Try to get the cashier's display name (lookup by UUID first, fall back to sequential_id)
+      let cashierName = lock.staff_id;
+      let cashierEmail = '';
       try {
-        const { data: cashierSnap } = await supabase.from('profiles').select('*').eq('email', lock.staff_email).single();
+        const { data: cashierSnap } = await supabase.from('profiles').select('full_name, email')
+          .or(`id.eq.${lock.staff_id},sequential_id.eq.${lock.staff_id}`)
+          .maybeSingle();
         if (cashierSnap) {
           cashierName = cashierSnap.full_name || cashierSnap.email;
+          cashierEmail = cashierSnap.email;
         }
       } catch { }
 
-      return {
-        type: "clockin",
-        cashierName,
-        cashierEmail: lock.staff_email,
-        activeShiftId: lock.active_shift_id,
-        shiftPeriod,
-      };
+      return { type: "clockin", cashierName, cashierEmail, activeShiftId: lock.active_shift_id, shiftPeriod };
     }
 
     // Re-login: same staff has active shift
-    if (lock?.active_shift_id && lock.staff_email === email) {
+    if (lock?.active_shift_id && staffOwnsShift) {
       const { data: shiftSnap } = await supabase.from('shifts').select('shift_period').eq('id', lock.active_shift_id).single();
       const shiftPeriod = shiftSnap ? shiftSnap.shift_period || "" : "";
       return { type: "relogin", shiftPeriod };
@@ -380,7 +391,8 @@ export default function App() {
 
     // Query today's own scheduled entry
     const today = todayPHT();
-    const { data: ownSnap } = await supabase.from('schedules').select('*').eq('staff_email', email);
+    const staffKey = userData.sequential_id || email;
+    const { data: ownSnap } = await supabase.from('schedules').select('*').eq('staff_id', staffKey);
     const ownEntry = (ownSnap || []).find(e => e.date === today && (e.status === "scheduled" || e.status === "in-progress"));
     if (ownEntry) return {
       type: "scheduled", scheduleEntry: {
@@ -415,7 +427,19 @@ export default function App() {
     // Re-login: restore state from existing lock
     if (type === "relogin") {
       const { data: lock } = await supabase.from('app_status').select('*').eq('id', 'current_shift').single();
-      const { data: shiftSnap } = await supabase.from('shifts').select('*').eq('id', lock.active_shift_id).single();
+      const shiftId = lock?.active_shift_id;
+      const isValidShiftId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(shiftId)
+        || /^[A-Z]{2}-\d+$/.test(shiftId);
+
+      let shiftSnap = null;
+      if (isValidShiftId) {
+        const { data } = await supabase.from('shifts').select('*').eq('id', shiftId).maybeSingle();
+        shiftSnap = data;
+      }
+
+      if (!shiftSnap) {
+        throw new Error("Shift record missing or invalid. Please log in again to start a new shift.");
+      }
 
       setCurrentUser(user);
       setUserRole("staff");
@@ -427,17 +451,27 @@ export default function App() {
     const shiftLabel = scheduleEntry?.shiftLabel || shiftPeriod;
 
     // Create shift doc
-    const displayId = await generateDisplayId("shifts", "SHIFT");
+    const shiftId = await generateDisplayId("shifts", "SH");
 
-    // Instead of auto-generating ID, let Postgres generate a UUID and return it
+    const finalStaffId = user.id;
+
     const { data: shiftDoc, error: shiftError } = await supabase.from('shifts').insert([{
-      id: generateUUID(),
-      display_id: displayId,
-      staff_email: user.email,
+      id: shiftId,
+      display_id: shiftId,
+      staff_id: finalStaffId,
       shift_period: shiftLabel,
       schedule_id: scheduleEntry?.id || null,
       notes: notes || "",
       start_time: new Date().toISOString(),
+      // Initialize required financial fields to 0
+      pc_rental_total: 0,
+      system_total: 0,
+      services_total: 0,
+      expenses_total: 0,
+      total_ar: 0,
+      total_cash: 0,
+      total_digital: 0,
+      ar_payments_total: 0
     }]).select().single();
 
     if (shiftError) throw shiftError;
@@ -455,7 +489,7 @@ export default function App() {
     await supabase.from('app_status').upsert({
       id: 'current_shift',
       active_shift_id: shiftDoc.id,
-      staff_email: user.email,
+      staff_id: finalStaffId,
     });
 
     // Update App state → triggers route to /pos
@@ -463,6 +497,7 @@ export default function App() {
     setUserRole("staff");
     setActiveShiftId(shiftDoc.id);
     setActiveShiftPeriod(shiftLabel);
+    setStaffSequentialId(finalStaffId);
   };
 
   /** Cancel pending login (sign out, Login.jsx resets phase) */
@@ -481,9 +516,11 @@ export default function App() {
     const { data: lock } = await supabase.from('app_status').select('*').eq('id', 'current_shift').single();
 
     // Write clock-in log
+    const logId = await generateDisplayId("payroll", "PY");
+
     const { data: logRef, error: logError } = await supabase.from('payroll_logs').insert([{
-      id: generateUUID(),
-      staff_uid: user.id,
+      id: logId,
+      staff_uid: userData?.sequential_id || user.id,
       staff_email: user.email,
       staff_name: userData?.full_name || user.email,
       clock_in: new Date().toISOString(),
@@ -568,12 +605,14 @@ export default function App() {
                   clockInMode ? (
                     <ClockInDashboard
                       user={currentUser}
+                      staffId={staffSequentialId}
                       clockInLogId={clockInLogId}
                       onClockOut={handleClockOut}
                     />
                   ) : activeShiftId ? (
                     <POS
                       user={currentUser}
+                      staffId={staffSequentialId}
                       userRole={userRole}
                       activeShiftId={activeShiftId}
                       shiftPeriod={activeShiftPeriod}

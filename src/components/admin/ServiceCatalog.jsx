@@ -18,11 +18,11 @@ import AssignmentIcon from '@mui/icons-material/Assignment';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import { supabase } from '../../supabase';
-import ConfirmationReasonDialog from '../ConfirmationReasonDialog';
+import ConfirmationReasonDialog from '../dialogs/ConfirmationReasonDialog';
 import PageHeader from '../common/PageHeader';
 import SummaryCards from '../common/SummaryCards';
 import { fmtCurrency, fmtDate } from '../../utils/formatters';
-import { POS_ICON_OPTIONS } from '../../utils/posIcons.jsx';
+import { POS_ICON_OPTIONS } from '../../assets/icons/posIcons.jsx';
 import { generateUUID } from '../../utils/uuid';
 
 

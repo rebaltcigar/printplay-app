@@ -43,11 +43,17 @@ export default function StoreSettings({ section, showSnackbar, user }) {
         drawerHotkey: { altKey: true, code: 'Backquote', display: 'Alt + `' },
         checkoutHotkey: { code: 'F10', key: 'F10', display: 'F10' },
         idPrefixes: {
-            shifts: 'SHIFT',
-            expenses: 'EXP',
+            orders: 'OR',
             transactions: 'TX',
-            payroll: 'PAY'
+            expenses: 'EX',
+            customers: 'CU',
+            pc_transactions: 'PX',
+            invoices: 'IV',
+            shifts: 'SH',
+            payroll: 'PY',
+            profiles: 'ST'
         },
+        idPadding: 12,
         shiftDurationHours: 12,
         shiftAlertMinutes: 30,
         schedulePostingFrequency: 'weekly',
@@ -100,7 +106,8 @@ export default function StoreSettings({ section, showSnackbar, user }) {
                     showTaxBreakdown: data.show_tax_breakdown || false,
                     drawerHotkey: data.drawer_hotkey || { altKey: true, code: 'Backquote', display: 'Alt + `' },
                     checkoutHotkey: data.checkout_hotkey || { code: 'F10', key: 'F10', display: 'F10' },
-                    idPrefixes: data.id_prefixes || { shifts: 'SHIFT', expenses: 'EXP', transactions: 'TX', payroll: 'PAY' },
+                    idPrefixes: data.id_prefixes || { orders: 'OR', transactions: 'TX', expenses: 'EX', customers: 'CU', pc_transactions: 'PX', invoices: 'IV', shifts: 'SH', payroll: 'PY', profiles: 'ST' },
+                    idPadding: data.id_padding || 12,
                     shiftDurationHours: data.shift_duration_hours || 12,
                     shiftAlertMinutes: data.shift_alert_minutes || 30,
                     schedulePostingFrequency: data.schedule_posting_frequency || 'weekly',
@@ -147,6 +154,7 @@ export default function StoreSettings({ section, showSnackbar, user }) {
                 drawer_hotkey: settings.drawerHotkey,
                 checkout_hotkey: settings.checkoutHotkey,
                 id_prefixes: settings.idPrefixes,
+                id_padding: settings.idPadding,
                 shift_duration_hours: settings.shiftDurationHours,
                 shift_alert_minutes: settings.shiftAlertMinutes,
                 schedule_posting_frequency: settings.schedulePostingFrequency,
@@ -880,46 +888,118 @@ export default function StoreSettings({ section, showSnackbar, user }) {
                     <TextField
                         label="Shift ID Prefix"
                         fullWidth
+                        size="small"
                         value={settings.idPrefixes?.shifts || ''}
                         onChange={e => setSettings({
                             ...settings,
                             idPrefixes: { ...settings.idPrefixes, shifts: e.target.value.toUpperCase() }
                         })}
-                        placeholder="e.g. SHIFT"
-                        helperText="Used for: Daily employee shifts"
+                        placeholder="e.g. SH"
+                        helperText="Used for daily employee shifts"
                     />
+                    <Stack direction="row" spacing={2}>
+                        <TextField
+                            label="Order Prefix"
+                            fullWidth
+                            size="small"
+                            value={settings.idPrefixes?.orders || ''}
+                            onChange={e => setSettings({
+                                ...settings,
+                                idPrefixes: { ...settings.idPrefixes, orders: e.target.value.toUpperCase() }
+                            })}
+                            placeholder="e.g. OR"
+                        />
+                        <TextField
+                            label="Transaction (Retail)"
+                            fullWidth
+                            size="small"
+                            value={settings.idPrefixes?.transactions || ''}
+                            onChange={e => setSettings({
+                                ...settings,
+                                idPrefixes: { ...settings.idPrefixes, transactions: e.target.value.toUpperCase() }
+                            })}
+                            placeholder="e.g. TX"
+                        />
+                        <TextField
+                            label="Expense Prefix"
+                            fullWidth
+                            size="small"
+                            value={settings.idPrefixes?.expenses || ''}
+                            onChange={e => setSettings({
+                                ...settings,
+                                idPrefixes: { ...settings.idPrefixes, expenses: e.target.value.toUpperCase() }
+                            })}
+                            placeholder="e.g. EX"
+                        />
+                    </Stack>
+                    <Stack direction="row" spacing={2}>
+                        <TextField
+                            label="Customer Prefix"
+                            fullWidth
+                            size="small"
+                            value={settings.idPrefixes?.customers || ''}
+                            onChange={e => setSettings({
+                                ...settings,
+                                idPrefixes: { ...settings.idPrefixes, customers: e.target.value.toUpperCase() }
+                            })}
+                            placeholder="e.g. CU"
+                        />
+                        <TextField
+                            label="PC Transaction"
+                            fullWidth
+                            size="small"
+                            value={settings.idPrefixes?.pc_transactions || ''}
+                            onChange={e => setSettings({
+                                ...settings,
+                                idPrefixes: { ...settings.idPrefixes, pc_transactions: e.target.value.toUpperCase() }
+                            })}
+                            placeholder="e.g. PX"
+                        />
+                        <TextField
+                            label="Invoice Prefix"
+                            fullWidth
+                            size="small"
+                            value={settings.idPrefixes?.invoices || ''}
+                            onChange={e => setSettings({
+                                ...settings,
+                                idPrefixes: { ...settings.idPrefixes, invoices: e.target.value.toUpperCase() }
+                            })}
+                            placeholder="e.g. IV"
+                        />
+                    </Stack>
+                    <Stack direction="row" spacing={2}>
+                        <TextField
+                            label="Payroll Prefix"
+                            fullWidth
+                            size="small"
+                            value={settings.idPrefixes?.payroll || ''}
+                            onChange={e => setSettings({
+                                ...settings,
+                                idPrefixes: { ...settings.idPrefixes, payroll: e.target.value.toUpperCase() }
+                            })}
+                            placeholder="e.g. PY"
+                        />
+                        <TextField
+                            label="Staff/User Prefix"
+                            fullWidth
+                            size="small"
+                            value={settings.idPrefixes?.profiles || ''}
+                            onChange={e => setSettings({
+                                ...settings,
+                                idPrefixes: { ...settings.idPrefixes, profiles: e.target.value.toUpperCase() }
+                            })}
+                            placeholder="e.g. ST"
+                        />
+                    </Stack>
+                    <Divider sx={{ my: 1 }} />
                     <TextField
-                        label="Transaction ID Prefix"
+                        label="ID Number Padding"
+                        type="number"
                         fullWidth
-                        value={settings.idPrefixes?.transactions || ''}
-                        onChange={e => setSettings({
-                            ...settings,
-                            idPrefixes: { ...settings.idPrefixes, transactions: e.target.value.toUpperCase() }
-                        })}
-                        placeholder="e.g. TX"
-                        helperText="Used for: Sales and service items"
-                    />
-                    <TextField
-                        label="Expense ID Prefix"
-                        fullWidth
-                        value={settings.idPrefixes?.expenses || ''}
-                        onChange={e => setSettings({
-                            ...settings,
-                            idPrefixes: { ...settings.idPrefixes, expenses: e.target.value.toUpperCase() }
-                        })}
-                        placeholder="e.g. EXP"
-                        helperText="Used for: Store expenses and stock-in"
-                    />
-                    <TextField
-                        label="Payroll ID Prefix"
-                        fullWidth
-                        value={settings.idPrefixes?.payroll || ''}
-                        onChange={e => setSettings({
-                            ...settings,
-                            idPrefixes: { ...settings.idPrefixes, payroll: e.target.value.toUpperCase() }
-                        })}
-                        placeholder="e.g. PAY"
-                        helperText="Used for: Employee salary runs"
+                        size="small"
+                        value={settings.idPadding || 12}
+                        onChange={e => setSettings({ ...settings, idPadding: parseInt(e.target.value) || 12 })}
+                        helperText="Number of digits for sequential numbers (e.g. 12 = 000000000001)"
                     />
                     {renderSaveButton()}
                 </Stack>

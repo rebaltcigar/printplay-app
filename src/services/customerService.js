@@ -4,19 +4,25 @@ import { generateUUID } from '../utils/uuid';
 
 const TABLE_NAME = 'customers';
 
+/** Maps camelCase form fields to snake_case DB columns (customers table). */
+const toDbRecord = (d) => ({
+    full_name: d.fullName,
+    username: d.username || null,
+    phone: d.phone || null,
+    address: d.address || null,
+    email: d.email || null,
+    tin: d.tin || null,
+});
+
 /**
  * Creates a new customer profile.
  */
 export const createCustomer = async (customerData) => {
-    // Generate a unique ID since Firebase used to do this automatically.
     const newId = generateUUID();
 
     const { data, error } = await supabase
         .from(TABLE_NAME)
-        .insert([{
-            id: newId,
-            ...customerData
-        }])
+        .insert([{ id: newId, ...toDbRecord(customerData) }])
         .select()
         .single();
 
@@ -33,7 +39,7 @@ export const createCustomer = async (customerData) => {
 export const updateCustomer = async (customerId, customerData) => {
     const { data, error } = await supabase
         .from(TABLE_NAME)
-        .update(customerData)
+        .update(toDbRecord(customerData))
         .eq('id', customerId)
         .select()
         .single();
