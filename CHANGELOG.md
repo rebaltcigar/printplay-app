@@ -8,24 +8,30 @@
 - **Sections** (in this order, only include sections that have entries):
   `### Added` | `### Changed` | `### Fixed` | `### Removed` | `### Infrastructure`
 - **Entries**: `- **Feature Name** — Description ending with a period.`
-- **Infrastructure**: Firestore schema changes, new collections, indexes, security rules.
+- **Infrastructure**: Database schema changes, new tables/indexes, RLS policies, auth config, and server-side setup.
 - No roadmap content — belongs in ROADMAP.md.
 
-## [0.9.0] — 2026-03-11
+## [0.9.0] — 2026-03-11 — Firebase → Supabase Platform Migration
+
+> Complete replacement of the Firebase/Firestore backend with Supabase (Postgres + Auth + Realtime). All data, authentication, and live-update logic now runs through Supabase. Firebase has been fully removed from the project.
 
 ### Added
-- **Supabase Integration** — Full migration of the primary data layer from Firebase/Firestore to Supabase. Includes real-time subscriptions for POS and admin views.
+- **Supabase Data Layer** — All Firestore collections (stations, sessions, customers, orders, shifts, expenses, payroll, services, packages, rates, zones, invoices) migrated to relational Postgres tables with proper foreign keys and RLS policies.
+- **Supabase Auth** — Replaced Firebase Auth with Supabase Auth. Login, session management, and role-based access (admin/staff) are handled via Supabase JWT.
+- **Supabase Realtime** — Replaced all Firestore `onSnapshot` listeners with Postgres-level Realtime subscriptions for POS, station map, and admin dashboard views.
+- **Server-Side Layer** — New Express server (`src/server/`) provides privileged Supabase operations (service-role calls, bootstrap, admin actions) previously handled by Firebase Cloud Functions.
 - **Kunek Agent v2.0** — Re-engineered terminal agent with native Supabase Realtime support and improved session/power management logic.
 - **Unified PC Timer UI** — Professionalized PC Map dashboard with high-density table views and standardized Pondo-style cards.
 
 ### Infrastructure
-- **Postgres Database** — Migrated all collections (stations, sessions, customers, services, etc.) to relational Postgres tables.
-- **Supabase Auth** — Switched authentication provider to Supabase Auth.
-- **Supabase Realtime** — Replaced Firestore listeners with Postgres-level Realtime subscriptions.
+- **Postgres Schema** — New relational schema with sequential integer IDs, indexed foreign keys, and `NUMERIC` columns replacing Firestore's untyped documents.
+- **Row-Level Security** — RLS policies enforced at the database level for staff/admin data separation.
+- **Migration Scripts** — SQL scripts in `scripts/` for schema creation, backfill, cash difference tracking, and staff ID consolidation.
 
 ### Removed
 - **Firebase SDK** — Completely removed all `firebase` and `firebase-admin` dependencies and configuration files.
-- **Cloud Functions** — Deleted legacy Firebase Cloud Functions in favor of frontend-driven Supabase logic.
+- **Cloud Functions** — Deleted legacy Firebase Cloud Functions; logic moved to the frontend service layer and the new Express server.
+- **Firestore Listeners** — All `onSnapshot`, `getDocs`, `setDoc`, `updateDoc` calls replaced with Supabase client equivalents.
 
 ## [0.7.3] — 2026-03-10
 
