@@ -1,7 +1,7 @@
 // src/services/orderService.js
 import {
     doc, runTransaction, getDoc, serverTimestamp,
-    writeBatch, collection, where, query, getDocs, increment
+    writeBatch, collection, where, query, getDocs, increment, updateDoc
 } from "firebase/firestore";
 import { db } from "../firebase";
 
@@ -298,4 +298,103 @@ export const fetchLiveItemsForOrder = async (orderNumber) => {
             description: t.description || '',
         };
     });
+};
+/**
+ * Updates the timestamp of an order and all its connected transactions.
+ * 
+ * @param {string} orderId The document ID of the order
+ * @param {string} orderNumber The display number of the order
+ * @param {Date} newTimestamp The new timestamp to apply
+ * @param {string} userEmail Email of the user performing the update
+ * @param {string} reason Reason for the update
+ * @returns {Promise<void>}
+ */
+export const updateOrderTimestamp = async (orderId, orderNumber, newTimestamp, userEmail, reason) => {
+    const batch = writeBatch(db);
+
+    // 1. Update order timestamp
+    const orderRef = doc(db, 'orders', orderId);
+    batch.update(orderRef, {
+        timestamp: newTimestamp,
+        isEdited: true,
+        editedBy: userEmail,
+        editReason: reason,
+        lastUpdatedAt: serverTimestamp()
+    });
+
+    // 2. Update all connected transactions
+    const txSnap = await getDocs(query(
+        collection(db, 'transactions'),
+        where('orderNumber', '==', orderNumber),
+        where('isDeleted', '==', false)
+    ));
+
+    txSnap.forEach(d => {
+        batch.update(d.ref, {
+            timestamp: newTimestamp,
+            isEdited: true,
+            editedBy: userEmail,
+            editReason: reason,
+            lastUpdatedAt: serverTimestamp()
+        });
+    });
+
+    await batch.commit();
+};
+
+/**
+ * Permanently deletes an order and all its linked transactions from the database.
+ * Reverts inventory if the order was not already soft-deleted.
+ * 
+ * @param {string} orderId The document ID of the order
+ * @param {string} orderNumber The display number of the order
+ * @returns {Promise<void>}
+ */
+export const permanentDeleteOrder = async (orderId, orderNumber) => {
+    const batch = writeBatch(db);
+
+    // 1. Fetch order data to check if inventory needs reversion
+    const orderRef = doc(db, 'orders', orderId);
+    const orderSnap = await getDoc(orderRef);
+    if (!orderSnap.exists()) throw new Error("Order not found");
+    const orderData = orderSnap.data();
+
+    // 2. CASCADE: Delete all linked transactions and revert inventory if primary order wasn't deleted
+    const txSnap = await getDocs(query(
+        collection(db, 'transactions'),
+        where('orderNumber', '==', orderNumber)
+    ));
+
+    txSnap.forEach(d => {
+        const txData = d.data();
+        
+        // If order was NOT already deleted, we must revert inventory impact of these transactions
+        if (!orderData.isDeleted) {
+            const revertStock = (svcId, q) => {
+                if (!svcId) return;
+                const ref = doc(db, 'services', svcId);
+                batch.update(ref, { stockCount: increment(q) });
+            };
+
+            // 1. Revert main item
+            if (txData.serviceId) {
+                revertStock(txData.serviceId, Number(txData.quantity));
+            }
+
+            // 2. Revert snapshotted consumables
+            if (txData.consumables && txData.consumables.length > 0) {
+                txData.consumables.forEach(c => {
+                    revertStock(c.itemId, Number(c.qty) * Number(txData.quantity));
+                });
+            }
+        }
+
+        // Hard delete the transaction
+        batch.delete(d.ref);
+    });
+
+    // 3. Hard delete the order
+    batch.delete(orderRef);
+
+    await batch.commit();
 };

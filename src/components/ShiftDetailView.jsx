@@ -57,7 +57,7 @@ import {
   writeBatch,
   FieldValue,
 } from "firebase/firestore";
-import { generateDisplayId } from "../services/orderService";
+import { generateDisplayId, updateOrderTimestamp } from "../services/orderService";
 import { useGlobalUI } from "../contexts/GlobalUIContext";
 import { fmtCurrency, toDatetimeLocal, fromDatetimeLocal, identifierText, downloadCSV, fmtDateTime, fmtDate, fmtTime } from "../utils/formatters";
 import { computeShiftFinancials } from "../utils/shiftFinancials";
@@ -125,6 +125,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
   const [txDrawerOpen, setTxDrawerOpen] = useState(false);
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
+  const [editingOrder, setEditingOrder] = useState(null);
 
   // Transactions onSnapshot
   useEffect(() => {
@@ -508,6 +509,47 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
         } catch (e) {
           console.error(e);
           showSnackbar("Failed to set dates to shift start.", 'error');
+        }
+      }
+    });
+  };
+
+  const handleEditOrderDate = (order) => {
+    setEditingOrder(order);
+    const d = order.timestamp?.seconds
+      ? new Date(order.timestamp.seconds * 1000)
+      : order.timestamp instanceof Date
+        ? order.timestamp
+        : new Date();
+    setBulkDateTime(toDatetimeLocal(d));
+    setBulkOpen(true);
+  };
+
+  const saveOrderDate = async () => {
+    if (!editingOrder) return;
+    const when = fromDatetimeLocal(bulkDateTime);
+
+    showConfirm({
+      title: "Edit Order Date",
+      message: `Update order ${editingOrder.orderNumber} and its transactions to ${fmtDateTime(when)}?`,
+      requireReason: true,
+      confirmLabel: "Update Date",
+      confirmColor: "primary",
+      onConfirm: async (reason) => {
+        try {
+          await updateOrderTimestamp(
+            editingOrder.id,
+            editingOrder.orderNumber,
+            when,
+            auth.currentUser?.email || "admin",
+            reason
+          );
+          setBulkOpen(false);
+          setEditingOrder(null);
+          showSnackbar("Order and transactions updated.", 'success');
+        } catch (e) {
+          console.error(e);
+          showSnackbar("Failed to update order date.", 'error');
         }
       }
     });
@@ -947,6 +989,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
                       <TableCell align="right">Total</TableCell>
                       <TableCell>Method</TableCell>
                       <TableCell>Status</TableCell>
+                      <TableCell align="right">Actions</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -972,6 +1015,16 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
                             size="small"
                             color={o.status === 'pending' ? 'warning' : 'success'}
                           />
+                        </TableCell>
+                        <TableCell align="right">
+                          <Tooltip title="Edit Date/Time">
+                            <IconButton
+                              size="small"
+                              onClick={() => handleEditOrderDate(o)}
+                            >
+                              <EditIcon fontSize="inherit" />
+                            </IconButton>
+                          </Tooltip>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -1122,8 +1175,16 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
       </DetailDrawer>
 
       {/* Bulk Date Dialog */}
-      <Dialog open={bulkOpen} onClose={() => setBulkOpen(false)} fullWidth maxWidth="xs">
-        <DialogTitle>Edit Date/Time</DialogTitle>
+      <Dialog 
+        open={bulkOpen} 
+        onClose={() => {
+          setBulkOpen(false);
+          setEditingOrder(null);
+        }} 
+        fullWidth 
+        maxWidth="xs"
+      >
+        <DialogTitle>{editingOrder ? "Edit Order Date/Time" : "Edit Transaction Date/Time"}</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <TextField
@@ -1135,13 +1196,19 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
               fullWidth
             />
             <Typography variant="caption" sx={{ opacity: 0.75 }}>
-              Updating {selectedTransactions.length} entr{selectedTransactions.length === 1 ? "y" : "ies"}.
+              {editingOrder 
+                ? `Updating order ${editingOrder.orderNumber} and all linked transactions.` 
+                : `Updating ${selectedTransactions.length} entr${selectedTransactions.length === 1 ? "y" : "ies"}.`
+              }
             </Typography>
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setBulkOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={saveBulkDate}>Save</Button>
+          <Button onClick={() => {
+            setBulkOpen(false);
+            setEditingOrder(null);
+          }}>Cancel</Button>
+          <Button variant="contained" onClick={editingOrder ? saveOrderDate : saveBulkDate}>Save</Button>
         </DialogActions>
       </Dialog>
 

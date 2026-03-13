@@ -11,7 +11,7 @@ import {
     doc, getDoc, writeBatch, serverTimestamp, deleteField
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
-import { generateBatchIds, restoreOrder } from '../services/orderService';
+import { generateBatchIds, restoreOrder, permanentDeleteOrder } from '../services/orderService';
 
 // Icons
 import SearchIcon from '@mui/icons-material/Search';
@@ -26,6 +26,7 @@ import SaveIcon from '@mui/icons-material/Save';
 import AddIcon from '@mui/icons-material/Add';
 import RestoreFromTrashIcon from '@mui/icons-material/RestoreFromTrash';
 import DeleteIcon from '@mui/icons-material/Delete';
+import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 
 // Components & Helpers
 import LoadingScreen from './common/LoadingScreen';
@@ -133,6 +134,8 @@ export default function OrderManagement({ showSnackbar }) {
     const [orderToVoid, setOrderToVoid] = useState(null);
     const [orderToRestore, setOrderToRestore] = useState(null);
     const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
+    const [orderToDeletePerm, setOrderToDeletePerm] = useState(null);
+    const [permDeleteDialogOpen, setPermDeleteDialogOpen] = useState(false);
 
     // Printing
     const [reprintOrder, setReprintOrder] = useState(null);
@@ -311,6 +314,29 @@ export default function OrderManagement({ showSnackbar }) {
     };
 
     const handleEditOrder = (order) => openEditDrawer(order);
+
+    const handlePermanentDelete = (order) => {
+        setOrderToDeletePerm(order);
+        setPermDeleteDialogOpen(true);
+    };
+
+    const confirmPermanentDelete = async (reason) => {
+        if (!orderToDeletePerm) return;
+        setLoading(true);
+        try {
+            await permanentDeleteOrder(orderToDeletePerm.id, orderToDeletePerm.orderNumber);
+            showSnackbar?.("Order permanently deleted from database.", "success");
+
+            // Update local state
+            setOrders(prev => prev.filter(o => o.id !== orderToDeletePerm.id));
+        } catch (e) {
+            console.error("Permanent delete failed:", e);
+            showSnackbar?.("Failed to permanently delete order.", "error");
+        } finally {
+            setLoading(false);
+            setPermDeleteDialogOpen(false);
+        }
+    };
 
     const handleUpdateEditItem = (index, field, value) => {
         const newItems = [...editItems];
@@ -675,6 +701,11 @@ export default function OrderManagement({ showSnackbar }) {
                                                     </IconButton>
                                                 </Tooltip>
                                             )}
+                                            <Tooltip title="Permanent Delete (Admin Only)">
+                                                <IconButton size="small" color="error" onClick={() => handlePermanentDelete(o)}>
+                                                    <DeleteForeverIcon fontSize="small" />
+                                                </IconButton>
+                                            </Tooltip>
                                         </Stack>
                                     </TableCell>
                                 </TableRow>
@@ -987,6 +1018,17 @@ export default function OrderManagement({ showSnackbar }) {
                 message={`Are you sure you want to restore Order #${orderToRestore?.orderNumber}? All associated transactions will also be restored.`}
                 confirmColor="success"
                 confirmText="Restore"
+            />
+
+            {/* Confirmation Dialog for Permanent Delete */}
+            <ConfirmationReasonDialog
+                open={permDeleteDialogOpen}
+                onClose={() => setPermDeleteDialogOpen(false)}
+                onConfirm={confirmPermanentDelete}
+                title="PERMANENT DELETE"
+                message={`CRITICAL: Are you sure you want to PERMANENTLY DELETE Order #${orderToDeletePerm?.orderNumber}? This will remove the order and all its transactions from the database entirely. This action CANNOT be undone.`}
+                confirmColor="error"
+                confirmText="Permanently Delete"
             />
 
             {/* Hidden Print Elements */}
