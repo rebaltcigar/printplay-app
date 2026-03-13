@@ -36,7 +36,7 @@ import { SimpleReceipt } from './SimpleReceipt';
 import { ServiceInvoice } from './ServiceInvoice';
 import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice } from '../services/printService';
 import ConfirmationReasonDialog from './ConfirmationReasonDialog';
-import { fmtCurrency as currency, fmtDateTime } from '../utils/formatters';
+import { fmtCurrency as currency, fmtDateTime, toDatetimeLocal } from '../utils/formatters';
 import { usePOSServices } from '../hooks/usePOSServices';
 import { useStaffList } from '../hooks/useStaffList';
 
@@ -68,11 +68,17 @@ export default function OrderManagement({ showSnackbar }) {
 
     const openViewDrawer = (order) => setOrderDrawer({ open: true, mode: 'view', order, saving: false });
     const openEditDrawer = (order) => {
-        setEditItems([...(order.items || [])]);
+        // Fix: handle quantity/qty fallback for legacy items
+        setEditItems((order.items || []).map(i => ({
+            ...i,
+            quantity: i.quantity ?? i.itemQuantity ?? i.qty ?? 1
+        })));
+
         setEditForm({
             customerName: order.customerName || '',
             paymentMethod: order.paymentMethod || 'Cash',
             amountTendered: order.amountTendered || 0,
+            timestamp: toDatetimeLocal(order.timestamp),
             editReason: ''
         });
         setOrderDrawer({ open: true, mode: 'edit', order, saving: false });
@@ -95,6 +101,7 @@ export default function OrderManagement({ showSnackbar }) {
         customerName: '',
         paymentMethod: '',
         amountTendered: 0,
+        timestamp: '',
         editReason: ''
     });
     // Load settings
@@ -325,6 +332,8 @@ export default function OrderManagement({ showSnackbar }) {
             const amtTendered = Number(editForm.amountTendered) || 0;
             const newChange = Math.max(0, amtTendered - newTotal);
 
+            const newTimestamp = editForm.timestamp ? new Date(editForm.timestamp) : serverTimestamp();
+
             // 1. Update Order Document
             const orderRef = doc(db, 'orders', editingOrder.id);
             const orderUpdate = {
@@ -334,6 +343,7 @@ export default function OrderManagement({ showSnackbar }) {
                 change: newChange,
                 customerName: editForm.customerName,
                 paymentMethod: editForm.paymentMethod,
+                timestamp: newTimestamp, // Allow editing time
                 isEdited: true,
                 editReason: editForm.editReason,
                 editedAt: serverTimestamp()
@@ -383,7 +393,7 @@ export default function OrderManagement({ showSnackbar }) {
                     editReason: editForm.editReason || 'Administrative Edit',
                     orderId: editingOrder.id,
                     orderNumber: editingOrder.orderNumber,
-                    timestamp: baseTx ? baseTx.timestamp : serverTimestamp(), // Keep original time
+                    timestamp: newTimestamp, // Use the new edited time
                     serverTime: serverTimestamp()
                 });
             });
@@ -829,6 +839,14 @@ export default function OrderManagement({ showSnackbar }) {
                                     InputProps={{ startAdornment: <InputAdornment position="start">₱</InputAdornment> }}
                                 />
                             )}
+                            <TextField
+                                label="Order Date & Time"
+                                type="datetime-local"
+                                fullWidth
+                                InputLabelProps={{ shrink: true }}
+                                value={editForm.timestamp}
+                                onChange={(e) => setEditForm(prev => ({ ...prev, timestamp: e.target.value }))}
+                            />
                         </Box>
 
                         <Divider>Items</Divider>
