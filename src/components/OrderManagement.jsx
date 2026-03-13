@@ -36,7 +36,7 @@ import { SimpleReceipt } from './SimpleReceipt';
 import { ServiceInvoice } from './ServiceInvoice';
 import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice } from '../services/printService';
 import ConfirmationReasonDialog from './ConfirmationReasonDialog';
-import { fmtCurrency as currency, fmtDateTime, toDatetimeLocal } from '../utils/formatters';
+import { fmtCurrency as currency, fmtDateTime } from '../utils/formatters';
 import { usePOSServices } from '../hooks/usePOSServices';
 import { useStaffList } from '../hooks/useStaffList';
 
@@ -68,28 +68,43 @@ export default function OrderManagement({ showSnackbar }) {
 
     const openViewDrawer = (order) => setOrderDrawer({ open: true, mode: 'view', order, saving: false });
     const openEditDrawer = (order) => {
-        // Robust mapping of items to handle legacy field names and missing data
+        // Robust mapping of items — use || instead of ?? for qty so NaN also falls through
         const items = (order.items || []).map(i => {
-            const qty = i.quantity ?? i.qty ?? i.itemQuantity ?? i.item_quantity ?? i.itemQty ?? 1;
-            const price = i.price ?? i.unitPrice ?? 0;
-            const total = i.total ?? i.subtotal ?? (Number(qty) * Number(price));
-            
+            const rawQty = i.quantity ?? i.qty ?? i.itemQuantity ?? i.item_quantity ?? i.itemQty;
+            const qty = (rawQty !== null && rawQty !== undefined && !isNaN(Number(rawQty))) ? Number(rawQty) : 1;
+            const price = Number(i.price ?? i.unitPrice ?? 0) || 0;
+            const total = Number(i.total ?? i.subtotal ?? (qty * price)) || (qty * price);
+
             return {
                 ...i,
                 name: i.name || i.serviceName || i.item || 'Item',
-                quantity: Number(qty),
-                price: Number(price),
-                total: Number(total)
+                quantity: qty,
+                price,
+                total
             };
         });
         setEditItems(items);
 
-        const ts = order.timestamp || order.createdAt || order.serverTime;
+        // Convert Firestore Timestamp explicitly (same pattern as Transactions) to avoid
+        // dayjs receiving a raw Timestamp object, which can produce "Invalid Date".
+        const tsRaw = order.timestamp || order.createdAt || order.serverTime;
+        let editTimestamp = '';
+        if (tsRaw) {
+            let d = null;
+            if (tsRaw?.toDate) d = tsRaw.toDate();
+            else if (tsRaw?.seconds) d = new Date(tsRaw.seconds * 1000);
+            else if (tsRaw instanceof Date) d = tsRaw;
+            if (d && !isNaN(d)) {
+                const pad = n => String(n).padStart(2, '0');
+                editTimestamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+            }
+        }
+
         setEditForm({
             customerName: order.customerName || '',
             paymentMethod: order.paymentMethod || 'Cash',
             amountTendered: order.amountTendered || 0,
-            timestamp: toDatetimeLocal(ts),
+            timestamp: editTimestamp,
             editReason: ''
         });
         setOrderDrawer({ open: true, mode: 'edit', order, saving: false });
