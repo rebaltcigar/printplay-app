@@ -68,17 +68,28 @@ export default function OrderManagement({ showSnackbar }) {
 
     const openViewDrawer = (order) => setOrderDrawer({ open: true, mode: 'view', order, saving: false });
     const openEditDrawer = (order) => {
-        // Fix: handle quantity/qty fallback for legacy items
-        setEditItems((order.items || []).map(i => ({
-            ...i,
-            quantity: i.quantity ?? i.itemQuantity ?? i.qty ?? 1
-        })));
+        // Robust mapping of items to handle legacy field names and missing data
+        const items = (order.items || []).map(i => {
+            const qty = i.quantity ?? i.qty ?? i.itemQuantity ?? i.item_quantity ?? i.itemQty ?? 1;
+            const price = i.price ?? i.unitPrice ?? 0;
+            const total = i.total ?? i.subtotal ?? (Number(qty) * Number(price));
+            
+            return {
+                ...i,
+                name: i.name || i.serviceName || i.item || 'Item',
+                quantity: Number(qty),
+                price: Number(price),
+                total: Number(total)
+            };
+        });
+        setEditItems(items);
 
+        const ts = order.timestamp || order.createdAt || order.serverTime;
         setEditForm({
             customerName: order.customerName || '',
             paymentMethod: order.paymentMethod || 'Cash',
             amountTendered: order.amountTendered || 0,
-            timestamp: toDatetimeLocal(order.timestamp),
+            timestamp: toDatetimeLocal(ts),
             editReason: ''
         });
         setOrderDrawer({ open: true, mode: 'edit', order, saving: false });
@@ -354,8 +365,25 @@ export default function OrderManagement({ showSnackbar }) {
             const q = query(collection(db, 'transactions'), where('orderNumber', '==', editingOrder.orderNumber));
             const txSnap = await getDocs(q);
 
-            // Collect metadata from first existing transaction to preserve context (date, staff, etc)
-            let baseTx = txSnap.docs.length > 0 ? txSnap.docs[0].data() : null;
+            // Collect metadata from first ACTIVE (non-deleted) transaction to preserve shiftId, staffEmail, etc.
+            // We must skip soft-deleted docs so a re-edit doesn't inherit isDeleted: true into new transactions.
+            let rawBaseTx = null;
+            for (const d of txSnap.docs) {
+                const data = d.data();
+                if (!data.isDeleted) { rawBaseTx = data; break; }
+            }
+            if (!rawBaseTx && txSnap.docs.length > 0) rawBaseTx = txSnap.docs[0].data();
+
+            // Strip soft-delete markers and timestamp fields we set explicitly, so they don't leak into new docs.
+            const {
+                isDeleted: _isDeleted,
+                deletedAt: _deletedAt,
+                deleteReason: _deleteReason,
+                replacedByEdit: _replacedByEdit,
+                timestamp: _oldTs,
+                serverTime: _oldServerTime,
+                ...cleanBaseTx
+            } = rawBaseTx || {};
 
             // Delete (Soft Delete) old transactions
             txSnap.forEach(d => {
@@ -381,7 +409,7 @@ export default function OrderManagement({ showSnackbar }) {
                 const txTotal = txQty * txPrice;
 
                 batch.set(txRef, {
-                    ...baseTx, // Preserve shiftId, staffEmail, timestamp, etc.
+                    ...cleanBaseTx, // Preserve shiftId, staffEmail, etc. (soft-delete fields stripped above)
                     displayId: newIds[idx],
                     item: item.name || item.serviceName || 'Item',
                     quantity: txQty,
@@ -390,10 +418,11 @@ export default function OrderManagement({ showSnackbar }) {
                     customerName: editForm.customerName || 'Walk-in',
                     paymentMethod: editForm.paymentMethod || 'Cash',
                     isEdited: true,
+                    isDeleted: false,
                     editReason: editForm.editReason || 'Administrative Edit',
                     orderId: editingOrder.id,
                     orderNumber: editingOrder.orderNumber,
-                    timestamp: newTimestamp, // Use the new edited time
+                    timestamp: newTimestamp, // Reflects the updated order date/time
                     serverTime: serverTimestamp()
                 });
             });
