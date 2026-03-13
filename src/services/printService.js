@@ -1,5 +1,6 @@
 // src/services/printService.js
 // Consolidated logic for receipt and invoice printing.
+import { fetchLiveItemsForOrder } from './orderService';
 
 let _printLock = false;
 
@@ -85,7 +86,7 @@ export const normalizeOrderData = (order, options = {}) => {
         return base;
     });
 
-    const orderTotal = Number(order.total) || items.reduce((sum, i) => sum + i.total, 0);
+    const orderTotal = Number(order.total ?? items.reduce((sum, i) => sum + i.total, 0)) || 0;
     const timestamp = isReprint ? resolveTimestamp(order.timestamp) : new Date();
 
     return {
@@ -113,3 +114,26 @@ export const normalizeReceiptData = (order, options = {}) =>
  */
 export const normalizeInvoiceData = (order, options = {}) =>
     normalizeOrderData(order, { ...options, invoiceMode: true });
+
+// ---------------------------------------------------------------------------
+// Async helpers — fetch live transactions then normalize (for reprints)
+// ---------------------------------------------------------------------------
+
+const enrichWithLiveItems = async (order) => {
+    const liveItems = await fetchLiveItemsForOrder(order.orderNumber);
+    return liveItems ? { ...order, items: liveItems } : order;
+};
+
+/**
+ * Enriches an order with live transactions, then normalizes for receipt printing.
+ * Use for reprints — fresh checkouts should call normalizeReceiptData directly.
+ */
+export const prepareReceiptData = async (order, options = {}) =>
+    normalizeReceiptData(await enrichWithLiveItems(order), options);
+
+/**
+ * Enriches an order with live transactions, then normalizes for invoice printing.
+ * Use for reprints — fresh checkouts should call normalizeInvoiceData directly.
+ */
+export const prepareInvoiceData = async (order, options = {}) =>
+    normalizeInvoiceData(await enrichWithLiveItems(order), options);

@@ -11,7 +11,7 @@ import {
     doc, getDoc, writeBatch, serverTimestamp, deleteField
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
-import { generateBatchIds } from '../services/orderService';
+import { generateBatchIds, fetchLiveItemsForOrder } from '../services/orderService';
 
 // Icons
 import SearchIcon from '@mui/icons-material/Search';
@@ -34,7 +34,7 @@ import SummaryCards from './common/SummaryCards';
 import DetailDrawer from './common/DetailDrawer';
 import { SimpleReceipt } from './SimpleReceipt';
 import { ServiceInvoice } from './ServiceInvoice';
-import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice } from '../services/printService';
+import { safePrint, safePrintInvoice, prepareReceiptData, prepareInvoiceData } from '../services/printService';
 import ConfirmationReasonDialog from './ConfirmationReasonDialog';
 import { fmtCurrency as currency, fmtDateTime } from '../utils/formatters';
 import { usePOSServices } from '../hooks/usePOSServices';
@@ -67,22 +67,25 @@ export default function OrderManagement({ showSnackbar }) {
     const [orderDrawer, setOrderDrawer] = useState({ open: false, mode: null, order: null, saving: false });
 
     const openViewDrawer = (order) => setOrderDrawer({ open: true, mode: 'view', order, saving: false });
-    const openEditDrawer = (order) => {
-        // Robust mapping of items — use || instead of ?? for qty so NaN also falls through
-        const items = (order.items || []).map(i => {
-            const rawQty = i.quantity ?? i.qty ?? i.itemQuantity ?? i.item_quantity ?? i.itemQty;
-            const qty = (rawQty !== null && rawQty !== undefined && !isNaN(Number(rawQty))) ? Number(rawQty) : 1;
-            const price = Number(i.price ?? i.unitPrice ?? 0) || 0;
-            const total = Number(i.total ?? i.subtotal ?? (qty * price)) || (qty * price);
-
-            return {
-                ...i,
-                name: i.name || i.serviceName || i.item || 'Item',
-                quantity: qty,
-                price,
-                total
-            };
-        });
+    const openEditDrawer = async (order) => {
+        let items = [];
+        try {
+            const liveItems = await fetchLiveItemsForOrder(order.orderNumber);
+            if (liveItems) {
+                items = liveItems;
+            } else {
+                // Fallback to order.items if no transactions found (very old orders)
+                items = (order.items || []).map(i => {
+                    const rawQty = i.quantity ?? i.qty ?? i.itemQuantity ?? i.item_quantity ?? i.itemQty;
+                    const qty = (rawQty !== null && rawQty !== undefined && !isNaN(Number(rawQty))) ? Number(rawQty) : 1;
+                    const price = Number(i.price ?? i.unitPrice ?? 0) || 0;
+                    const total = Number(i.total ?? i.subtotal ?? (qty * price)) || (qty * price);
+                    return { name: i.name || i.serviceName || i.item || 'Item', quantity: qty, price, total };
+                });
+            }
+        } catch (e) {
+            console.error('Failed to fetch transactions for edit:', e);
+        }
         setEditItems(items);
 
         // Convert Firestore Timestamp explicitly (same pattern as Transactions) to avoid
@@ -412,7 +415,6 @@ export default function OrderManagement({ showSnackbar }) {
 
             // Create new transactions
             const validItems = editItems.filter(item => !item.isVoided);
-            const newTxs = [];
             const newIds = await generateBatchIds("transactions", "TX", validItems.length);
 
             validItems.forEach((item, idx) => {
@@ -454,20 +456,12 @@ export default function OrderManagement({ showSnackbar }) {
         }
     };
 
-    const handlePrintReceipt = (order) => {
-        const data = normalizeReceiptData(order, {
-            staffName: users[order.staffEmail] || 'Staff',
-            isReprint: true
-        });
-        setReprintOrder(data);
+    const handlePrintReceipt = async (order) => {
+        setReprintOrder(await prepareReceiptData(order, { staffName: users[order.staffEmail] || 'Staff', isReprint: true }));
     };
 
-    const handlePrintInvoice = (order) => {
-        const data = normalizeInvoiceData(order, {
-            staffName: users[order.staffEmail] || 'Staff',
-            isReprint: true
-        });
-        setPrintInvoiceData(data);
+    const handlePrintInvoice = async (order) => {
+        setPrintInvoiceData(await prepareInvoiceData(order, { staffName: users[order.staffEmail] || 'Staff', isReprint: true }));
     };
 
     const isPrintingReprint = useRef(false);

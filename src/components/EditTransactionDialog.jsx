@@ -29,7 +29,8 @@ export default function EditTransactionDialog({ open, onClose, transaction, onSa
                 setPrice('0');
             } else {
                 setDescription(transaction.item || '');
-                setQuantity(transaction.quantity?.toString() || '1');
+                const rawQty = transaction.quantity;
+                setQuantity(String((rawQty !== null && rawQty !== undefined && !isNaN(Number(rawQty))) ? Number(rawQty) : 1));
                 setPrice(transaction.price?.toString() || transaction.total?.toString() || '0');
                 setAmount(transaction.total?.toString() || '0');
             }

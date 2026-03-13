@@ -71,7 +71,7 @@ import { openDrawer } from '../services/drawerService';
 import { generateOrderNumber, createOrderObject, deleteOrder } from '../services/orderService';
 import { createInvoice } from '../services/invoiceService';
 
-import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice } from '../services/printService';
+import { normalizeReceiptData, normalizeInvoiceData, prepareReceiptData, prepareInvoiceData, safePrint, safePrintInvoice } from '../services/printService';
 import { fmtCurrency, fmtDate } from '../utils/formatters';
 import { usePOSServices } from '../hooks/usePOSServices';
 import { useStaffList } from '../hooks/useStaffList';
@@ -693,22 +693,12 @@ export default function POS({ user, userRole, activeShiftId, shiftPeriod, shiftS
     }
   };
 
-  const handlePrintExistingOrder = (orderData) => {
-    // Use the shared normalizer to ensure consistent receipt format
-    const printData = normalizeReceiptData(orderData, {
-      staffName: staffDisplayName,
-      isReprint: true // Use original timestamp if available
-    });
-    setPrintOrder(printData);
+  const handlePrintExistingOrder = async (orderData) => {
+    setPrintOrder(await prepareReceiptData(orderData, { staffName: staffDisplayName, isReprint: true }));
   };
 
-  const handlePrintExistingInvoice = (orderData) => {
-    // Normalization logic for Invoice
-    const invData = normalizeInvoiceData(orderData, {
-      staffName: staffDisplayName,
-      isReprint: true
-    });
-    setPrintInvoiceData(invData);
+  const handlePrintExistingInvoice = async (orderData) => {
+    setPrintInvoiceData(await prepareInvoiceData(orderData, { staffName: staffDisplayName, isReprint: true }));
   };
 
   const handleConfirmDeleteCartItem = (reason) => {

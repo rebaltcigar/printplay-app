@@ -58,7 +58,7 @@ import { generateDisplayId, generateBatchIds } from "../services/orderService";
 import { db, auth } from "../firebase";
 import { SimpleReceipt } from "./SimpleReceipt";
 import { ServiceInvoice } from "./ServiceInvoice";
-import { normalizeReceiptData, normalizeInvoiceData, safePrint, safePrintInvoice } from "../services/printService";
+import { normalizeReceiptData, normalizeInvoiceData, prepareReceiptData, prepareInvoiceData, safePrint, safePrintInvoice } from "../services/printService";
 import LoadingScreen from './common/LoadingScreen';
 import PageHeader from "./common/PageHeader";
 import { useGlobalUI } from "../contexts/GlobalUIContext";
@@ -413,44 +413,22 @@ const Transactions = ({ isActive = true }) => {
   /* ---- Reprint Handler ---- */
   const handleReprint = async (row) => {
     try {
-      let rawOrder;
+      const opts = { staffName: row.staffEmail || 'Staff', isReprint: true };
       if (row.orderId) {
-        const orderRef = doc(db, 'orders', row.orderId);
-        const snap = await getDoc(orderRef);
-        if (snap.exists()) {
-          rawOrder = { id: snap.id, ...snap.data() };
-        } else {
-          showSnackbar("Order record not found (deleted?).", 'error');
-          return;
-        }
+        const snap = await getDoc(doc(db, 'orders', row.orderId));
+        if (!snap.exists()) { showSnackbar("Order record not found (deleted?).", 'error'); return; }
+        setReprintOrder(await prepareReceiptData({ id: snap.id, ...snap.data() }, opts));
       } else {
-        rawOrder = {
-          id: row.id,
-          orderNumber: row.orderNumber || "ADHOC",
-          timestamp: row.timestamp,
-          staffName: row.staffEmail || 'Staff',
+        // Single ad-hoc transaction — no order doc, no transaction enrichment needed
+        const synthetic = {
+          id: row.id, orderNumber: row.orderNumber || "ADHOC",
+          timestamp: row.timestamp, staffName: row.staffEmail || 'Staff',
           customerName: row.customerName || 'Walk-in',
-          items: [{
-            name: row.item,
-            quantity: row.quantity,
-            price: row.price,
-            total: row.total,
-            subtotal: row.total
-          }],
-          total: row.total,
-          subtotal: row.total,
-          amountTendered: row.total,
-          change: 0,
-          paymentMethod: "Manual"
+          items: [{ name: row.item, quantity: row.quantity, price: row.price, total: row.total, subtotal: row.total }],
+          total: row.total, subtotal: row.total, amountTendered: row.total, change: 0, paymentMethod: "Manual"
         };
+        setReprintOrder(normalizeReceiptData(synthetic, opts));
       }
-
-      const printData = normalizeReceiptData(rawOrder, {
-        staffName: rawOrder.staffName || 'Staff',
-        isReprint: true
-      });
-      setReprintOrder(printData);
-
     } catch (e) {
       console.error("Reprint error:", e);
       showSnackbar("Failed to load order for printing.", 'error');
@@ -475,44 +453,21 @@ const Transactions = ({ isActive = true }) => {
   /* ---- Print Invoice Handler ---- */
   const handlePrintInvoice = async (row) => {
     try {
-      let rawOrder;
+      const opts = { staffName: row.staffEmail || 'Staff', isReprint: true };
       if (row.orderId) {
-        const orderRef = doc(db, 'orders', row.orderId);
-        const snap = await getDoc(orderRef);
-        if (snap.exists()) {
-          rawOrder = { id: snap.id, ...snap.data() };
-        } else {
-          showSnackbar("Order record not found.", 'error');
-          return;
-        }
+        const snap = await getDoc(doc(db, 'orders', row.orderId));
+        if (!snap.exists()) { showSnackbar("Order record not found.", 'error'); return; }
+        setPrintInvoiceData(await prepareInvoiceData({ id: snap.id, ...snap.data() }, opts));
       } else {
-        rawOrder = {
-          id: row.id,
-          orderNumber: row.orderNumber || "ADHOC",
-          timestamp: row.timestamp,
-          staffName: row.staffEmail || 'Staff',
+        const synthetic = {
+          id: row.id, orderNumber: row.orderNumber || "ADHOC",
+          timestamp: row.timestamp, staffName: row.staffEmail || 'Staff',
           customerName: row.customerName || 'Walk-in',
-          items: [{
-            name: row.item,
-            quantity: row.quantity,
-            price: row.price,
-            total: row.total,
-            subtotal: row.total
-          }],
-          total: row.total,
-          subtotal: row.total,
-          amountTendered: row.total,
-          change: 0,
-          paymentMethod: "Manual"
+          items: [{ name: row.item, quantity: row.quantity, price: row.price, total: row.total, subtotal: row.total }],
+          total: row.total, subtotal: row.total, amountTendered: row.total, change: 0, paymentMethod: "Manual"
         };
+        setPrintInvoiceData(normalizeInvoiceData(synthetic, opts));
       }
-
-      const invData = normalizeInvoiceData(rawOrder, {
-        staffName: rawOrder.staffName || 'Staff',
-        isReprint: true
-      });
-      setPrintInvoiceData(invData);
-
     } catch (e) {
       console.error("Invoice Print error:", e);
       showSnackbar("Failed to load invoice data.", 'error');

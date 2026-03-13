@@ -1,7 +1,7 @@
 // src/services/orderService.js
 import {
     doc, runTransaction, getDoc, serverTimestamp,
-    writeBatch, collection, where, query, getDocs
+    writeBatch, collection, where, query, getDocs, increment
 } from "firebase/firestore";
 import { db } from "../firebase";
 
@@ -205,4 +205,35 @@ export const deleteOrder = async (orderId, orderNumber, shiftId, userEmail, reas
     });
 
     await batch.commit();
+};
+
+/**
+ * Fetches live (non-deleted) transactions for an order and maps them to the
+ * items format used by the print/invoice layer.
+ * Returns null if no transactions exist (caller should fall back to order.items).
+ */
+export const fetchLiveItemsForOrder = async (orderNumber) => {
+    if (!orderNumber) return null;
+    const snap = await getDocs(query(
+        collection(db, 'transactions'),
+        where('orderNumber', '==', orderNumber),
+        where('isDeleted', '!=', true)
+    ));
+    if (snap.empty) return null;
+    return snap.docs.map(d => {
+        const t = d.data();
+        const rawQty = t.quantity ?? t.qty ?? 1;
+        const qty = isNaN(Number(rawQty)) ? 1 : Number(rawQty);
+        const price = Number(t.price) || 0;
+        return {
+            name: t.item || t.name || t.serviceName || 'Item',
+            quantity: qty,
+            price,
+            subtotal: qty * price,
+            total: qty * price,
+            note: t.notes || t.note || '',
+            unit: t.unit || 'pc',
+            description: t.description || '',
+        };
+    });
 };

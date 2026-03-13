@@ -212,7 +212,8 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
     setExpenseStaffId(t.expenseStaffId || "");
     setExpenseStaffName(t.expenseStaffName || "");
     setExpenseStaffEmail(t.expenseStaffEmail || "");
-    setQuantity(String(t.quantity ?? ""));
+    const rawQty = t.quantity;
+    setQuantity(String((rawQty !== null && rawQty !== undefined && !isNaN(Number(rawQty))) ? Number(rawQty) : 1));
     setPrice(String(t.price ?? ""));
     setNotes(t.notes || "");
     if (t.customerId && t.customerName) {
