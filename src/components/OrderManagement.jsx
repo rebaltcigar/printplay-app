@@ -11,7 +11,7 @@ import {
     doc, getDoc, writeBatch, serverTimestamp, deleteField
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
-import { generateBatchIds, fetchLiveItemsForOrder } from '../services/orderService';
+import { generateBatchIds } from '../services/orderService';
 
 // Icons
 import SearchIcon from '@mui/icons-material/Search';
@@ -70,9 +70,25 @@ export default function OrderManagement({ showSnackbar }) {
     const openEditDrawer = async (order) => {
         let items = [];
         try {
-            const liveItems = await fetchLiveItemsForOrder(order.orderNumber);
-            if (liveItems) {
-                items = liveItems;
+            const txSnap = await getDocs(query(
+                collection(db, 'transactions'),
+                where('orderNumber', '==', order.orderNumber),
+                where('isDeleted', '!=', true)
+            ));
+            if (!txSnap.empty) {
+                items = txSnap.docs.map(d => {
+                    const tx = d.data();
+                    // Same defensive qty parse as EditTransactionDialog
+                    const rawQty = tx.quantity;
+                    const qty = (rawQty !== null && rawQty !== undefined && !isNaN(Number(rawQty))) ? Number(rawQty) : 1;
+                    const price = Number(tx.price) || 0;
+                    return {
+                        name: tx.item || tx.serviceName || 'Item',
+                        quantity: qty,
+                        price,
+                        total: Number(tx.total) || (qty * price),
+                    };
+                });
             } else {
                 // Fallback to order.items if no transactions found (very old orders)
                 items = (order.items || []).map(i => {
