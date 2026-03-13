@@ -78,26 +78,21 @@ export default function OrderManagement({ showSnackbar }) {
             if (!txSnap.empty) {
                 items = txSnap.docs.map(d => {
                     const tx = d.data();
-                    // Same defensive qty parse as EditTransactionDialog
-                    const rawQty = tx.quantity;
-                    const qty = (rawQty !== null && rawQty !== undefined && !isNaN(Number(rawQty))) ? Number(rawQty) : 1;
-                    const price = Number(tx.price) || 0;
                     return {
-                        name: tx.item || tx.serviceName || 'Item',
-                        quantity: qty,
-                        price,
-                        total: Number(tx.total) || (qty * price),
+                        name: tx.item,
+                        quantity: tx.quantity,
+                        price: tx.price,
+                        total: tx.total,
                     };
                 });
             } else {
                 // Fallback to order.items if no transactions found (very old orders)
-                items = (order.items || []).map(i => {
-                    const rawQty = i.quantity ?? i.qty ?? i.itemQuantity ?? i.item_quantity ?? i.itemQty;
-                    const qty = (rawQty !== null && rawQty !== undefined && !isNaN(Number(rawQty))) ? Number(rawQty) : 1;
-                    const price = Number(i.price ?? i.unitPrice ?? 0) || 0;
-                    const total = Number(i.total ?? i.subtotal ?? (qty * price)) || (qty * price);
-                    return { name: i.name || i.serviceName || i.item || 'Item', quantity: qty, price, total };
-                });
+                items = (order.items || []).map(i => ({
+                    name: i.name || i.serviceName || i.item,
+                    quantity: i.quantity,
+                    price: i.price,
+                    total: i.total,
+                }));
             }
         } catch (e) {
             console.error('Failed to fetch transactions for edit:', e);
