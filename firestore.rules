@@ -100,7 +100,8 @@ service cloud.firestore {
           resource.data.staffEmail == request.auth.token.email &&
           request.resource.data.diff(resource.data).changedKeys().hasOnly([
             'pcRentalTotal','servicesTotal','expensesTotal','systemTotal','endTime',
-            'denominations','lastConsolidatedAt'
+            'denominations','lastConsolidatedAt','totalCash','totalDigital','totalAr',
+            'arPaymentsTotal'
           ])
         );
       allow delete: if isAdmin();
