@@ -11,7 +11,7 @@ import {
     doc, getDoc, writeBatch, serverTimestamp, deleteField
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
-import { generateBatchIds } from '../services/orderService';
+import { generateBatchIds, restoreOrder } from '../services/orderService';
 
 // Icons
 import SearchIcon from '@mui/icons-material/Search';
@@ -72,11 +72,11 @@ export default function OrderManagement({ showSnackbar }) {
         try {
             const txSnap = await getDocs(query(
                 collection(db, 'transactions'),
-                where('orderNumber', '==', order.orderNumber),
-                where('isDeleted', '!=', true)
+                where('orderNumber', '==', order.orderNumber)
             ));
-            if (!txSnap.empty) {
-                items = txSnap.docs.map(d => {
+            const activeTxDocs = txSnap.docs.filter(d => d.data().isDeleted !== true);
+            if (activeTxDocs.length > 0) {
+                items = activeTxDocs.map(d => {
                     const tx = d.data();
                     const rawQty = tx.quantity;
                     const qty = (rawQty !== null && rawQty !== undefined && !isNaN(Number(rawQty))) ? Number(rawQty) : 1;
@@ -291,36 +291,16 @@ export default function OrderManagement({ showSnackbar }) {
         if (!orderToRestore) return;
         setLoading(true);
         try {
-            const batch = writeBatch(db);
-
-            // Update Order
-            const orderRef = doc(db, 'orders', orderToRestore.id);
-            batch.update(orderRef, {
-                isDeleted: false,
-                status: deleteField(),
-                voidReason: deleteField(),
-                voidedAt: deleteField(),
-                restoredAt: serverTimestamp(),
-                restoreReason: reason,
-                restoredBy: auth.currentUser?.email || 'admin'
-            });
-
-            // Update associated transactions
-            const q = query(collection(db, 'transactions'), where('orderNumber', '==', orderToRestore.orderNumber));
-            const txSnap = await getDocs(q);
-            txSnap.forEach(d => {
-                batch.update(d.ref, {
-                    isDeleted: false,
-                    restoreReason: `Order Restored: ${reason}`,
-                    restoredAt: serverTimestamp()
-                });
-            });
-
-            await batch.commit();
+            await restoreOrder(
+                orderToRestore.id, 
+                orderToRestore.orderNumber, 
+                auth.currentUser?.email || 'admin', 
+                reason
+            );
             showSnackbar?.("Order successfully restored.", "success");
 
             // Update local state
-            setOrders(prev => prev.map(o => o.id === orderToRestore.id ? { ...o, status: null, isDeleted: false } : o));
+            setOrders(prev => prev.map(o => o.id === orderToRestore.id ? { ...o, isDeleted: false, status: null } : o));
         } catch (e) {
             console.error("Restore failed:", e);
             showSnackbar?.("Failed to restore order.", "error");
@@ -512,11 +492,11 @@ export default function OrderManagement({ showSnackbar }) {
     // Summary card data
     const summaryData = useMemo(() => {
         const revenue = filteredOrders
-            .filter(o => o.status !== 'VOIDED')
+            .filter(o => !o.isDeleted)
             .reduce((s, o) => s + Number(o.total || 0), 0);
-        const unpaid = filteredOrders.filter(o => o.paymentMethod === 'Charge' && o.status !== 'VOIDED').length;
-        const voided = filteredOrders.filter(o => o.status === 'VOIDED').length;
-        return { revenue, unpaid, voided };
+        const unpaid = filteredOrders.filter(o => o.paymentMethod === 'Charge' && !o.isDeleted).length;
+        const deleted = filteredOrders.filter(o => o.isDeleted).length;
+        return { revenue, unpaid, deleted };
     }, [filteredOrders]);
 
     if (loading && orders.length === 0) return <LoadingScreen message="Loading orders..." />;
@@ -536,7 +516,7 @@ export default function OrderManagement({ showSnackbar }) {
                     { label: "Orders", value: String(filteredOrders.length), sub: "in current filter" },
                     { label: "Revenue", value: currency(summaryData.revenue), color: "success.main", highlight: true },
                     { label: "Unpaid / Charge", value: String(summaryData.unpaid), color: summaryData.unpaid > 0 ? "warning.main" : "text.secondary" },
-                    { label: "Voided", value: String(summaryData.voided), color: summaryData.voided > 0 ? "error.main" : "text.secondary" },
+                    { label: "Deleted", value: String(summaryData.deleted), color: summaryData.deleted > 0 ? "error.main" : "text.secondary" },
                 ]}
                 sx={{ mb: 2 }}
             />
@@ -638,18 +618,18 @@ export default function OrderManagement({ showSnackbar }) {
                             </TableRow>
                         ) : (
                             filteredOrders.map((o) => (
-                                <TableRow key={o.id} hover sx={{ opacity: o.status === 'VOIDED' ? 0.6 : 1 }}>
+                                <TableRow key={o.id} hover sx={{ opacity: (o.status === 'VOIDED' || o.isDeleted) ? 0.6 : 1 }}>
                                     <TableCell sx={{ fontWeight: 600 }}>{o.orderNumber}</TableCell>
                                     <TableCell>
                                         <Typography
                                             variant="body2"
                                             sx={{
                                                 fontWeight: 400,
-                                                color: o.status === 'VOIDED' ? 'error.main' :
+                                                color: (o.status === 'VOIDED' || o.isDeleted) ? 'error.main' :
                                                     o.paymentMethod === 'Charge' ? 'warning.main' : 'success.main'
                                             }}
                                         >
-                                            {o.status === 'VOIDED' ? 'Voided' : o.paymentMethod === 'Charge' ? 'Unpaid' : ('Paid')}
+                                            {(o.status === 'VOIDED' || o.isDeleted) ? 'Deleted' : o.paymentMethod === 'Charge' ? 'Unpaid' : ('Paid')}
                                         </Typography>
                                     </TableCell>
                                     <TableCell>{o.customerName || 'Walk-in'}</TableCell>
@@ -674,7 +654,7 @@ export default function OrderManagement({ showSnackbar }) {
                                                     <PrintIcon fontSize="small" />
                                                 </IconButton>
                                             </Tooltip>
-                                            {o.status !== 'VOIDED' && (
+                                            {o.status !== 'VOIDED' && !o.isDeleted && (
                                                 <>
                                                     <Tooltip title="Edit Order">
                                                         <IconButton size="small" color="primary" onClick={() => handleEditOrder(o)}>
@@ -688,7 +668,7 @@ export default function OrderManagement({ showSnackbar }) {
                                                     </Tooltip>
                                                 </>
                                             )}
-                                            {o.status === 'VOIDED' && (
+                                            {(o.status === 'VOIDED' || o.isDeleted) && (
                                                 <Tooltip title="Restore Order">
                                                     <IconButton size="small" color="success" onClick={() => handleRestoreOrder(o)}>
                                                         <RestoreFromTrashIcon fontSize="small" />

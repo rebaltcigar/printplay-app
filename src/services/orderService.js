@@ -208,6 +208,68 @@ export const deleteOrder = async (orderId, orderNumber, shiftId, userEmail, reas
 };
 
 /**
+ * Restores a soft-deleted order and its linked transactions.
+ * Deducts inventory again as if the order was just made.
+ */
+export const restoreOrder = async (orderId, orderNumber, userEmail, reason) => {
+    const batch = writeBatch(db);
+
+    // 1. Mark order as restored
+    batch.update(doc(db, 'orders', orderId), {
+        isDeleted: false,
+        status: deleteField(), // Fallback to paymentMethod based display
+        voidReason: deleteField(),
+        voidedAt: deleteField(),
+        restoredAt: serverTimestamp(),
+        restoreReason: reason,
+        restoredBy: userEmail
+    });
+
+    // 2. Restore all linked transactions
+    const q = query(
+        collection(db, 'transactions'),
+        where('orderNumber', '==', orderNumber),
+        where('isDeleted', '==', true)
+    );
+    const txSnap = await getDocs(q);
+
+    txSnap.forEach(d => {
+        const txData = d.data();
+        
+        // Skip transactions that were replaced by an edit
+        if (txData.replacedByEdit) return;
+
+        batch.update(d.ref, {
+            isDeleted: false,
+            restoredAt: serverTimestamp(),
+            restoreReason: reason,
+            restoredBy: userEmail
+        });
+
+        // DEDUCT INVENTORY (Re-apply the impact of the order)
+        const deductStock = (svcId, q) => {
+            if (!svcId) return;
+            const ref = doc(db, 'services', svcId);
+            batch.update(ref, { stockCount: increment(-q) });
+        };
+
+        // 1. Deduct main item
+        if (txData.serviceId) {
+            deductStock(txData.serviceId, Number(txData.quantity));
+        }
+
+        // 2. Deduct snapshotted consumables
+        if (txData.consumables && txData.consumables.length > 0) {
+            txData.consumables.forEach(c => {
+                deductStock(c.itemId, Number(c.qty) * Number(txData.quantity));
+            });
+        }
+    });
+
+    await batch.commit();
+};
+
+/**
  * Fetches live (non-deleted) transactions for an order and maps them to the
  * items format used by the print/invoice layer.
  * Returns null if no transactions exist (caller should fall back to order.items).
