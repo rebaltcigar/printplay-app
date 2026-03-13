@@ -78,11 +78,14 @@ export default function OrderManagement({ showSnackbar }) {
             if (!txSnap.empty) {
                 items = txSnap.docs.map(d => {
                     const tx = d.data();
+                    const rawQty = tx.quantity;
+                    const qty = (rawQty !== null && rawQty !== undefined && !isNaN(Number(rawQty))) ? Number(rawQty) : 1;
+                    const price = Number(tx.price) || 0;
                     return {
-                        name: tx.item,
-                        quantity: tx.quantity,
-                        price: tx.price,
-                        total: tx.total,
+                        name: tx.item || tx.serviceName || 'Item',
+                        quantity: qty,
+                        price,
+                        total: Number(tx.total) || (qty * price),
                     };
                 });
             } else {
@@ -936,7 +939,7 @@ export default function OrderManagement({ showSnackbar }) {
                                                 />
                                             </TableCell>
                                             <TableCell align="right">
-                                                <TextField size="small" type="number" value={item.quantity} onChange={(e) => handleUpdateEditItem(idx, 'quantity', e.target.value)} />
+                                                <TextField size="small" type="number" value={item.quantity} onChange={(e) => handleUpdateEditItem(idx, 'quantity', e.target.value)} sx={{ width: 70 }} />
                                             </TableCell>
                                             <TableCell align="right">
                                                 <TextField size="small" type="number" value={item.price} onChange={(e) => handleUpdateEditItem(idx, 'price', e.target.value)} />
