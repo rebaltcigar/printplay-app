@@ -1,0 +1,25 @@
+{
+  "name": "kunek-launcher",
+  "version": "0.1.0",
+  "description": "Kunek PC Agent — Electron lock screen + floating widget",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --x64"
+  },
+  "build": {
+    "appId": "com.kunek.launcher",
+    "productName": "KunekLauncher",
+    "directories": { "output": "dist" },
+    "win": {
+      "target": "portable",
+      "icon": "assets/icon.ico"
+    },
+    "files": ["main.js", "preload.js", "renderer/**/*", "assets/**/*"]
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^28.3.3",
+    "electron-builder": "^24.13.3"
+  }
+}

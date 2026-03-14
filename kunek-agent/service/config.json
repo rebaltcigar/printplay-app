@@ -1,0 +1,8 @@
+{
+  "stationId": "your_station_id_here",
+  "firebaseCustomToken": "your_firebase_custom_token_here",
+  "firestoreProjectId": "your_firestore_project_id_here",
+  "firebaseApiKey": "your_firebase_api_key_here",
+  "firebaseAuthDomain": "your_firebase_auth_domain_here",
+  "videoBackgroundPath": "path_to_your_video_background_here"
+}

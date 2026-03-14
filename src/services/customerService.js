@@ -1,49 +1,70 @@
-import { db } from "../firebase";
-import {
-    collection,
-    addDoc,
-    updateDoc,
-    doc,
-    serverTimestamp,
-    query,
-    orderBy,
-    onSnapshot
-} from "firebase/firestore";
+import { supabase } from "../supabase";
+import { generateUUID } from '../utils/uuid';
 
-const COLLECTION_NAME = 'customers';
+
+const TABLE_NAME = 'customers';
+
+/** Maps camelCase form fields to snake_case DB columns (customers table). */
+const toDbRecord = (d) => ({
+    full_name: d.fullName,
+    username: d.username || null,
+    phone: d.phone || null,
+    address: d.address || null,
+    email: d.email || null,
+    tin: d.tin || null,
+});
 
 /**
  * Creates a new customer profile.
  */
 export const createCustomer = async (customerData) => {
-    const docRef = await addDoc(collection(db, COLLECTION_NAME), {
-        ...customerData,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        isDeleted: false
-    });
-    return { id: docRef.id, ...customerData };
+    const newId = generateUUID();
+
+    const { data, error } = await supabase
+        .from(TABLE_NAME)
+        .insert([{ id: newId, ...toDbRecord(customerData) }])
+        .select()
+        .single();
+
+    if (error) {
+        console.error("Error creating customer:", error);
+        throw error;
+    }
+    return data;
 };
 
 /**
  * Updates an existing customer profile.
  */
 export const updateCustomer = async (customerId, customerData) => {
-    const ref = doc(db, COLLECTION_NAME, customerId);
-    await updateDoc(ref, {
-        ...customerData,
-        updatedAt: serverTimestamp()
-    });
-    return { id: customerId, ...customerData };
+    const { data, error } = await supabase
+        .from(TABLE_NAME)
+        .update(toDbRecord(customerData))
+        .eq('id', customerId)
+        .select()
+        .single();
+
+    if (error) {
+        console.error("Error updating customer:", error);
+        throw error;
+    }
+    return data;
 };
 
 /**
  * Marks a customer as deleted (soft delete).
+ * Note: Our Supabase schema doesn't currently contain an 'is_deleted' flag for customers,
+ * so we will physically delete them or we need to add that column if soft-deletes are strictly required.
+ * Assuming strict physical delete for now to match relational integrity unless specified.
  */
 export const deleteCustomer = async (customerId) => {
-    const ref = doc(db, COLLECTION_NAME, customerId);
-    await updateDoc(ref, {
-        isDeleted: true,
-        updatedAt: serverTimestamp()
-    });
+    const { error } = await supabase
+        .from(TABLE_NAME)
+        .delete()
+        .eq('id', customerId);
+
+    if (error) {
+        console.error("Error deleting customer:", error);
+        throw error;
+    }
 };

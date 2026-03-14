@@ -2,19 +2,15 @@ import React, { useState, useEffect } from 'react';
 import {
     TextField, Box, Typography, Switch, FormControlLabel,
     InputAdornment, Stack, Paper, Alert, Button, CircularProgress, LinearProgress, MenuItem,
-    Autocomplete, IconButton, Tooltip
+    Autocomplete, IconButton, Tooltip, Divider
 } from '@mui/material';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import FingerprintIcon from '@mui/icons-material/Fingerprint';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
-import {
-    collection, query, getDocs, updateDoc, writeBatch, doc, getDoc, setDoc, orderBy
-} from 'firebase/firestore'; import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, storage } from '../../firebase';
+import { supabase } from '../../supabase';
 import { registerFingerprint } from '../../services/biometricService';
-import { generateDisplayId, generateBatchIds } from '../../services/orderService';
 import { convertLogoUrl } from '../../services/brandingService';
 import PageHeader from '../common/PageHeader';
 import ValidatedInput from '../common/ValidatedInput';
@@ -47,17 +43,23 @@ export default function StoreSettings({ section, showSnackbar, user }) {
         drawerHotkey: { altKey: true, code: 'Backquote', display: 'Alt + `' },
         checkoutHotkey: { code: 'F10', key: 'F10', display: 'F10' },
         idPrefixes: {
-            shifts: 'SHIFT',
-            expenses: 'EXP',
+            orders: 'OR',
             transactions: 'TX',
-            payroll: 'PAY'
+            expenses: 'EX',
+            customers: 'CU',
+            pc_transactions: 'PX',
+            invoices: 'IV',
+            shifts: 'SH',
+            payroll: 'PY',
+            profiles: 'ST'
         },
+        idPadding: 12,
         shiftDurationHours: 12,
         shiftAlertMinutes: 30,
         schedulePostingFrequency: 'weekly',
         pcRentalEnabled: true,
         pcRentalMode: 'external', // 'external' = third-party timer | 'builtin' = Kunek v0.6
-        pcRentalServiceId: '',    // Firestore serviceId of the catalog item used for PC billing
+        pcRentalServiceId: '',    // service id of the catalog item used for PC billing
         invoiceDueDays: 7,        // Default days until an invoice is due
         paymentMethods: {
             cash: { enabled: true },
@@ -77,12 +79,10 @@ export default function StoreSettings({ section, showSnackbar, user }) {
         loadSettings();
         checkBiometricStatus();
         if (section === 'pos') {
-            getDocs(query(collection(db, 'services'), orderBy('serviceName')))
-                .then(snap => setSaleServices(
-                    snap.docs
-                        .map(d => ({ id: d.id, ...d.data() }))
-                        .filter(s => s.active !== false && s.category !== 'Expense')
-                ))
+            supabase.from('products').select('*').eq('financial_category', 'Sale').order('name')
+                .then(({ data }) => {
+                    if (data) setSaleServices(data.filter(s => s.active !== false));
+                })
                 .catch(() => { });
         }
     }, []);
@@ -90,12 +90,41 @@ export default function StoreSettings({ section, showSnackbar, user }) {
     const loadSettings = async () => {
         try {
             setLoading(true);
-            const docRef = doc(db, 'settings', 'config');
-            const docSnap = await getDoc(docRef);
-            if (docSnap.exists()) {
-                const data = docSnap.data();
-                setSettings(prev => ({ ...prev, ...data }));
-                setTempLogoUrl(data.logoUrl || "");
+            const { data, error } = await supabase.from('settings').select('*').eq('id', 'config').maybeSingle();
+            
+            if (error) {
+                console.warn("[StoreSettings] Error loading settings:", error.message);
+                return;
+            }
+
+            if (data) {
+                const mapped = {
+                    storeName: data.store_name || 'Kunek',
+                    logoUrl: data.logo_url || '',
+                    address: data.address || '',
+                    phone: data.phone || '',
+                    mobile: data.mobile || '',
+                    email: data.email || '',
+                    tin: data.tin || '',
+                    currencySymbol: data.currency_symbol || '₱',
+                    taxRate: data.tax_rate || 0,
+                    receiptFooter: data.receipt_footer || 'Thank you for your business!',
+                    showTaxBreakdown: data.show_tax_breakdown || false,
+                    drawerHotkey: data.drawer_hotkey || { altKey: true, code: 'Backquote', display: 'Alt + `' },
+                    checkoutHotkey: data.checkout_hotkey || { code: 'F10', key: 'F10', display: 'F10' },
+                    idPrefixes: data.id_prefixes || { orders: 'OR', transactions: 'TX', expenses: 'EX', customers: 'CU', pc_transactions: 'PX', invoices: 'IV', shifts: 'SH', payroll: 'PY', profiles: 'ST' },
+                    idPadding: data.id_padding || 12,
+                    shiftDurationHours: data.shift_duration_hours || 12,
+                    shiftAlertMinutes: data.shift_alert_minutes || 30,
+                    schedulePostingFrequency: data.schedule_posting_frequency || 'weekly',
+                    pcRentalEnabled: data.pc_rental_enabled || false,
+                    pcRentalMode: data.pc_rental_mode || 'external',
+                    pcRentalServiceId: data.pc_rental_service_id || '',
+                    invoiceDueDays: data.invoice_due_days || 7,
+                    paymentMethods: data.payment_methods || { cash: { enabled: true }, charge: { enabled: true }, card: { enabled: false }, gcash: { enabled: false, label: 'GCash', accountName: '', accountNumber: '', showDetails: false, qrUrl: '' }, maya: { enabled: false, label: 'Maya', accountName: '', accountNumber: '', showDetails: false, qrUrl: '' }, banks: [] },
+                };
+                setSettings(prev => ({ ...prev, ...mapped }));
+                setTempLogoUrl(mapped.logoUrl);
             }
         } catch (e) {
             console.error("Error loading settings:", e);
@@ -105,23 +134,52 @@ export default function StoreSettings({ section, showSnackbar, user }) {
     };
 
     const checkBiometricStatus = async () => {
-        if (!user || !user.uid) return;
+        if (!user?.id && !user?.uid) return;
         try {
-            const userRef = doc(db, 'users', user.uid);
-            const snap = await getDoc(userRef);
-            if (snap.exists() && snap.data().biometricId) {
-                setBiometricStatus("Counter registered.");
-            } else {
-                setBiometricStatus("");
-            }
-        } catch (e) { console.error(e); }
+            const { data, error } = await supabase
+                .from('profiles')
+                .select('biometric_id')
+                .eq('id', user.id || user.uid)
+                .maybeSingle();
+
+            if (error) throw error;
+            setBiometricStatus(data?.biometric_id ? "Counter registered." : "");
+        } catch (e) {
+            console.warn("[StoreSettings] Biometric status check failed:", e.message);
+        }
     };
 
     const handleSave = async () => {
         try {
             setLoading(true);
-            await setDoc(doc(db, 'settings', 'config'), settings);
-            if (showSnackbar) showSnackbar('Settings saved successfully!', 'success');
+            const payload = {
+                id: 'config',
+                store_name: settings.storeName,
+                logo_url: settings.logoUrl,
+                address: settings.address,
+                phone: settings.phone,
+                mobile: settings.mobile,
+                email: settings.email,
+                tin: settings.tin,
+                currency_symbol: settings.currencySymbol,
+                tax_rate: settings.taxRate,
+                receipt_footer: settings.receiptFooter,
+                show_tax_breakdown: settings.showTaxBreakdown,
+                drawer_hotkey: settings.drawerHotkey,
+                checkout_hotkey: settings.checkoutHotkey,
+                id_prefixes: settings.idPrefixes,
+                shift_duration_hours: settings.shiftDurationHours,
+                shift_alert_minutes: settings.shiftAlertMinutes,
+                schedule_posting_frequency: settings.schedulePostingFrequency,
+                pc_rental_enabled: settings.pcRentalEnabled,
+                pc_rental_mode: settings.pcRentalMode,
+                pc_rental_service_id: settings.pcRentalServiceId,
+                invoice_due_days: settings.invoiceDueDays,
+                payment_methods: settings.paymentMethods,
+            };
+            const { error } = await supabase.from('settings').upsert([payload]);
+            if (error) throw error;
+            showSnackbar?.('Settings saved successfully!', 'success');
         } catch (e) {
             console.error("Error saving settings:", e);
             showSnackbar?.("Failed to save settings.", 'error');
@@ -136,11 +194,7 @@ export default function StoreSettings({ section, showSnackbar, user }) {
         try {
             const result = await registerFingerprint(user.email, user.displayName || user.email);
             if (result && result.success) {
-                const userRef = doc(db, 'users', user.uid);
-                await updateDoc(userRef, {
-                    biometricId: result.credentialId,
-                    biometricRegisteredAt: new Date().toISOString()
-                });
+                await supabase.from('profiles').update({ biometric_id: result.credentialId, biometric_registered_at: new Date().toISOString() }).eq('id', user.id || user.uid);
                 showSnackbar("Fingerprint registered successfully!", "success");
                 setBiometricStatus("Just registered!");
             }
@@ -177,90 +231,6 @@ export default function StoreSettings({ section, showSnackbar, user }) {
         setCapturingCheckoutHotkey(false);
     };
 
-    const handleBackfillShifts = async () => {
-        if (!confirm("This will generate sequential IDs for all shifts missing them based on chronolical order. Continue?")) return;
-        setLoading(true);
-        try {
-            const q = query(collection(db, "shifts"));
-            const snap = await getDocs(q);
-            let count = 0;
-            const sortedDocs = snap.docs.sort((a, b) => {
-                const tA = a.data().startTime?.seconds || 0;
-                const tB = b.data().startTime?.seconds || 0;
-                return tA - tB;
-            });
-
-            for (const d of sortedDocs) {
-                const data = d.data();
-                if (!data.displayId) {
-                    const newId = await generateDisplayId("shifts", settings.idPrefixes?.shifts || "SHIFT");
-                    await updateDoc(d.ref, { displayId: newId });
-                    count++;
-                }
-            }
-            showSnackbar?.(`Backfilled IDs for ${count} shifts.`, 'success');
-        } catch (e) {
-            console.error("Backfill failed:", e);
-            showSnackbar?.("Backfill failed. Check console.", 'error');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const handleBackfillTransactions = async () => {
-        if (!window.confirm("This will generate sequential IDs for ALL transactions missing them. Continue?")) return;
-        setLoading(true);
-        try {
-            const q = query(collection(db, "transactions"));
-            const snap = await getDocs(q);
-            const missingExpenses = [];
-            const missingTx = [];
-            snap.docs.forEach(d => {
-                const data = d.data();
-                if (!data.displayId) {
-                    if (data.item === 'Expenses') missingExpenses.push(d);
-                    else missingTx.push(d);
-                }
-            });
-            let countExp = 0;
-            let countTx = 0;
-            const sortFn = (a, b) => (a.data().timestamp?.seconds || 0) - (b.data().timestamp?.seconds || 0);
-            missingExpenses.sort(sortFn);
-            missingTx.sort(sortFn);
-
-            const expIds = await generateBatchIds("expenses", settings.idPrefixes?.expenses || "EXP", missingExpenses.length);
-            const txIds = await generateBatchIds("transactions", settings.idPrefixes?.transactions || "TX", missingTx.length);
-
-            const batchLimit = 500;
-            let batch = writeBatch(db);
-            let ops = 0;
-            const commitBatch = async () => {
-                await batch.commit();
-                batch = writeBatch(db);
-                ops = 0;
-            };
-            for (let i = 0; i < missingExpenses.length; i++) {
-                batch.update(missingExpenses[i].ref, { displayId: expIds[i] });
-                ops++;
-                countExp++;
-                if (ops >= batchLimit) await commitBatch();
-            }
-            for (let i = 0; i < missingTx.length; i++) {
-                batch.update(missingTx[i].ref, { displayId: txIds[i] });
-                ops++;
-                countTx++;
-                if (ops >= batchLimit) await commitBatch();
-            }
-            if (ops > 0) await commitBatch();
-            showSnackbar?.(`Backfilled: ${countExp} Expenses, ${countTx} Transactions.`, 'success');
-        } catch (e) {
-            console.error("Backfill failed:", e);
-            showSnackbar?.("Backfill failed. Check console.", 'error');
-        } finally {
-            setLoading(false);
-        }
-    };
-
     const renderHeader = (title, subtitle) => (
         <PageHeader title={title} subtitle={subtitle} />
     );
@@ -280,9 +250,9 @@ export default function StoreSettings({ section, showSnackbar, user }) {
             else setLoading(true);
 
             const storagePath = type === 'logo' ? `logos/store_logo_${Date.now()}` : `qrcodes/${method}_${Date.now()}`;
-            const storageRef = ref(storage, storagePath);
-            await uploadBytes(storageRef, file);
-            const downloadURL = await getDownloadURL(storageRef);
+            const { error: uploadError } = await supabase.storage.from('assets').upload(storagePath, file, { upsert: true });
+            if (uploadError) throw uploadError;
+            const downloadURL = supabase.storage.from('assets').getPublicUrl(storagePath).data.publicUrl;
 
             if (type === 'logo') {
                 setSettings(prev => ({ ...prev, logoUrl: downloadURL }));
@@ -649,6 +619,7 @@ export default function StoreSettings({ section, showSnackbar, user }) {
             {section === 'store' && (
                 <Stack spacing={3}>
                     {renderHeader("Store Profile", "Basic information about your business shown on invoices and receipts.")}
+
                     <TextField
                         label="Store Name"
                         fullWidth
@@ -844,7 +815,7 @@ export default function StoreSettings({ section, showSnackbar, user }) {
                                     <MenuItem value="">— Not linked (uses &quot;PC Rental&quot; name match)</MenuItem>
                                     {saleServices.map(s => (
                                         <MenuItem key={s.id} value={s.id}>
-                                            {s.serviceName}
+                                            {s.name}
                                             {s.priceType === 'variable' ? ' (variable)' : s.price ? ` — ₱${s.price}` : ''}
                                         </MenuItem>
                                     ))}
@@ -931,77 +902,120 @@ export default function StoreSettings({ section, showSnackbar, user }) {
                     <TextField
                         label="Shift ID Prefix"
                         fullWidth
+                        size="small"
                         value={settings.idPrefixes?.shifts || ''}
                         onChange={e => setSettings({
                             ...settings,
                             idPrefixes: { ...settings.idPrefixes, shifts: e.target.value.toUpperCase() }
                         })}
-                        placeholder="e.g. SHIFT"
-                        helperText="Used for: Daily employee shifts"
+                        placeholder="e.g. SH"
+                        helperText="Used for daily employee shifts"
                     />
+                    <Stack direction="row" spacing={2}>
+                        <TextField
+                            label="Order Prefix"
+                            fullWidth
+                            size="small"
+                            value={settings.idPrefixes?.orders || ''}
+                            onChange={e => setSettings({
+                                ...settings,
+                                idPrefixes: { ...settings.idPrefixes, orders: e.target.value.toUpperCase() }
+                            })}
+                            placeholder="e.g. OR"
+                        />
+                        <TextField
+                            label="Transaction (Retail)"
+                            fullWidth
+                            size="small"
+                            value={settings.idPrefixes?.transactions || ''}
+                            onChange={e => setSettings({
+                                ...settings,
+                                idPrefixes: { ...settings.idPrefixes, transactions: e.target.value.toUpperCase() }
+                            })}
+                            placeholder="e.g. TX"
+                        />
+                        <TextField
+                            label="Expense Prefix"
+                            fullWidth
+                            size="small"
+                            value={settings.idPrefixes?.expenses || ''}
+                            onChange={e => setSettings({
+                                ...settings,
+                                idPrefixes: { ...settings.idPrefixes, expenses: e.target.value.toUpperCase() }
+                            })}
+                            placeholder="e.g. EX"
+                        />
+                    </Stack>
+                    <Stack direction="row" spacing={2}>
+                        <TextField
+                            label="Customer Prefix"
+                            fullWidth
+                            size="small"
+                            value={settings.idPrefixes?.customers || ''}
+                            onChange={e => setSettings({
+                                ...settings,
+                                idPrefixes: { ...settings.idPrefixes, customers: e.target.value.toUpperCase() }
+                            })}
+                            placeholder="e.g. CU"
+                        />
+                        <TextField
+                            label="PC Transaction"
+                            fullWidth
+                            size="small"
+                            value={settings.idPrefixes?.pc_transactions || ''}
+                            onChange={e => setSettings({
+                                ...settings,
+                                idPrefixes: { ...settings.idPrefixes, pc_transactions: e.target.value.toUpperCase() }
+                            })}
+                            placeholder="e.g. PX"
+                        />
+                        <TextField
+                            label="Invoice Prefix"
+                            fullWidth
+                            size="small"
+                            value={settings.idPrefixes?.invoices || ''}
+                            onChange={e => setSettings({
+                                ...settings,
+                                idPrefixes: { ...settings.idPrefixes, invoices: e.target.value.toUpperCase() }
+                            })}
+                            placeholder="e.g. IV"
+                        />
+                    </Stack>
+                    <Stack direction="row" spacing={2}>
+                        <TextField
+                            label="Payroll Prefix"
+                            fullWidth
+                            size="small"
+                            value={settings.idPrefixes?.payroll || ''}
+                            onChange={e => setSettings({
+                                ...settings,
+                                idPrefixes: { ...settings.idPrefixes, payroll: e.target.value.toUpperCase() }
+                            })}
+                            placeholder="e.g. PY"
+                        />
+                        <TextField
+                            label="Staff/User Prefix"
+                            fullWidth
+                            size="small"
+                            value={settings.idPrefixes?.profiles || ''}
+                            onChange={e => setSettings({
+                                ...settings,
+                                idPrefixes: { ...settings.idPrefixes, profiles: e.target.value.toUpperCase() }
+                            })}
+                            placeholder="e.g. ST"
+                        />
+                    </Stack>
+                    <Divider sx={{ my: 1 }} />
                     <TextField
-                        label="Transaction ID Prefix"
+                        label="ID Number Padding"
+                        type="number"
                         fullWidth
-                        value={settings.idPrefixes?.transactions || ''}
-                        onChange={e => setSettings({
-                            ...settings,
-                            idPrefixes: { ...settings.idPrefixes, transactions: e.target.value.toUpperCase() }
-                        })}
-                        placeholder="e.g. TX"
-                        helperText="Used for: Sales and service items"
-                    />
-                    <TextField
-                        label="Expense ID Prefix"
-                        fullWidth
-                        value={settings.idPrefixes?.expenses || ''}
-                        onChange={e => setSettings({
-                            ...settings,
-                            idPrefixes: { ...settings.idPrefixes, expenses: e.target.value.toUpperCase() }
-                        })}
-                        placeholder="e.g. EXP"
-                        helperText="Used for: Store expenses and stock-in"
-                    />
-                    <TextField
-                        label="Payroll ID Prefix"
-                        fullWidth
-                        value={settings.idPrefixes?.payroll || ''}
-                        onChange={e => setSettings({
-                            ...settings,
-                            idPrefixes: { ...settings.idPrefixes, payroll: e.target.value.toUpperCase() }
-                        })}
-                        placeholder="e.g. PAY"
-                        helperText="Used for: Employee salary runs"
+                        size="small"
+                        value={settings.idPadding || 12}
+                        onChange={e => setSettings({ ...settings, idPadding: parseInt(e.target.value) || 12 })}
+                        helperText="Number of digits for sequential numbers (e.g. 12 = 000000000001)"
                     />
                     {renderSaveButton()}
-
-                    <Box sx={{ mt: 4 }}>
-                        <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
-                            Maintenance & Repair
-                        </Typography>
-                        <Stack spacing={2} sx={{ mb: 2 }}>
-                            <Alert severity="warning">
-                                Use these tools to generate missing IDs for old records. Chronological order is preserved.
-                            </Alert>
-                        </Stack>
-                        <Stack direction="row" spacing={2} flexWrap="wrap">
-                            <Button
-                                variant="outlined"
-                                color="warning"
-                                onClick={handleBackfillShifts}
-                                disabled={loading}
-                            >
-                                {loading ? "Processing..." : "Fix Missing Shift IDs"}
-                            </Button>
-                            <Button
-                                variant="outlined"
-                                color="warning"
-                                onClick={handleBackfillTransactions}
-                                disabled={loading}
-                            >
-                                {loading ? "Processing..." : "Fix Missing Transaction IDs"}
-                            </Button>
-                        </Stack>
-                    </Box>
                 </Stack>
             )}
 

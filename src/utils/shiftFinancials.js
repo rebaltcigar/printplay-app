@@ -17,12 +17,19 @@ const DIGITAL_METHODS = new Set(['GCash', 'Maya', 'Bank Transfer', 'Card']);
  * @param {string} method
  * @returns {boolean}
  */
-export const isDigitalPayment = (method) => DIGITAL_METHODS.has(method);
+export const isDigitalPayment = (method) => {
+    if (!method) return false;
+    const m = method.trim().toLowerCase();
+    return m === 'gcash' || m === 'maya' || m === 'bank transfer' || m === 'card';
+};
 
-// Determine if a transaction is a PC Rental billing transaction.
-const isPcRentalTx = (tx, pcRentalServiceId) =>
-    (pcRentalServiceId ? tx.serviceId === pcRentalServiceId : false) ||
-    String(tx.item ?? '').trim().toLowerCase() === PC_RENTAL_ITEM_FALLBACK;
+const normalize = (s) => String(s ?? '').trim().toLowerCase();
+
+const isPcRentalTx = (tx, pcRentalServiceId) => {
+    const itemName = String(tx.item ?? tx.name ?? '').trim().toLowerCase();
+    return (pcRentalServiceId ? tx.serviceId === pcRentalServiceId : false) ||
+           itemName === PC_RENTAL_ITEM_FALLBACK;
+};
 
 // ---------------------------------------------------------------------------
 // Denominations
@@ -118,7 +125,7 @@ export const computeShiftFinancials = (transactions = [], pcRentalTotal = 0, pcR
     for (const tx of pcRentalTxs) {
         const amt = Number(tx.total || 0);
         if (isDigitalPayment(tx.paymentMethod)) pcDigital += amt;
-        else if (tx.paymentMethod === 'Charge') pcAr += amt;
+        else if (normalize(tx.paymentMethod) === 'charge') pcAr += amt;
     }
     const loggedPcNonCash = pcDigital + pcAr;
     const impliedPcCash = Math.max(0, pc - loggedPcNonCash);
@@ -133,31 +140,48 @@ export const computeShiftFinancials = (transactions = [], pcRentalTotal = 0, pcR
     const salesMap = new Map();
     const expensesMap = new Map();
 
+
     for (const tx of otherTxs) {
-        const amt = Number(tx.total || 0);
-        if (EXPENSE_ITEMS.has(tx.item)) {
+        if (!tx || tx.isDeleted === true || tx.is_deleted === true) continue;
+
+        const amt = Number(tx.total ?? tx.amount ?? 0);
+        const itemName = tx.item ?? tx.name ?? '—';
+        const normItem = normalize(itemName);
+        const payMethod = tx.paymentMethod ?? tx.payment_method ?? 'Cash';
+        const fcat = normalize(tx.financialCategory ?? tx.financial_category ?? '');
+
+        if (EXPENSE_ITEMS.has(itemName)) {
             expensesTotal += amt;
-            const key = tx.item === 'Expenses'
-                ? `Expense: ${tx.expenseType || 'Other'}`
+            const key = itemName === 'Expenses'
+                ? `Expense: ${tx.expenseType || tx.expense_type || 'Other'}`
                 : 'New Debt';
             expensesMap.set(key, (expensesMap.get(key) || 0) + amt);
-        } else if (tx.item === 'AR Payment') {
+        } else if (normItem === 'ar payment' || normItem === 'paid debt') {
             arPaymentsTotal += amt;
-            if (isDigitalPayment(tx.paymentMethod)) {
+            if (isDigitalPayment(payMethod)) {
                 regularDigital += amt;
                 arDigitalTotal += amt;
-            } else if (tx.paymentMethod === 'Charge') {
+            } else if (normalize(payMethod) === 'charge') {
                 regularAr += amt;
             } else {
                 regularCash += amt;
                 arCashTotal += amt;
             }
         } else {
-            servicesTotal += amt;
-            salesMap.set(tx.item || '—', (salesMap.get(tx.item || '—') || 0) + amt);
-            if (isDigitalPayment(tx.paymentMethod)) regularDigital += amt;
-            else if (tx.paymentMethod === 'Charge') regularAr += amt;
-            else regularCash += amt;
+            // Check if it's a sale category
+            const isSale = fcat === 'sale' || fcat === 'debit' || fcat === 'revenue' || fcat === 'service' || !fcat;
+            
+            if (isSale) {
+                servicesTotal += amt;
+                salesMap.set(itemName, (salesMap.get(itemName) || 0) + amt);
+                if (isDigitalPayment(payMethod)) regularDigital += amt;
+                else if (normalize(payMethod) === 'charge') regularAr += amt;
+                else regularCash += amt;
+            } else {
+                // Treat as expense if specifically marked as something else? 
+                // For now, only Revenue/Service/Sale/Debit/Null are sales.
+                // If it's something else, we don't count it in servicesTotal.
+            }
         }
     }
 
@@ -238,7 +262,6 @@ export const computeExpectedCash = (shift, txAgg = {}) => {
  * }}
  */
 export const aggregateShiftTransactions = (txList = [], serviceMeta = [], pcRentalServiceId = null) => {
-    const normalize = (s) => String(s ?? '').trim().toLowerCase();
 
     const nameToCategory = {};
     for (const s of serviceMeta) {
@@ -281,8 +304,12 @@ export const aggregateShiftTransactions = (txList = [], serviceMeta = [], pcRent
             serviceTotals[displayName] = (serviceTotals[displayName] || 0) + amt;
         }
 
-        if (normalize(cat) === 'sale' || normalize(cat) === 'debit') {
-            const isArPayment = itemName === 'ar payment';
+        const fcat = normalize(cat);
+        const payMethod = tx.paymentMethod ?? tx.payment_method ?? 'Cash';
+        const normPayMethod = normalize(payMethod);
+
+        if (fcat === 'sale' || fcat === 'debit' || fcat === 'revenue' || fcat === 'service') {
+            const isArPayment = itemName === 'ar payment' || itemName === 'paid debt';
 
             if (!isPcRental && !isArPayment) {
                 sales += amt;
@@ -291,10 +318,10 @@ export const aggregateShiftTransactions = (txList = [], serviceMeta = [], pcRent
                 arPayments += amt;
             }
 
-            if (isDigitalPayment(tx.paymentMethod)) {
+            if (isDigitalPayment(payMethod)) {
                 digitalSales += amt;
                 if (isPcRental) pcNonCashSales += amt;
-            } else if (tx.paymentMethod === 'Charge') {
+            } else if (normPayMethod === 'charge') {
                 arSales += amt;
                 if (isPcRental) pcNonCashSales += amt;
             } else {

@@ -1,28 +1,10 @@
 // src/services/shiftService.js
-import {
-    db
-} from "../firebase";
-import {
-    collection,
-    addDoc,
-    doc,
-    deleteDoc,
-    updateDoc,
-    setDoc,
-    serverTimestamp,
-    writeBatch,
-    getDocs,
-    query,
-    where,
-    Timestamp,
-    increment
-} from "firebase/firestore";
-import { generateDisplayId } from "./orderService";
+import { supabase } from "../supabase";
 import { sumDenominations } from "../utils/shiftFinancials";
+import { generateDisplayId, getStaffIdentity } from "../utils/idUtils";
 
 /**
  * Calculates on-hand cash from denominations.
- * Returns null if no denominations are provided.
  */
 export const calculateOnHand = (denoms) => {
     if (!denoms || typeof denoms !== 'object') return null;
@@ -47,136 +29,128 @@ export const getThisMonthDefaults = () => {
 };
 
 /**
- * Converts Firestore Timestamp / Date → "YYYY-MM-DDTHH:MM" for datetime-local inputs.
+ * Converts ISO String → "YYYY-MM-DDTHH:MM" for datetime-local inputs.
  */
 export const toLocalInput = (ts) => {
     if (!ts) return '';
-    const d = ts?.toDate ? ts.toDate()
-        : ts?.seconds ? new Date(ts.seconds * 1000)
-            : ts instanceof Date ? ts : null;
+    const d = new Date(ts);
     if (!d || isNaN(d)) return '';
     const pad = n => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
 /**
- * Converts "YYYY-MM-DDTHH:MM" string → Firestore Timestamp.
+ * Converts "YYYY-MM-DDTHH:MM" string → ISO String for PostgreSQL TIMESTAMPTZ.
  */
 export const toTimestamp = (str) => {
     if (!str) return null;
-    return Timestamp.fromDate(new Date(str));
+    return new Date(str).toISOString();
 };
 
 /**
  * Sets the active shift in app_status.
  */
-export const resumeShift = async (shiftId, staffEmail) => {
-    await setDoc(
-        doc(db, "app_status", "current_shift"),
-        {
-            activeShiftId: shiftId,
-            staffEmail,
-            resumedAt: serverTimestamp(),
-        },
-        { merge: true }
-    );
+export const resumeShift = async (shiftId, staffId) => {
+    const { error } = await supabase
+        .from('app_status')
+        .update({
+            active_shift_id: shiftId,
+            staff_id: staffId,
+            updated_at: new Date().toISOString()
+        })
+        .eq('id', 'current_shift');
+
+    if (error) {
+        // If row doesn't exist, insert it
+        await supabase.from('app_status').upsert([{
+            id: 'current_shift',
+            active_shift_id: shiftId,
+            staff_id: staffId,
+            updated_at: new Date().toISOString()
+        }]);
+    }
 };
 
 /**
  * Creates a new shift document.
  */
 export const createShift = async (payload) => {
-    const displayId = await generateDisplayId("shifts", "SHIFT");
+    const newId = await generateDisplayId('shifts', 'SH');
     const fullPayload = {
-        displayId,
-        pcRentalTotal: 0,
-        systemTotal: 0,
-        ...payload,
-        startTime: toTimestamp(payload.startTime),
-        endTime: toTimestamp(payload.endTime),
+        id: newId,
+        display_id: newId,
+        pc_rental_total: 0,
+        system_total: 0,
+        staff_id: payload.staffId || payload.staff_id || 'unknown',
+        shift_period: payload.shiftPeriod,
+        notes: payload.notes,
+        schedule_id: payload.scheduleId,
+        start_time: payload.startTime ? toTimestamp(payload.startTime) : new Date().toISOString(),
+        end_time: payload.endTime ? toTimestamp(payload.endTime) : null,
+        services_total: 0,
+        expenses_total: 0,
+        total_ar: 0,
+        total_cash: 0,
+        total_digital: 0,
+        ar_payments_total: 0
     };
-    const docRef = await addDoc(collection(db, "shifts"), fullPayload);
-    return { id: docRef.id, ...fullPayload };
+
+    const { data, error } = await supabase
+        .from('shifts')
+        .insert([fullPayload])
+        .select()
+        .single();
+
+    if (error) throw error;
+
+    return data;
 };
 
 /**
  * Updates an existing shift.
  */
 export const updateShift = async (shiftId, payload) => {
-    const finalPayload = { ...payload };
-    if (payload.startTime) finalPayload.startTime = toTimestamp(payload.startTime);
-    if (payload.endTime) finalPayload.endTime = toTimestamp(payload.endTime);
+    const finalPayload = {};
+    if (payload.startTime) finalPayload.start_time = toTimestamp(payload.startTime);
+    if (payload.endTime) finalPayload.end_time = toTimestamp(payload.endTime);
+    if (payload.notes !== undefined) finalPayload.notes = payload.notes;
+    // Map other UI properties back to DB snake_case safely if needed
+    if (payload.systemTotal !== undefined) finalPayload.system_total = payload.systemTotal;
+    if (payload.pcRentalTotal !== undefined) finalPayload.pc_rental_total = payload.pcRentalTotal;
 
-    await updateDoc(doc(db, "shifts", shiftId), finalPayload);
+    const { error } = await supabase
+        .from('shifts')
+        .update(finalPayload)
+        .eq('id', shiftId);
+
+    if (error) throw error;
 };
 
 /**
- * Deletes a shift and either unlinks or purges its transactions.
- * Optionally deletes associated orders (hard-delete) and reverts inventory.
+ * Deletes a shift. 
+ * Due to PostgreSQL referential integrity:
+ * - ON DELETE SET NULL constraint will automatically 'unlink' child transactions based on our schema v2.0
+ * - If UI explicitly wants to "purge", we sequentially delete children first.
  */
-export const deleteShift = async (shiftId, mode = "unlink", deleteOrders = false) => {
-    const txSnap = await getDocs(query(collection(db, "transactions"), where("shiftId", "==", shiftId)));
-    const txDocs = txSnap.docs;
-
-    let orderDocs = [];
-    let activeOrderNumbers = new Set();
-
-    if (deleteOrders) {
-        const orderSnap = await getDocs(query(collection(db, "orders"), where("shiftId", "==", shiftId)));
-        orderDocs = orderSnap.docs;
-        // Collect order numbers of active (non-deleted) orders to revert inventory correctly
-        orderDocs.forEach(d => {
-            const data = d.data();
-            if (!data.isDeleted) activeOrderNumbers.add(data.orderNumber);
-        });
+export const deleteShift = async (shiftId, mode = "unlink") => {
+    if (mode === "purge") {
+        await Promise.all([
+            supabase.from('order_items').delete().eq('shift_id', shiftId),
+            supabase.from('pc_transactions').delete().eq('shift_id', shiftId),
+            supabase.from('expenses').delete().eq('shift_id', shiftId)
+        ]);
+    } else if (mode === "unlink") {
+        await Promise.all([
+            supabase.from('order_items').update({ shift_id: null }).eq('shift_id', shiftId),
+            supabase.from('pc_transactions').update({ shift_id: null }).eq('shift_id', shiftId),
+            supabase.from('expenses').update({ shift_id: null }).eq('shift_id', shiftId)
+        ]);
     }
 
-    // Helper to chunk array for batches
-    const chunk = (arr, size = 500) => {
-        const chunks = [];
-        for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
-        return chunks;
-    };
+    const { error } = await supabase
+        .from('shifts')
+        .delete()
+        .eq('id', shiftId);
 
-    // Combine transactions and orders for batch deletion if applicable
-    const allDocsToDelete = [...txDocs, ...orderDocs];
-    const chunksArr = chunk(allDocsToDelete);
-
-    for (const ck of chunksArr) {
-        const batch = writeBatch(db);
-        ck.forEach((d) => {
-            const isTransaction = d.ref.path.startsWith('transactions/');
-            const isOrder = d.ref.path.startsWith('orders/');
-
-            if (isTransaction) {
-                if (mode === "unlink") {
-                    batch.update(d.ref, { shiftId: null, unlinkedFromShift: shiftId });
-                } else if (mode === "purge") {
-                    const txData = d.data();
-                    
-                    // If we are also deleting orders, revert inventory for transactions 
-                    // that belong to an order that was NOT already soft-deleted.
-                    if (deleteOrders && activeOrderNumbers.has(txData.orderNumber)) {
-                        const revertStock = (svcId, q) => {
-                            if (!svcId) return;
-                            batch.update(doc(db, 'services', svcId), { stockCount: increment(q) });
-                        };
-
-                        if (txData.serviceId) revertStock(txData.serviceId, Number(txData.quantity));
-                        if (txData.consumables && txData.consumables.length > 0) {
-                            txData.consumables.forEach(c => {
-                                revertStock(c.itemId, Number(c.qty) * Number(txData.quantity));
-                            });
-                        }
-                    }
-                    batch.delete(d.ref);
-                }
-            } else if (isOrder && deleteOrders) {
-                batch.delete(d.ref);
-            }
-        });
-        await batch.commit();
-    }
-
-    await deleteDoc(doc(db, "shifts", shiftId));
+    if (error) throw error;
 };

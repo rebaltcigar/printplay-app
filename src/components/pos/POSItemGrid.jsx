@@ -7,7 +7,7 @@ import {
 import { alpha } from '@mui/material/styles';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import SearchIcon from '@mui/icons-material/Search';
-import { getPosIcon } from '../../utils/posIcons';
+import { getPosIcon } from '../../assets/icons/posIcons';
 import { fmtCurrency } from '../../utils/formatters';
 import POSPCRentalTab from './POSPCRentalTab';
 
@@ -329,8 +329,8 @@ export default function POSItemGrid({ posItems, allServices = [], variantMap, on
     // Filtered sale items
     const saleItems = useMemo(() => {
         let items;
-        if (posFilter === 'service') items = posItems.filter(i => i.type !== 'retail');
-        else if (posFilter === 'retail') items = posItems.filter(i => i.type === 'retail');
+        if (posFilter === 'service') items = posItems.filter(i => i.category !== 'retail');
+        else if (posFilter === 'retail') items = posItems.filter(i => i.category === 'retail');
         else items = posItems;
 
         if (posFilter === 'retail' && retailSearch.trim()) {

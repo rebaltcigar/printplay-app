@@ -1,0 +1,28 @@
+{
+  "name": "kunek-agent",
+  "version": "2.0.0",
+  "description": "Client agent for the PC Timer System",
+  "main": "service/index.js",
+  "scripts": {
+    "start": "node service/index.js",
+    "build": "dotnet publish keyboard-helper/KeyboardHelper.csproj -c Release -r win-x64 -p:PublishSingleFile=true --self-contained true -o dist",
+    "install": "node scripts/install.js",
+    "provision": "node scripts/provision.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "node-windows": "^0.1.14"
+  },
+  "devDependencies": {
+    "electron": "^16.0.0"
+  },
+  "keywords": [
+    "electron",
+    "node",
+    "service",
+    "ipc",
+    "supabase"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
+}

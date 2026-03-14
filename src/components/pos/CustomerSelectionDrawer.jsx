@@ -10,6 +10,8 @@ export default function CustomerSelectionDrawer({ open, onClose, currentCustomer
     const [view, setView] = useState('search'); // 'search' or 'create'
     const [formData, setFormData] = useState({
         fullName: '',
+        username: '',
+        password: '123',
         email: '',
         phone: '',
         address: '',
@@ -21,7 +23,7 @@ export default function CustomerSelectionDrawer({ open, onClose, currentCustomer
     useEffect(() => {
         if (open) {
             setView('search');
-            setFormData({ fullName: '', email: '', phone: '', address: '', tin: '' });
+            setFormData({ fullName: '', username: '', password: '123', email: '', phone: '', address: '', tin: '' });
         }
     }, [open]);
 
@@ -38,7 +40,22 @@ export default function CustomerSelectionDrawer({ open, onClose, currentCustomer
 
         setSaving(true);
         try {
-            const newCust = await createCustomer(formData);
+            const finalData = {
+                email: formData.email,
+                phone: formData.phone,
+                address: formData.address.trim(),
+                tin: formData.tin.trim(),
+                full_name: formData.fullName.trim(),
+            };
+
+            // Member-specific logic if username is provided
+            if (formData.username.trim()) {
+                finalData.username = formData.username.trim().toLowerCase();
+                finalData.minutes_remaining = 0;
+                finalData.force_password_change = true;
+            }
+
+            const newCust = await createCustomer(finalData);
             onSelectCustomer(newCust);
             onClose();
         } catch (err) {

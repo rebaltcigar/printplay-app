@@ -1,34 +1,16 @@
-import dayjs from 'dayjs';
+// src/utils/formatters.js
+// Shared formatting helpers used across the Kunek platform.
+// Import from here rather than defining local copies in each component.
+
+// ---------------------------------------------------------------------------
+// Currency
+// ---------------------------------------------------------------------------
 
 /**
- * Ensures a valid Date object from Firestore Timestamp, Date, or string.
+ * Formats a number as Philippine Peso with 2 decimal places.
+ * e.g. 1234.5 → "₱1,234.50"
+ * Use this for transaction amounts, totals, prices.
  */
-export function toDateObj(raw) {
-    if (!raw) return null;
-    if (raw.toDate) return raw.toDate(); // Firestore Timestamp
-    if (raw.seconds) return new Date(raw.seconds * 1000); // Plain object timestamp
-    if (raw instanceof Date) return raw;
-    const parsed = new Date(raw);
-    return isNaN(parsed) ? null : parsed;
-}
-
-/**
- * Converts a Date to a YYYY-MM-DD string for use in <input type="date">.
- */
-export const toDateInput = (d) => {
-    const obj = toDateObj(d);
-    return obj ? dayjs(obj).format('YYYY-MM-DD') : '';
-};
-
-/**
- * Converts a Date to a YYYY-MM-DDThh:mm string for use in
- * <input type="datetime-local">.
- */
-export const toDatetimeLocal = (d) => {
-    const obj = toDateObj(d);
-    // datetime-local requires YYYY-MM-DDTHH:mm format
-    return obj ? dayjs(obj).format('YYYY-MM-DDTHH:mm') : '';
-};
 export const fmtCurrency = (n) =>
     `₱${Number(n || 0).toLocaleString('en-PH', {
         minimumFractionDigits: 2,
@@ -58,11 +40,44 @@ export const startOfMonth = (d = new Date()) =>
 export const endOfMonth = (d = new Date()) =>
     new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
 
+/**
+ * Converts a Date to a YYYY-MM-DD string for use in <input type="date">.
+ * Uses local time (not UTC) so the displayed date matches the user's timezone.
+ */
+export const toDateInput = (d) => {
+    const x = new Date(d);
+    const yyyy = x.getFullYear();
+    const mm = String(x.getMonth() + 1).padStart(2, '0');
+    const dd = String(x.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+};
+
+/**
+ * Converts a Date to a YYYY-MM-DDThh:mm string for use in
+ * <input type="datetime-local">.
+ */
+export const toDatetimeLocal = (d) => {
+    const x = new Date(d);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}T${pad(
+        x.getHours()
+    )}:${pad(x.getMinutes())}`;
+};
 
 /**
  * Parses a datetime-local input string back to a JS Date.
  */
 export const fromDatetimeLocal = (s) => new Date(s);
+
+/**
+ * Ensures a valid Date object from Date, ISO string, or number.
+ */
+function toDateObj(raw) {
+    if (!raw) return null;
+    if (raw instanceof Date) return raw;
+    const parsed = new Date(raw);
+    return isNaN(parsed) ? null : parsed;
+}
 
 /**
  * Formats a date to purely the date portion (e.g., "Jan 1, 2024").

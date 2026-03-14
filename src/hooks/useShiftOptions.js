@@ -1,11 +1,6 @@
 // src/hooks/useShiftOptions.js
-// Real-time list of shifts for filter dropdowns.
-// Returns shifts with their human-readable displayId (SHIFT-XXXXXX) and staff name.
-// Shared by: Transactions filter, admin shift pickers.
-
 import { useEffect, useMemo, useState } from 'react';
-import { collection, query, orderBy, where, onSnapshot } from 'firebase/firestore';
-import { db } from '../firebase';
+import { supabase } from '../supabase';
 import { fmtShortDate } from '../utils/formatters';
 
 /**
@@ -22,26 +17,40 @@ export function useShiftOptions({ startDate, endDate, emailToName = {} } = {}) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let constraints = [orderBy('startTime', 'desc')];
+    const fetchShifts = async () => {
+      let query = supabase.from('shifts').select('*').order('start_time', { ascending: false });
 
-    if (startDate) {
-      const s = new Date(startDate);
-      s.setHours(0, 0, 0, 0);
-      constraints = [where('startTime', '>=', s), ...constraints];
-    }
-    if (endDate) {
-      const e = new Date(endDate);
-      e.setHours(23, 59, 59, 999);
-      constraints = [where('startTime', '<=', e), ...constraints];
-    }
+      if (startDate) {
+        const s = new Date(startDate);
+        s.setHours(0, 0, 0, 0);
+        query = query.gte('start_time', s.toISOString());
+      }
+      if (endDate) {
+        const e = new Date(endDate);
+        e.setHours(23, 59, 59, 999);
+        query = query.lte('start_time', e.toISOString());
+      }
 
-    const q = query(collection(db, 'shifts'), ...constraints);
-    const unsub = onSnapshot(q, (snap) => {
-      setRawShifts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      const { data, error } = await query;
+      if (data) {
+        setRawShifts(data.map(d => ({
+          id: d.id,
+          startTime: d.start_time,
+          staffEmail: d.staff_email,
+          shiftPeriod: d.shift_period
+        })));
+      }
+      if (error) console.error("Error fetching shifts:", error);
       setLoading(false);
-    });
+    };
 
-    return () => unsub();
+    fetchShifts();
+
+    const channel = supabase.channel('public:shifts:useShiftOptions')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shifts' }, fetchShifts)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startDate, endDate]);
 
@@ -49,7 +58,7 @@ export function useShiftOptions({ startDate, endDate, emailToName = {} } = {}) {
     rawShifts.map((v) => {
       const staffName = emailToName[v.staffEmail] || v.staffEmail || 'Unknown';
       const date = v.startTime ? fmtShortDate(v.startTime) : '';
-      const displayId = v.displayId || v.id.slice(-8).toUpperCase();
+      const displayId = v.id.slice(-8).toUpperCase();
       return {
         id: v.id,
         displayId,

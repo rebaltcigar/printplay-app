@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { db } from '../firebase';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { supabase } from '../supabase';
 import { getRange } from '../services/analyticsService';
 
 /**
@@ -24,33 +23,35 @@ export function useInventoryAnalytics(items) {
                 const { startUtc, endUtc } = getRange('past30');
 
                 // 2. Fetch all transactions in that range
-                const q = query(
-                    collection(db, 'transactions'),
-                    where('timestamp', '>=', startUtc),
-                    where('timestamp', '<=', endUtc),
-                    where('isDeleted', '==', false)
-                );
+                const { data, error } = await supabase
+                    .from('order_items')
+                    .select('*')
+                    .gte('timestamp', startUtc.toISOString())
+                    .lte('timestamp', endUtc.toISOString())
+                    .eq('is_deleted', false);
 
-                const snap = await getDocs(q);
+                if (error) throw error;
+
                 const usageMap = {}; // itemId -> totalUsedIn30Days
 
-                snap.docs.forEach(doc => {
-                    const data = doc.data();
-                    const qty = Number(data.quantity || 0);
+                if (data) {
+                    data.forEach(tx => {
+                        const qty = Number(tx.quantity || 0);
 
-                    // Track Primary Item
-                    if (data.serviceId) {
-                        usageMap[data.serviceId] = (usageMap[data.serviceId] || 0) + qty;
-                    }
+                        // Track Primary Item
+                        if (tx.product_id) {
+                            usageMap[tx.product_id] = (usageMap[tx.product_id] || 0) + qty;
+                        }
 
-                    // Track Consumables (from Snapshot)
-                    if (data.consumables && Array.isArray(data.consumables)) {
-                        data.consumables.forEach(c => {
-                            const cQty = Number(c.qty || 0) * qty;
-                            usageMap[c.itemId] = (usageMap[c.itemId] || 0) + cQty;
-                        });
-                    }
-                });
+                        // Track Consumables (from metadata snapshot)
+                        if (tx.metadata && tx.metadata.consumables && Array.isArray(tx.metadata.consumables)) {
+                            tx.metadata.consumables.forEach(c => {
+                                const cQty = Number(c.qty || 0) * qty;
+                                usageMap[c.itemId] = (usageMap[c.itemId] || 0) + cQty;
+                            });
+                        }
+                    });
+                }
 
                 // 3. Compute Velocity and Days Remaining
                 const results = {};

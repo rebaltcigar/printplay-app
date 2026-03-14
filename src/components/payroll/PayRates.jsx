@@ -13,17 +13,7 @@ import {
   TableRow,
   TextField,
 } from "@mui/material";
-import { db } from "../../firebase";
-import {
-  collection,
-  onSnapshot,
-  query,
-  updateDoc,
-  where,
-  doc,
-  Timestamp,
-  orderBy,
-} from "firebase/firestore";
+import { supabase } from "../../supabase";
 import { peso, resolveHourlyRate } from "../../utils/payrollHelpers";
 
 export default function PayRates({ showSnackbar }) {
@@ -31,14 +21,24 @@ export default function PayRates({ showSnackbar }) {
   const [edit, setEdit] = useState({});
 
   useEffect(() => {
-    const unsub = onSnapshot(
-      query(collection(db, "users"), where("role", "==", "staff")),
-      (snap) => setRows(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
-    );
-    return () => unsub();
+    const fetchStaff = async () => {
+      const { data } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("role", "staff");
+      if (data) setRows(data);
+    };
+
+    fetchStaff();
+
+    const channel = supabase.channel("payrates-profiles")
+      .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, fetchStaff)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
-  const activeRateToday = (payroll) => resolveHourlyRate(payroll, new Date());
+  const activeRateToday = (payroll_config) => resolveHourlyRate(payroll_config, new Date());
   const beginEdit = (uid) =>
     setEdit((p) => ({ ...p, [uid]: { rate: "", effectiveFrom: "" } }));
   const cancelEdit = (uid) =>
@@ -49,22 +49,28 @@ export default function PayRates({ showSnackbar }) {
     const nAmount = Number(e.rate || 0);
     const when = e.effectiveFrom;
     if (!when) {
-      showSnackbar?.("Pick effective date", 'warning');
+      showSnackbar?.("Pick effective date", "warning");
       return;
     }
     const user = rows.find((r) => r.id === uid);
-    const prev = user?.payroll?.rateHistory || [];
-    const nextHist = [
+    const prev = user?.payroll_config?.rate_history || [];
+    const nextHistory = [
       ...prev,
-      { rate, effectiveFrom: Timestamp.fromDate(new Date(`${when}T00:00:00`)) },
+      { rate: nAmount, effective_from: new Date(`${when}T00:00:00`).toISOString() },
     ];
-    await updateDoc(doc(db, "users", uid), {
-      payroll: {
-        ...(user?.payroll || {}),
-        defaultRate: activeRateToday({ rateHistory: nextHist }),
-        rateHistory: nextHist,
-      },
-    });
+    const newPayrollConfig = {
+      ...(user?.payroll_config || {}),
+      defaultRate: activeRateToday({ rate_history: nextHistory }),
+      rate_history: nextHistory,
+    };
+    const { error } = await supabase
+      .from("profiles")
+      .update({ payroll_config: newPayrollConfig, updated_at: new Date().toISOString() })
+      .eq("id", uid);
+    if (error) {
+      showSnackbar?.("Failed to save rate", "error");
+      return;
+    }
     cancelEdit(uid);
   };
 
@@ -83,10 +89,10 @@ export default function PayRates({ showSnackbar }) {
           <TableBody>
             {rows.map((r) => {
               const editing = !!edit[r.id];
-              const current = activeRateToday(r.payroll || {});
+              const current = activeRateToday(r.payroll_config || {});
               return (
                 <TableRow key={r.id}>
-                  <TableCell>{r.fullName || r.name || r.email}</TableCell>
+                  <TableCell>{r.full_name || r.email}</TableCell>
                   <TableCell>{r.email}</TableCell>
                   <TableCell align="right">{peso(current)}</TableCell>
                   <TableCell align="center">
@@ -106,10 +112,7 @@ export default function PayRates({ showSnackbar }) {
                           onChange={(e) =>
                             setEdit((p) => ({
                               ...p,
-                              [r.id]: {
-                                ...p[r.id],
-                                rate: e.target.value,
-                              },
+                              [r.id]: { ...p[r.id], rate: e.target.value },
                             }))
                           }
                           inputProps={{ step: "0.01", min: 0 }}
@@ -121,10 +124,7 @@ export default function PayRates({ showSnackbar }) {
                           onChange={(e) =>
                             setEdit((p) => ({
                               ...p,
-                              [r.id]: {
-                                ...p[r.id],
-                                effectiveFrom: e.target.value,
-                              },
+                              [r.id]: { ...p[r.id], effectiveFrom: e.target.value },
                             }))
                           }
                           InputLabelProps={{ shrink: true }}

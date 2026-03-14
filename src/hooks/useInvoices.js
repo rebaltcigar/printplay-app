@@ -1,10 +1,6 @@
 // src/hooks/useInvoices.js
-// Real-time Firestore listener for the invoices collection.
-// Supports filtering by status, customerId, and date range.
-
 import { useState, useEffect } from 'react';
-import { collection, query, where, orderBy, onSnapshot } from 'firebase/firestore';
-import { db } from '../firebase';
+import { supabase } from '../supabase';
 import { isOverdue } from '../services/invoiceService';
 
 /**
@@ -19,34 +15,47 @@ export function useInvoices(filters = {}) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const constraints = [orderBy('createdAt', 'desc')];
+    const fetchInvoices = async () => {
+      let query = supabase.from('invoices').select('*, customer:customers!customer_id(full_name)').order('created_at', { ascending: false });
 
-    if (filters.customerId) constraints.push(where('customerId', '==', filters.customerId));
-    if (filters.from) constraints.push(where('createdAt', '>=', filters.from));
-    if (filters.to) constraints.push(where('createdAt', '<=', filters.to));
+      if (filters.customerId) query = query.eq('customer_id', filters.customerId);
+      if (filters.from) query = query.gte('created_at', filters.from.toISOString());
+      if (filters.to) query = query.lte('created_at', filters.to.toISOString());
+      // Push non-overdue status filters to the DB; 'overdue' requires client-side date logic
+      if (filters.status && filters.status !== 'overdue') query = query.eq('status', filters.status);
 
-    const q = query(collection(db, 'invoices'), ...constraints);
-    const unsub = onSnapshot(q, (snap) => {
-      let docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const { data, error } = await query;
 
-      // Client-side status filtering
-      if (filters.status) {
+      if (data) {
+        let docs = data.map(d => ({
+          ...d,
+          createdAt: d.created_at,
+          dueDate: d.due_date,
+          customerId: d.customer_id,
+          customerName: d.customer?.full_name || '',
+          invoiceNumber: d.invoice_number,
+          amountPaid: d.amount_paid
+        }));
+
+        // Client-side filter only for 'overdue' (needs date comparison)
         if (filters.status === 'overdue') {
           docs = docs.filter(isOverdue);
-        } else {
-          docs = docs.filter(inv => inv.status === filters.status);
         }
+
+        setInvoices(docs);
       }
-
-      setInvoices(docs);
+      if (error) console.error('useInvoices error:', error);
       setLoading(false);
-    }, (err) => {
-      console.error('useInvoices error:', err);
-      setLoading(false);
-    });
+    };
 
-    return () => unsub();
-  }, [filters.customerId, filters.from, filters.to, filters.status]); // Keep status in deps to trigger client-side refilter if needed, but the query remains the same
+    fetchInvoices();
+
+    const channel = supabase.channel('public:invoices:useInvoices')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, fetchInvoices)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
+  }, [filters.customerId, filters.from, filters.to, filters.status]);
 
   // Outstanding totals (excludes paid + written_off)
   const outstandingTotal = invoices
@@ -62,16 +71,27 @@ export function useOutstandingReceivables() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const q = query(
-      collection(db, 'invoices'),
-      where('status', 'in', ['unpaid', 'partial'])
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      const sum = snap.docs.reduce((acc, d) => acc + (d.data().balance || 0), 0);
-      setTotal(sum);
+    const fetchKPI = async () => {
+      const { data, error } = await supabase
+        .from('invoices')
+        .select('balance')
+        .in('status', ['unpaid', 'partial']);
+
+      if (data) {
+        const sum = data.reduce((acc, d) => acc + (d.balance || 0), 0);
+        setTotal(sum);
+      }
+      if (error) console.error("Error fetching outstanding receivables:", error);
       setLoading(false);
-    }, () => setLoading(false));
-    return () => unsub();
+    };
+
+    fetchKPI();
+
+    const channel = supabase.channel('public:invoices:useOutstandingReceivables')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, fetchKPI)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
   return { total, loading };

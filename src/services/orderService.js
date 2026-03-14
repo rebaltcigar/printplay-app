@@ -1,111 +1,8 @@
 // src/services/orderService.js
-import {
-    doc, runTransaction, getDoc, serverTimestamp,
-    writeBatch, collection, where, query, getDocs, increment, updateDoc
-} from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
+import { generateDisplayId, generateBatchIds, getStaffIdentity } from "../utils/idUtils";
 
-// ---------------------------------------------------------------------------
-// 1. ID Generation Logic (Consolidated from idGenerator.js)
-// ---------------------------------------------------------------------------
-
-/**
- * Generates a sequential ID (e.g., "SHIFT-000005").
- * Uses a 'counters' collection in Firestore to maintain atomicity.
- */
-export const generateDisplayId = async (counterName, defaultPrefix = "ID", padding = 6) => {
-    let prefix = defaultPrefix;
-    try {
-        const configRef = doc(db, 'settings', 'config');
-        const configSnap = await getDoc(configRef);
-        if (configSnap.exists()) {
-            const data = configSnap.data();
-            if (data.idPrefixes && data.idPrefixes[counterName]) {
-                prefix = data.idPrefixes[counterName];
-            }
-        }
-    } catch (e) {
-        console.warn("Failed to fetch ID prefix config, using default:", e);
-    }
-
-    const counterRef = doc(db, "counters", counterName);
-
-    try {
-        const newId = await runTransaction(db, async (transaction) => {
-            const counterDoc = await transaction.get(counterRef);
-            let currentSequence = 0;
-
-            if (counterDoc.exists()) {
-                const data = counterDoc.data();
-                currentSequence = data.currentSequence || 0;
-            }
-
-            const nextSequence = currentSequence + 1;
-            transaction.set(counterRef, { currentSequence: nextSequence }, { merge: true });
-            return nextSequence;
-        });
-
-        return `${prefix}-${String(newId).padStart(padding, "0")}`;
-    } catch (error) {
-        console.error(`Error generating ID for ${counterName}:`, error);
-        const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
-        return `${prefix}-ERR-${Date.now()}-${rand}`;
-    }
-};
-
-/**
- * Reserves a block of IDs for batch processing.
- */
-export const generateBatchIds = async (counterName, defaultPrefix, count, padding = 6) => {
-    if (count <= 0) return [];
-
-    let prefix = defaultPrefix;
-    try {
-        const configRef = doc(db, 'settings', 'config');
-        const configSnap = await getDoc(configRef);
-        if (configSnap.exists()) {
-            const data = configSnap.data();
-            if (data.idPrefixes && data.idPrefixes[counterName]) {
-                prefix = data.idPrefixes[counterName];
-            }
-        }
-    } catch (e) {
-        console.warn("Failed to fetch ID prefix config, using default:", e);
-    }
-
-    const counterRef = doc(db, "counters", counterName);
-
-    try {
-        const startSeq = await runTransaction(db, async (transaction) => {
-            const counterDoc = await transaction.get(counterRef);
-            let currentSequence = 0;
-
-            if (counterDoc.exists()) {
-                const data = counterDoc.data();
-                currentSequence = data.currentSequence || 0;
-            }
-
-            const nextSequence = currentSequence + count;
-            transaction.set(counterRef, { currentSequence: nextSequence }, { merge: true });
-            return currentSequence + 1;
-        });
-
-        const ids = [];
-        for (let i = 0; i < count; i++) {
-            ids.push(`${prefix}-${String(startSeq + i).padStart(padding, "0")}`);
-        }
-        return ids;
-    } catch (error) {
-        console.error(`Error generating batch IDs for ${counterName}:`, error);
-        // Fallback: Return random IDs so the checkout doesn't crash with "undefined" fields
-        const ids = [];
-        for (let i = 0; i < count; i++) {
-            const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
-            ids.push(`${prefix}-FALLBACK-${Date.now()}-${rand}-${i}`);
-        }
-        return ids;
-    }
-};
+export { generateDisplayId, generateBatchIds };
 
 /**
  * Specifically for legacy order number generation (counter: orders, prefix: ORD).
@@ -117,290 +14,85 @@ export const generateOrderNumber = () => generateDisplayId('orders', 'ORD');
 // ---------------------------------------------------------------------------
 
 /**
- * Creates a normalized order object for Firestore 'orders' collection.
+ * Creates a normalized order object for Supabase 'orders' table.
  */
 export const createOrderObject = (
     items, total, paymentMethod, paymentDetails, amountTendered, change, customer, user, discount = null, subtotal = null
 ) => {
     return {
-        items: items.map(i => ({
-            itemId: i.id,
-            name: i.serviceName || i.name,
-            note: i.note || '',
-            price: i.price,
-            costPrice: i.costPrice || 0,
-            quantity: i.quantity || 1,
-            subtotal: (i.price || 0) * (i.quantity || 1),
-        })),
         subtotal: subtotal || total,
-        discount: discount || { type: 'none', value: 0, amount: 0 },
         total: total,
-        paymentMethod: paymentMethod,
-        paymentDetails: paymentDetails || {},
-        amountTendered: Number(amountTendered),
+        payment_method: paymentMethod,
+        payment_details: paymentDetails || {},
+        amount_tendered: Number(amountTendered),
         change: Number(change),
-        customerId: customer?.id || 'walk-in',
-        customerName: customer?.fullName || 'Walk-in Customer',
-        customerPhone: customer?.phone || '',
-        customerAddress: customer?.address || '',
-        customerTin: customer?.tin || '',
-        staffId: user?.uid || 'unknown',
-        staffEmail: user?.email || 'unknown',
-        staffName: user?.displayName || user?.email || 'Staff',
-        timestamp: serverTimestamp(),
+        customer_id: customer?.id || null,
+        customer_name: customer?.fullName || customer?.full_name || 'Walk-in Customer',
+        customer_phone: customer?.phone || '',
+        customer_address: customer?.address || '',
+        customer_tin: customer?.tin || '',
+        staff_id: getStaffIdentity(user),
+        staff_name: user?.full_name || user?.displayName || user?.email || 'Staff',
+        timestamp: new Date().toISOString(),
         status: 'completed',
-        isDeleted: false
     };
 };
 
 /**
- * Soft-deletes an order and its linked transactions in a single batch.
- * 
- * @param {string} orderId The document ID of the order to delete
- * @param {string} orderNumber The display number of the order
- * @param {string} shiftId The active shift ID
- * @param {string} userEmail Email of the user performing deletion
- * @param {string} reason Reason for deletion
- * @returns {Promise<void>}
+ * Soft-deletes an order and its linked order items, then reverses inventory.
  */
 export const deleteOrder = async (orderId, orderNumber, shiftId, userEmail, reason) => {
-    const batch = writeBatch(db);
-
     // 1. Mark order as deleted
-    batch.update(doc(db, 'orders', orderId), {
-        isDeleted: true,
-        deletedBy: userEmail,
-        deleteReason: reason,
-        deletedAt: serverTimestamp()
-    });
+    const { error: ordErr } = await supabase
+        .from('orders')
+        .update({
+            status: 'VOIDED',
+            is_deleted: true,
+            deleted_by: userEmail,
+            updated_at: new Date().toISOString()
+        })
+        .eq('id', orderId);
 
-    // 2. Cascade: soft-delete all linked transactions
-    const txSnap = await getDocs(query(
-        collection(db, 'transactions'),
-        where('orderNumber', '==', orderNumber),
-        where('shiftId', '==', shiftId)
-    ));
+    if (ordErr) throw ordErr;
 
-    txSnap.forEach(d => {
-        const txData = d.data();
-        batch.update(d.ref, {
-            isDeleted: true,
-            deletedBy: userEmail,
-            deleteReason: reason,
-            deletedAt: serverTimestamp()
-        });
+    // 2. Fetch linked transactions (now in order_items)
+    const { data: linkedItems, error: itemsErr } = await supabase
+        .from('order_items')
+        .select('product_id, quantity, metadata')
+        .eq('parent_order_id', orderId)
+        .eq('shift_id', shiftId);
 
-        // REVERT INVENTORY
-        const revertStock = (svcId, q) => {
-            if (!svcId) return;
-            const ref = doc(db, 'services', svcId);
-            batch.update(ref, { stockCount: increment(q) });
-        };
+    if (itemsErr) throw itemsErr;
 
-        // 1. Revert main item
-        if (txData.serviceId) {
-            revertStock(txData.serviceId, Number(txData.quantity));
+    // 3. Soft-delete the child items
+    const { error: updateItemsErr } = await supabase
+        .from('order_items')
+        .update({
+            is_deleted: true,
+            metadata: { deleted_by: userEmail, delete_reason: reason, deleted_at: new Date().toISOString() }
+        })
+        .eq('parent_order_id', orderId)
+        .eq('shift_id', shiftId);
+
+    if (updateItemsErr) throw updateItemsErr;
+
+    if (!linkedItems || linkedItems.length === 0) return;
+
+    // 4. Revert Inventory (Optimized Batch RPC)
+    const inventoryItems = [];
+    for (const txData of linkedItems) {
+        if (txData.product_id) {
+            inventoryItems.push({ id: txData.product_id, qty: Number(txData.quantity || 1) });
         }
-
-        // 2. Revert snapshotted consumables
-        if (txData.consumables && txData.consumables.length > 0) {
-            txData.consumables.forEach(c => {
-                revertStock(c.itemId, Number(c.qty) * Number(txData.quantity));
-            });
-        }
-    });
-
-    await batch.commit();
-};
-
-/**
- * Restores a soft-deleted order and its linked transactions.
- * Deducts inventory again as if the order was just made.
- */
-export const restoreOrder = async (orderId, orderNumber, userEmail, reason) => {
-    const batch = writeBatch(db);
-
-    // 1. Mark order as restored
-    batch.update(doc(db, 'orders', orderId), {
-        isDeleted: false,
-        status: deleteField(), // Fallback to paymentMethod based display
-        voidReason: deleteField(),
-        voidedAt: deleteField(),
-        restoredAt: serverTimestamp(),
-        restoreReason: reason,
-        restoredBy: userEmail
-    });
-
-    // 2. Restore all linked transactions
-    const q = query(
-        collection(db, 'transactions'),
-        where('orderNumber', '==', orderNumber),
-        where('isDeleted', '==', true)
-    );
-    const txSnap = await getDocs(q);
-
-    txSnap.forEach(d => {
-        const txData = d.data();
-        
-        // Skip transactions that were replaced by an edit
-        if (txData.replacedByEdit) return;
-
-        batch.update(d.ref, {
-            isDeleted: false,
-            restoredAt: serverTimestamp(),
-            restoreReason: reason,
-            restoredBy: userEmail
-        });
-
-        // DEDUCT INVENTORY (Re-apply the impact of the order)
-        const deductStock = (svcId, q) => {
-            if (!svcId) return;
-            const ref = doc(db, 'services', svcId);
-            batch.update(ref, { stockCount: increment(-q) });
-        };
-
-        // 1. Deduct main item
-        if (txData.serviceId) {
-            deductStock(txData.serviceId, Number(txData.quantity));
-        }
-
-        // 2. Deduct snapshotted consumables
-        if (txData.consumables && txData.consumables.length > 0) {
-            txData.consumables.forEach(c => {
-                deductStock(c.itemId, Number(c.qty) * Number(txData.quantity));
-            });
-        }
-    });
-
-    await batch.commit();
-};
-
-/**
- * Fetches live (non-deleted) transactions for an order and maps them to the
- * items format used by the print/invoice layer.
- * Returns null if no transactions exist (caller should fall back to order.items).
- */
-export const fetchLiveItemsForOrder = async (orderNumber) => {
-    if (!orderNumber) return null;
-    const snap = await getDocs(query(
-        collection(db, 'transactions'),
-        where('orderNumber', '==', orderNumber),
-        where('isDeleted', '!=', true)
-    ));
-    if (snap.empty) return null;
-    return snap.docs.map(d => {
-        const t = d.data();
-        const rawQty = t.quantity ?? t.qty ?? 1;
-        const qty = isNaN(Number(rawQty)) ? 1 : Number(rawQty);
-        const price = Number(t.price) || 0;
-        return {
-            name: t.item || t.name || t.serviceName || 'Item',
-            quantity: qty,
-            price,
-            subtotal: qty * price,
-            total: qty * price,
-            note: t.notes || t.note || '',
-            unit: t.unit || 'pc',
-            description: t.description || '',
-        };
-    });
-};
-/**
- * Updates the timestamp of an order and all its connected transactions.
- * 
- * @param {string} orderId The document ID of the order
- * @param {string} orderNumber The display number of the order
- * @param {Date} newTimestamp The new timestamp to apply
- * @param {string} userEmail Email of the user performing the update
- * @param {string} reason Reason for the update
- * @returns {Promise<void>}
- */
-export const updateOrderTimestamp = async (orderId, orderNumber, newTimestamp, userEmail, reason) => {
-    const batch = writeBatch(db);
-
-    // 1. Update order timestamp
-    const orderRef = doc(db, 'orders', orderId);
-    batch.update(orderRef, {
-        timestamp: newTimestamp,
-        isEdited: true,
-        editedBy: userEmail,
-        editReason: reason,
-        lastUpdatedAt: serverTimestamp()
-    });
-
-    // 2. Update all connected transactions
-    const txSnap = await getDocs(query(
-        collection(db, 'transactions'),
-        where('orderNumber', '==', orderNumber),
-        where('isDeleted', '==', false)
-    ));
-
-    txSnap.forEach(d => {
-        batch.update(d.ref, {
-            timestamp: newTimestamp,
-            isEdited: true,
-            editedBy: userEmail,
-            editReason: reason,
-            lastUpdatedAt: serverTimestamp()
-        });
-    });
-
-    await batch.commit();
-};
-
-/**
- * Permanently deletes an order and all its linked transactions from the database.
- * Reverts inventory if the order was not already soft-deleted.
- * 
- * @param {string} orderId The document ID of the order
- * @param {string} orderNumber The display number of the order
- * @returns {Promise<void>}
- */
-export const permanentDeleteOrder = async (orderId, orderNumber) => {
-    const batch = writeBatch(db);
-
-    // 1. Fetch order data to check if inventory needs reversion
-    const orderRef = doc(db, 'orders', orderId);
-    const orderSnap = await getDoc(orderRef);
-    if (!orderSnap.exists()) throw new Error("Order not found");
-    const orderData = orderSnap.data();
-
-    // 2. CASCADE: Delete all linked transactions and revert inventory if primary order wasn't deleted
-    const txSnap = await getDocs(query(
-        collection(db, 'transactions'),
-        where('orderNumber', '==', orderNumber)
-    ));
-
-    txSnap.forEach(d => {
-        const txData = d.data();
-        
-        // If order was NOT already deleted, we must revert inventory impact of these transactions
-        if (!orderData.isDeleted) {
-            const revertStock = (svcId, q) => {
-                if (!svcId) return;
-                const ref = doc(db, 'services', svcId);
-                batch.update(ref, { stockCount: increment(q) });
-            };
-
-            // 1. Revert main item
-            if (txData.serviceId) {
-                revertStock(txData.serviceId, Number(txData.quantity));
-            }
-
-            // 2. Revert snapshotted consumables
-            if (txData.consumables && txData.consumables.length > 0) {
-                txData.consumables.forEach(c => {
-                    revertStock(c.itemId, Number(c.qty) * Number(txData.quantity));
-                });
+        if (txData.metadata && txData.metadata.consumables) {
+            for (const c of txData.metadata.consumables) {
+                inventoryItems.push({ id: c.itemId, qty: Number(c.qty || 0) * Number(txData.quantity || 1) });
             }
         }
+    }
 
-        // Hard delete the transaction
-        batch.delete(d.ref);
-    });
-
-    // 3. Hard delete the order
-    batch.delete(orderRef);
-
-    await batch.commit();
+    if (inventoryItems.length > 0) {
+        const { error: invErr } = await supabase.rpc('batch_increment_stock', { p_items: inventoryItems });
+        if (invErr) console.error("Batch inventory restoration failed:", invErr);
+    }
 };

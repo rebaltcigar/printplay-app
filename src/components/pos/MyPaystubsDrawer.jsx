@@ -5,29 +5,34 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   Box, Typography, Button, Stack, CircularProgress, Divider,
 } from '@mui/material';
-import { collectionGroup, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { supabase } from '../../supabase';
 import DetailDrawer from '../common/DetailDrawer';
-import { Paystub } from '../Paystub';
+import { Paystub } from '../pages/Paystub';
 import { fmtDate } from '../../utils/formatters';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 
-export default function MyPaystubsDrawer({ open, onClose, userEmail }) {
+export default function MyPaystubsDrawer({ open, onClose, staffId }) {
   const [stubs, setStubs] = useState([]);
   const [active, setActive] = useState(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!open || !userEmail) { setStubs([]); setActive(null); return; }
+    if (!open || !staffId) { setStubs([]); setActive(null); return; }
     setLoading(true);
     (async () => {
       try {
-        const snap = await getDocs(query(
-          collectionGroup(db, 'paystubs'),
-          where('staffEmail', '==', userEmail),
-        ));
-        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        list.sort((a, b) => (b.payDate?.seconds || 0) - (a.payDate?.seconds || 0));
+        const { data } = await supabase
+          .from('paystubs')
+          .select('*')
+          .eq('staff_id', staffId)
+          .order('created_at', { ascending: false });
+
+        const list = (data || []).map(d => ({
+          ...d,
+          staffEmail: d.staff_email || d.staff_id,
+          payDate: d.pay_date
+        }));
+
         setStubs(list);
         setActive(list[0]?.id || null);
       } catch (err) {
@@ -36,7 +41,7 @@ export default function MyPaystubsDrawer({ open, onClose, userEmail }) {
         setLoading(false);
       }
     })();
-  }, [open, userEmail]);
+  }, [open, staffId]);
 
   const activeStub = useMemo(() => stubs.find(s => s.id === active) || null, [stubs, active]);
 

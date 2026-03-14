@@ -4,20 +4,18 @@ import {
   Box, Typography, Stack, Button, IconButton,
   TextField, Divider, CircularProgress, Chip, Tooltip, Switch, FormControlLabel,
 } from '@mui/material';
-import {
-  collection, onSnapshot, addDoc, updateDoc, deleteDoc,
-  doc, writeBatch, serverTimestamp, getDocs, query, where,
-} from 'firebase/firestore';
-import { db } from '../../firebase';
+import { supabase } from '../../supabase';
 import PageHeader from '../common/PageHeader';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
+import { generateUUID } from '../../utils/uuid';
+
 
 const SEEDS = [
-  { name: 'Morning',   startTime: '08:00', endTime: '14:00' },
-  { name: 'Afternoon', startTime: '14:00', endTime: '20:00' },
-  { name: 'Evening',   startTime: '20:00', endTime: '02:00' },
+  { name: 'Morning',   start_time: '08:00', end_time: '14:00' },
+  { name: 'Afternoon', start_time: '14:00', end_time: '20:00' },
+  { name: 'Evening',   start_time: '20:00', end_time: '02:00' },
 ];
 const BLANK = { name: '', startTime: '', endTime: '' };
 
@@ -30,29 +28,40 @@ export default function ShiftTemplateSettings({ showSnackbar }) {
   const seededRef = useRef(false);
 
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'shiftTemplates'), async snap => {
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      list.sort((a, b) =>
-        (a.startTime || '').localeCompare(b.startTime || '') ||
-        (a.name || '').localeCompare(b.name || ''),
-      );
+    const fetchTemplates = async () => {
+      const { data } = await supabase.from('shift_templates').select('*');
+      if (data) {
+        const list = [...data].sort((a, b) =>
+          (a.start_time || '').localeCompare(b.start_time || '') ||
+          (a.name || '').localeCompare(b.name || ''),
+        );
 
-      if (list.length === 0 && !seededRef.current) {
-        seededRef.current = true;
-        const batch = writeBatch(db);
-        for (const seed of SEEDS) {
-          batch.set(doc(collection(db, 'shiftTemplates')), {
-            ...seed, isDefault: true, disabled: false, createdAt: serverTimestamp(),
-          });
+        if (list.length === 0 && !seededRef.current) {
+          seededRef.current = true;
+          await supabase.from('shift_templates').insert(
+            SEEDS.map(s => ({
+              id: generateUUID(),
+              ...s,
+              is_default: true,
+              disabled: false,
+              created_at: new Date().toISOString(),
+            }))
+          );
+          return; // channel will trigger re-fetch
         }
-        await batch.commit().catch(console.error);
-        return;
-      }
 
-      setTemplates(list);
-      setLoading(false);
-    }, err => { console.error('ShiftTemplates:', err); setLoading(false); });
-    return unsub;
+        setTemplates(list);
+        setLoading(false);
+      }
+    };
+
+    fetchTemplates();
+
+    const channel = supabase.channel('shift-template-settings')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shift_templates' }, fetchTemplates)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
   const activeCount = templates.filter(t => !t.disabled).length;
@@ -64,7 +73,11 @@ export default function ShiftTemplateSettings({ showSnackbar }) {
       return;
     }
     try {
-      await updateDoc(doc(db, 'shiftTemplates', tpl.id), { disabled: willDisable });
+      const { error } = await supabase
+        .from('shift_templates')
+        .update({ disabled: willDisable })
+        .eq('id', tpl.id);
+      if (error) throw error;
       showSnackbar?.(willDisable ? `"${tpl.name}" disabled.` : `"${tpl.name}" enabled.`, 'success');
     } catch { showSnackbar?.('Failed to update template.', 'error'); }
   };
@@ -72,19 +85,21 @@ export default function ShiftTemplateSettings({ showSnackbar }) {
   const handleDelete = async (tpl) => {
     // Check for existing schedule entries using this template
     try {
-      const snap = await getDocs(query(collection(db, 'schedules'), where('shiftLabel', '==', tpl.name)));
-      if (!snap.empty) {
-        showSnackbar?.(
-          `"${tpl.name}" has ${snap.size} existing schedule entries. Disable it instead of deleting.`,
-          'warning',
-        );
+      const { data } = await supabase
+        .from('schedules')
+        .select('id')
+        .eq('shift_label', tpl.name)
+        .limit(1);
+      if (data && data.length > 0) {
+        showSnackbar?.(`"${tpl.name}" has existing schedule entries. Disable it instead of deleting.`, 'warning');
         return;
       }
     } catch { /* proceed with delete if check fails */ }
 
     if (!window.confirm(`Permanently delete "${tpl.name}"?`)) return;
     try {
-      await deleteDoc(doc(db, 'shiftTemplates', tpl.id));
+      const { error } = await supabase.from('shift_templates').delete().eq('id', tpl.id);
+      if (error) throw error;
       showSnackbar?.('Template deleted.', 'success');
     } catch { showSnackbar?.('Delete failed.', 'error'); }
   };
@@ -94,15 +109,22 @@ export default function ShiftTemplateSettings({ showSnackbar }) {
     setSaving(true);
     try {
       const data = {
-        name:      tplForm.name.trim(),
-        startTime: tplForm.startTime,
-        endTime:   tplForm.endTime,
+        name:       tplForm.name.trim(),
+        start_time: tplForm.startTime,
+        end_time:   tplForm.endTime,
       };
       if (editingTpl) {
-        await updateDoc(doc(db, 'shiftTemplates', editingTpl.id), data);
+        const { error } = await supabase.from('shift_templates').update(data).eq('id', editingTpl.id);
+        if (error) throw error;
         showSnackbar?.('Template updated.', 'success');
       } else {
-        await addDoc(collection(db, 'shiftTemplates'), { ...data, disabled: false });
+        const { error } = await supabase.from('shift_templates').insert([{
+          id: generateUUID(),
+          ...data,
+          disabled: false,
+          created_at: new Date().toISOString(),
+        }]);
+        if (error) throw error;
         showSnackbar?.('Template added.', 'success');
       }
       setEditingTpl(null);
@@ -133,7 +155,7 @@ export default function ShiftTemplateSettings({ showSnackbar }) {
               key={tpl.id}
               sx={{
                 p: 1.5, border: '1px solid',
-                borderColor: tpl.disabled ? 'divider' : 'divider',
+                borderColor: 'divider',
                 borderRadius: 1,
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 opacity: tpl.disabled ? 0.5 : 1,
@@ -145,7 +167,7 @@ export default function ShiftTemplateSettings({ showSnackbar }) {
                 <Box>
                   <Stack direction="row" spacing={1} alignItems="center">
                     <Typography variant="body2" fontWeight={600}>{tpl.name}</Typography>
-                    {tpl.isDefault && (
+                    {tpl.is_default && (
                       <Chip label="Default" size="small" variant="outlined" sx={{ fontSize: '0.65rem', height: 18 }} />
                     )}
                     {tpl.disabled && (
@@ -153,7 +175,7 @@ export default function ShiftTemplateSettings({ showSnackbar }) {
                     )}
                   </Stack>
                   <Typography variant="caption" color="text.secondary">
-                    {tpl.startTime && tpl.endTime ? `${tpl.startTime} – ${tpl.endTime}` : 'No time set'}
+                    {tpl.start_time && tpl.end_time ? `${tpl.start_time} – ${tpl.end_time}` : 'No time set'}
                   </Typography>
                 </Box>
               </Stack>
@@ -173,7 +195,7 @@ export default function ShiftTemplateSettings({ showSnackbar }) {
                   size="small"
                   onClick={() => {
                     setEditingTpl(tpl);
-                    setTplForm({ name: tpl.name, startTime: tpl.startTime || '', endTime: tpl.endTime || '' });
+                    setTplForm({ name: tpl.name, startTime: tpl.start_time || '', endTime: tpl.end_time || '' });
                   }}
                 >
                   <EditIcon fontSize="small" />

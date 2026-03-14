@@ -5,12 +5,10 @@ import React, { useState, useEffect } from 'react';
 import {
   Box, Typography, Chip, CircularProgress, Stack,
 } from '@mui/material';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { supabase } from '../../supabase';
 import { fmtDate as sharedFmtDate } from '../../utils/formatters';
 import DetailDrawer from '../common/DetailDrawer';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
-
 function todayPHT() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
 }
@@ -34,12 +32,12 @@ const STATUS_CFG = {
   covered: { label: 'Covered', color: 'warning' },
 };
 
-export default function MyScheduleDrawer({ open, onClose, userEmail }) {
+export default function MyScheduleDrawer({ open, onClose, staffId }) {
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!open || !userEmail) return;
+    if (!open || !staffId) return;
     setLoading(true);
     (async () => {
       try {
@@ -47,12 +45,20 @@ export default function MyScheduleDrawer({ open, onClose, userEmail }) {
         const limit = addDays(today, 14);
 
         // Query own entries (single-field query, filter date in JS)
-        const snap = await getDocs(query(
-          collection(db, 'schedules'),
-          where('staffEmail', '==', userEmail),
-        ));
-        const list = snap.docs
-          .map(d => ({ id: d.id, ...d.data() }))
+        const { data } = await supabase
+          .from('schedules')
+          .select('*')
+          .eq('staff_id', staffId);
+
+        const list = (data || [])
+          .map(e => ({
+            ...e,
+            staffEmail: e.staff_email,
+            shiftLabel: e.shift_label,
+            startTime: e.start_time,
+            endTime: e.end_time,
+            coveredById: e.covered_by_id
+          }))
           .filter(e => e.date >= today && e.date <= limit)
           .sort((a, b) => a.date.localeCompare(b.date));
         setEntries(list);
@@ -62,7 +68,7 @@ export default function MyScheduleDrawer({ open, onClose, userEmail }) {
         setLoading(false);
       }
     })();
-  }, [open, userEmail]);
+  }, [open, staffId]);
 
   return (
     <DetailDrawer
@@ -103,9 +109,9 @@ export default function MyScheduleDrawer({ open, onClose, userEmail }) {
                     {entry.startTime} – {entry.endTime}
                   </Typography>
                 )}
-                {entry.coveredByName && entry.status === 'covered' && (
+                {entry.coveredById && entry.status === 'covered' && (
                   <Typography variant="caption" color="warning.main" display="block">
-                    Covered by {entry.coveredByName}
+                    Covered by another staff
                   </Typography>
                 )}
               </Box>

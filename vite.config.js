@@ -7,4 +7,7 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(process.env.npm_package_version),
   },
+  server: {
+    host: true,   // listen on 0.0.0.0 so phones/other devices on LAN can reach it
+  },
 })

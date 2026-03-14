@@ -22,20 +22,14 @@ export function useShiftFilters(shifts, txAggByShift, serviceMeta) {
             // Period Filter
             if (filterShiftPeriod.length > 0 && !filterShiftPeriod.includes(s.shiftPeriod)) return false;
 
-            const agg = txAggByShift[s.id] || {};
-            const onHand = calculateOnHand(s.denominations);
-
-            // Short/Overage Filters
-            if (onHand === null) {
+            // Short/Overage Filters — computed live from denominations
+            const _onHand = calculateOnHand(s.denominations);
+            if (_onHand === null) {
                 if (!filterShowShort || !filterShowOverage) return false;
             } else {
-                const expectedCash = computeExpectedCash(s, agg);
-                const difference = onHand - expectedCash;
-                const isShort = difference < 0;
-                const isOverage = difference > 0;
-
-                if (!filterShowShort && isShort) return false;
-                if (!filterShowOverage && isOverage) return false;
+                const _diff = _onHand - computeExpectedCash(s, txAggByShift[s.id]);
+                if (!filterShowShort && _diff < 0) return false;
+                if (!filterShowOverage && _diff > 0) return false;
             }
 
             return true;
@@ -45,7 +39,7 @@ export function useShiftFilters(shifts, txAggByShift, serviceMeta) {
     const grand = useMemo(() => {
         let pcRental = 0, sales = 0, expenses = 0, system = 0, onHand = 0;
         let shiftsWithDenominations = 0;
-        let totalExpectedCash = 0;
+        let difference = 0;
 
         for (const s of filteredShifts) {
             const agg = txAggByShift[s.id];
@@ -56,9 +50,11 @@ export function useShiftFilters(shifts, txAggByShift, serviceMeta) {
             if (onHandVal !== null) {
                 onHand += onHandVal;
                 shiftsWithDenominations++;
-                if (agg) {
-                    totalExpectedCash += computeExpectedCash(s, agg);
-                }
+            }
+
+            // Sum live-computed differences (only counted shifts contribute)
+            if (onHandVal !== null) {
+                difference += onHandVal - computeExpectedCash(s, agg);
             }
 
             if (agg) {
@@ -69,7 +65,6 @@ export function useShiftFilters(shifts, txAggByShift, serviceMeta) {
             }
         }
 
-        const difference = onHand - totalExpectedCash;
         return { pcRental, sales, expenses, system, onHand, difference, shiftsWithDenominations };
     }, [filteredShifts, txAggByShift]);
 

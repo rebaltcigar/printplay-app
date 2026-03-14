@@ -10,7 +10,7 @@ import {
   FormControlLabel,
   Checkbox,
 } from "@mui/material";
-import TrendChart from "../TrendChart";
+import TrendChart from "./TrendChart";
 
 export default function TrendSection({
   preset,

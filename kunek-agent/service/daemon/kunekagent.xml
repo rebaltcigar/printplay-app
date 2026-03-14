@@ -1,0 +1,26 @@
+<service>
+	<id>kunekagent.exe</id>
+	<name>KunekAgent</name>
+	<description>Kunek Agent for managing PC timer sessions.</description>
+	<executable>C:\Program Files\nodejs\node.exe</executable>
+	<logmode>rotate</logmode>
+	<argument>--max-old-space-size=4096</argument>
+	<argument>C:\printplay-app\kunek-agent\node_modules\node-windows\lib\wrapper.js</argument>
+	<argument>--file</argument>
+	<argument>C:\printplay-app\kunek-agent\service\index.js</argument>
+	<argument>--log</argument>
+	<argument>KunekAgent wrapper</argument>
+	<argument>--grow</argument>
+	<argument>0.25</argument>
+	<argument>--wait</argument>
+	<argument>1</argument>
+	<argument>--maxrestarts</argument>
+	<argument>3</argument>
+	<argument>--abortonerror</argument>
+	<argument>n</argument>
+	<argument>--stopparentfirst</argument>
+	<argument>undefined</argument>
+	<stoptimeout>30sec</stoptimeout>
+	<env name="production" value="undefined"/>
+	<workingdirectory>C:\printplay-app\kunek-agent</workingdirectory>
+</service>

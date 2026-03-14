@@ -34,27 +34,15 @@ import PeopleIcon from "@mui/icons-material/People";
 import ScheduleIcon from "@mui/icons-material/Schedule";
 import AttachMoneyIcon from "@mui/icons-material/AttachMoney";
 import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
-import { db } from "../../firebase";
-import {
-  collection,
-  deleteDoc,
-  doc,
-  getDocs,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  where,
-  writeBatch,
-} from "firebase/firestore";
+import { supabase } from "../../supabase";
 import {
   toHours,
 } from "../../utils/payrollHelpers";
 import { fmtDate, fmtCurrency } from "../../utils/formatters";
-import ConfirmationReasonDialog from "../ConfirmationReasonDialog";
+import ConfirmationReasonDialog from "../dialogs/ConfirmationReasonDialog";
 import DetailDrawer from "../common/DetailDrawer";
 import { useGlobalUI } from "../../contexts/GlobalUIContext";
-import PaystubDialog from "../Paystub";
+import PaystubDialog from "../pages/Paystub";
 
 export default function AllRuns({ onEditRun }) {
   const { showSnackbar } = useGlobalUI();
@@ -84,19 +72,38 @@ export default function AllRuns({ onEditRun }) {
 
   // load runs
   useEffect(() => {
-    const unsub = onSnapshot(
-      query(collection(db, "payrollRuns"), orderBy("periodStart", "desc")),
-      (snap) => setRuns(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
-    );
-    return () => unsub();
+    const fetchRuns = async () => {
+      const { data, error } = await supabase
+        .from('payroll_runs')
+        .select('*')
+        .order('period_start', { ascending: false });
+
+      if (data) {
+        setRuns(data.map(r => ({
+          ...r,
+          periodStart: r.period_start,
+          periodEnd: r.period_end,
+          payDate: r.pay_date,
+          expenseMode: r.expense_mode,
+          updatedAt: r.updated_at
+        })));
+      }
+      if (error) console.error("Error fetching payroll runs:", error);
+    };
+
+    fetchRuns();
+
+    const channel = supabase.channel('public:payroll_runs:AllRuns')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payroll_runs' }, fetchRuns)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
   // filter in memory
   const filtered = useMemo(() => {
     return runs.filter((r) => {
-      const d = r.periodStart?.seconds
-        ? new Date(r.periodStart.seconds * 1000)
-        : null;
+      const d = r.periodStart ? new Date(r.periodStart) : null;
       const okDate =
         (!fromDate && !toDate) ||
         (d &&
@@ -151,11 +158,23 @@ export default function AllRuns({ onEditRun }) {
   const openRunDrawer = async (run) => {
     setRunDrawer({ open: true, run, lines: null, loading: true });
     try {
-      const linesSnap = await getDocs(collection(db, "payrollRuns", run.id, "lines"));
-      const lines = linesSnap.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
-        .sort((a, b) => (a.staffName || "").localeCompare(b.staffName || ""));
-      setRunDrawer((prev) => ({ ...prev, lines, loading: false }));
+      const { data, error } = await supabase
+        .from('payroll_lines')
+        .select('*')
+        .eq('run_id', run.id);
+
+      if (data) {
+        const lines = data
+          .map((d) => ({
+            ...d,
+            staffName: d.staff_name,
+            staffEmail: d.staff_email,
+            staffUid: d.staff_uid
+          }))
+          .sort((a, b) => (a.staffName || "").localeCompare(b.staffName || ""));
+        setRunDrawer((prev) => ({ ...prev, lines, loading: false }));
+      }
+      if (error) throw error;
     } catch (err) {
       console.error(err);
       setRunDrawer((prev) => ({ ...prev, loading: false }));
@@ -177,21 +196,41 @@ export default function AllRuns({ onEditRun }) {
         requireReason: false,
         confirmColor: "primary",
         onConfirm: async () => {
-          const txSnap = await getDocs(
-            query(
-              collection(db, "transactions"),
-              where("payrollRunId", "==", r.id),
-              where("voided", "==", false)
-            )
-          );
-          const batch = writeBatch(db);
-          txSnap.docs.forEach((t) => batch.update(t.ref, { voided: true }));
-          batch.update(doc(db, "payrollRuns", r.id), {
-            status: "voided",
-            updatedAt: serverTimestamp(),
-          });
-          await batch.commit();
-          showSnackbar("Run voided.", "success");
+          try {
+            // Unlink transactions from this run instead of just marking "voided" in the old schema
+            // If they are strictly Salary Advance expenses, we might want to soft-delete them or keep them.
+            // For now, mirroring the "voided = true" logic in Supabase `expenses` table.
+            const { data: txs, error: fetchErr } = await supabase
+              .from('expenses')
+              .select('id')
+              .eq('payroll_run_id', r.id)
+              .eq('voided', false);
+
+            if (fetchErr) throw fetchErr;
+
+            if (txs && txs.length > 0) {
+              const { error: batchErr } = await supabase
+                .from('expenses')
+                .update({ voided: true })
+                .in('id', txs.map(t => t.id));
+              if (batchErr) throw batchErr;
+            }
+
+            const { error: updateErr } = await supabase
+              .from('payroll_runs')
+              .update({
+                status: "voided",
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', r.id);
+
+            if (updateErr) throw updateErr;
+
+            showSnackbar("Run voided.", "success");
+          } catch (e) {
+            console.error(e);
+            showSnackbar("Error voiding run.", "error");
+          }
         },
       });
     } else {
@@ -202,23 +241,24 @@ export default function AllRuns({ onEditRun }) {
         requireReason: false,
         confirmColor: "error",
         onConfirm: async () => {
-          const linesSnap = await getDocs(
-            collection(db, "payrollRuns", r.id, "lines")
-          );
-          for (const l of linesSnap.docs) {
-            const overSnap = await getDocs(
-              collection(db, "payrollRuns", r.id, "lines", l.id, "shifts")
-            );
-            overSnap.forEach((o) => deleteDoc(o.ref));
-            await deleteDoc(l.ref);
+          try {
+            // Delete run (cascading deletes for lines, shifts, stubs handled by DB or explicit here)
+            // Assuming DB has ON DELETE CASCADE or we do it manually.
+            // Since our schema might rely on application-level integrity for some things, we'll do manual clean for safety.
+
+            await Promise.all([
+              supabase.from('payroll_lines').delete().eq('run_id', r.id),
+              supabase.from('payroll_line_shifts').delete().eq('run_id', r.id),
+              supabase.from('payroll_stubs').delete().eq('run_id', r.id),
+              supabase.from('payroll_runs').delete().eq('id', r.id)
+            ]);
+
+            showSnackbar("Run deleted.", "success");
+            if (runDrawer.run?.id === r.id) closeRunDrawer();
+          } catch (e) {
+            console.error(e);
+            showSnackbar("Error deleting run.", "error");
           }
-          const stubsSnap = await getDocs(
-            collection(db, "payrollRuns", r.id, "paystubs")
-          );
-          stubsSnap.forEach((s) => deleteDoc(s.ref));
-          await deleteDoc(doc(db, "payrollRuns", r.id));
-          showSnackbar("Run deleted.", "success");
-          if (runDrawer.run?.id === r.id) closeRunDrawer();
         },
       });
     }

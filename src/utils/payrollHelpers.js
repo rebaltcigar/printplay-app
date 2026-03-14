@@ -1,7 +1,6 @@
 // src/utils/payrollHelpers.js
 // Single source of truth for all payroll calculation helpers.
 
-import { Timestamp } from "firebase/firestore";
 import { sumDenominations } from "./shiftFinancials";
 import { fmtCurrency, fmtDate, toDateInput, toDatetimeLocal } from "./formatters";
 export { sumDenominations };
@@ -12,24 +11,17 @@ export { sumDenominations };
 
 /**
  * Calculates the exact minutes between two time points.
- * @param {Timestamp|Date|number} start - Start time.
- * @param {Timestamp|Date|number} end - End time.
+ * @param {Date|string|number} start - Start time.
+ * @param {Date|string|number} end - End time.
  * @returns {number} Total minutes (rounded).
  */
 export function minutesBetween(start, end) {
-  const s = start?.seconds ? new Date(start.seconds * 1000) : new Date(start);
-  const e = end?.seconds ? new Date(end.seconds * 1000) : new Date(end);
+  if (!start || !end) return 0;
+  const s = new Date(start);
+  const e = new Date(end);
   const ms = Math.max(0, e - s);
   return Math.round(ms / 60000);
 }
-
-/**
- * Alias for minutesBetween specifically for Firestore Timestamps.
- */
-export const minutesBetweenTS = (startTs, endTs) => {
-  if (!startTs?.seconds || !endTs?.seconds) return 0;
-  return minutesBetween(startTs, endTs);
-};
 
 /**
  * Formats a number as Philippine Peso with 2 decimal places.
@@ -68,25 +60,25 @@ export const cap = (s) =>
 // ---------------------------------------------------------------------------
 
 /**
- * Formats a Firestore Timestamp to "Jan 1, 2024" (PHT).
- * @param {Timestamp} ts 
+ * Formats a Date/string to "Jan 1, 2024" (PHT).
+ * @param {Date|string} val 
  * @returns {string}
  */
-export const toLocaleDateStringPHT = (ts) => fmtDate(ts);
+export const toLocaleDateStringPHT = (val) => fmtDate(val);
 
 /**
- * Formats a Firestore Timestamp to "YYYY-MM-DD" for date inputs.
- * @param {Timestamp} ts 
+ * Formats a Date/string to "YYYY-MM-DD" for date inputs.
+ * @param {Date|string} val 
  * @returns {string}
  */
-export const toYMD_PHT_fromTS = (ts) => toDateInput(ts);
+export const toYMD_PHT_fromTS = (val) => toDateInput(val);
 
 /**
- * Formats a Firestore Timestamp to "YYYY-MM-DDTHH:mm" for datetime-local inputs.
- * @param {Timestamp} ts 
+ * Formats a Date/string to "YYYY-MM-DDTHH:mm" for datetime-local inputs.
+ * @param {Date|string} val 
  * @returns {string}
  */
-export const toLocalISO_PHT_fromTS = (ts) => toDatetimeLocal(ts);
+export const toLocalISO_PHT_fromTS = (val) => toDatetimeLocal(val);
 
 /**
  * Returns today's date in PHT as "YYYY-MM-DD".
@@ -95,15 +87,13 @@ export const toLocalISO_PHT_fromTS = (ts) => toDatetimeLocal(ts);
 export const todayYMD_PHT = () => toDateInput(new Date());
 
 /**
- * Build a Firestore Timestamp from a YYYY-MM-DD string anchored in PHT (UTC+8).
+ * Build an ISO string from a YYYY-MM-DD string anchored in PHT (UTC+8).
  * @param {string} ymd - "YYYY-MM-DD"
  * @param {boolean} [endOfDay=false] - If true, sets time to 23:59:59.
- * @returns {Timestamp}
+ * @returns {string}
  */
 export const tsFromYMD = (ymd, endOfDay = false) =>
-  Timestamp.fromDate(
-    new Date(`${ymd}T${endOfDay ? '23:59:59' : '00:00:00'}+08:00`)
-  );
+  new Date(`${ymd}T${endOfDay ? '23:59:59' : '00:00:00'}+08:00`).toISOString();
 
 // ---------------------------------------------------------------------------
 // Rate Resolution
@@ -114,35 +104,37 @@ export const tsFromYMD = (ymd, endOfDay = false) =>
  * Supports historical schemas: `rateHistory` or `effectiveRates`.
  *
  * @param {Object} payroll - Staff payroll document data.
- * @param {Date|Timestamp|string} asOfDate - The reference date.
+ * @param {Date|string} asOfDate - The reference date.
  * @returns {number} Hourly rate in PHP.
  */
 export const resolveHourlyRate = (payroll, asOfDate) => {
   if (!payroll) return 0;
 
-  const asOf = asOfDate?.toDate ? asOfDate.toDate() : new Date(asOfDate || Date.now());
+  const asOf = new Date(asOfDate || Date.now());
 
-  const history = Array.isArray(payroll.rateHistory)
-    ? payroll.rateHistory
-    : Array.isArray(payroll.effectiveRates)
-      ? payroll.effectiveRates
-      : [];
+  const history = Array.isArray(payroll.rate_history)
+    ? payroll.rate_history
+    : Array.isArray(payroll.rateHistory)
+      ? payroll.rateHistory
+      : Array.isArray(payroll.effectiveRates)
+        ? payroll.effectiveRates
+        : [];
 
   // Sort by effective date ascending and find the last one that applies before/on asOf.
   const picked = history
-    .filter((r) =>
-      r?.effectiveFrom?.seconds
-        ? new Date(r.effectiveFrom.seconds * 1000) <= asOf
-        : true
-    )
+    .filter((r) => {
+      const effectDate = new Date(r.effective_from || r.effectiveFrom || 0);
+      return effectDate <= asOf;
+    })
     .sort((a, b) => {
-      const da = a?.effectiveFrom?.seconds ?? 0;
-      const db = b?.effectiveFrom?.seconds ?? 0;
+      const da = new Date(a.effective_from || a.effectiveFrom || 0).getTime();
+      const db = new Date(b.effective_from || b.effectiveFrom || 0).getTime();
       return da - db;
     })
     .pop();
 
   if (picked?.rate != null) return Number(picked.rate);
+  if (payroll.default_rate != null) return Number(payroll.default_rate);
   if (payroll.defaultRate != null) return Number(payroll.defaultRate);
   return 0;
 };
@@ -150,36 +142,35 @@ export const resolveHourlyRate = (payroll, asOfDate) => {
 /**
  * Computes the cash shortage for a shift based on expected vs actual cash.
  * @param {Object} shift - Shift document data.
- * @returns {number} Shortage amount (max of 0 and difference).
+ * @returns {number} Shortage amount (0 if no shortage or not consolidated).
  */
 export const shortageForShift = (shift) => {
-  if (shift?.totalCash !== undefined) {
-    const expectedCash = Number(shift.totalCash || 0) - Number(shift.expensesTotal || 0);
-    const actualCash = sumDenominations(shift?.denominations || {});
-    const delta = expectedCash - actualCash;
-    return delta > 0 ? Number(delta.toFixed(2)) : 0;
+  // Prefer the authoritative DB-stored cash_difference (set at consolidation).
+  // cash_difference = onHand - expectedCash, so shortage = negative difference.
+  if (shift?.cash_difference != null) {
+    const diff = Number(shift.cash_difference);
+    return diff < 0 ? Number((-diff).toFixed(2)) : 0;
   }
 
-  // Legacy fallback
-  const systemTotal = Number(shift?.systemTotal || 0);
-  const denomTotal = sumDenominations(shift?.denominations || {});
-  const delta = systemTotal - denomTotal;
-  return delta > 0 ? Number(delta.toFixed(2)) : 0;
+  // Not yet consolidated — no shortage to apply.
+  return 0;
 };
 
 /**
  * Infers the shift name (Morning/Afternoon/Night) based on start time in PHT.
- * @param {Object} startTS - Firestore Timestamp.
+ * @param {Date|string} startTime - Start time.
  * @param {string} [title] - Override title.
  * @param {string} [label] - Override label.
  * @returns {string} "Morning", "Afternoon", or "Night".
  */
-export const inferShiftName = (startTS, title, label) => {
+export const inferShiftName = (startTime, title, label) => {
   if (title) return title;
   if (label) return label;
-  if (!startTS?.seconds) return 'Unknown';
+  if (!startTime) return 'Unknown';
 
-  const d = new Date(startTS.seconds * 1000);
+  const d = new Date(startTime);
+  if (isNaN(d.getTime())) return 'Unknown';
+
   const h = parseInt(
     new Intl.DateTimeFormat('en-US', {
       hour: 'numeric',
@@ -199,17 +190,15 @@ export const inferShiftName = (startTS, title, label) => {
 /**
  * Determines the start and end dates of the pay period containing `forDate`.
  * @param {Object} schedule - Payroll schedule configuration.
- * @param {Date|Timestamp} forDate - The reference date.
+ * @param {Date|string} forDate - The reference date.
  * @returns {{start: Date, end: Date}}
  */
 export function computePeriodForDate(schedule, forDate) {
-  const dateObj = forDate?.toDate ? forDate.toDate() : new Date(forDate);
+  const dateObj = new Date(forDate || Date.now());
   const today = new Date(dateObj);
   today.setHours(0, 0, 0, 0);
 
-  const anchor = schedule.anchorDate?.seconds
-    ? new Date(schedule.anchorDate.seconds * 1000)
-    : new Date();
+  const anchor = new Date(schedule.anchor_date || schedule.anchorDate || Date.now());
   anchor.setHours(0, 0, 0, 0);
 
   const type = schedule.type || 'biweekly';
@@ -241,4 +230,5 @@ export function computePeriodForDate(schedule, forDate) {
 
   return { start, end };
 }
+
 
