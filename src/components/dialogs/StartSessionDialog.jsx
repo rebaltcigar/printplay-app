@@ -73,7 +73,7 @@ export default function StartSessionDialog({ open, station, activeSession, isQui
       const ObjectData = await Promise.all([
         supabase.from('rates').select('*').eq('is_active', true),
         supabase.from('zones').select('*'),
-        supabase.from('settings').select('*').eq('id', 'system').single()
+        supabase.from('settings').select('*').eq('id', 'config').maybeSingle()
       ]);
       const [r, z, s] = ObjectData;
       if (r.data) setRates(r.data.map(d => ({ ...d, ratePerMinute: d.rate_per_minute, isActive: d.is_active })));

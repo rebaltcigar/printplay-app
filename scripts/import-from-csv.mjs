@@ -202,7 +202,7 @@ async function main() {
         }
 
         return {
-            id:                         'main',
+            id:                         'config',
             store_name:                  str(r.storeName),
             logo_url:                    str(r.logoUrl),
             address:                     str(r.address),
