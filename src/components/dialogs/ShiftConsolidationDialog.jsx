@@ -9,7 +9,7 @@ import PaymentsIcon from '@mui/icons-material/Payments';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import ReceiptIcon from '@mui/icons-material/Receipt';
 import { supabase } from '../../supabase';
-import { sumDenominations, computeShiftFinancials } from '../../utils/shiftFinancials';
+import { sumDenominations, computeShiftFinancials, isDigitalPayment } from '../../utils/shiftFinancials';
 import { fmtCurrency, fmtTime } from '../../utils/formatters';
 import { useGlobalUI } from '../../contexts/GlobalUIContext';
 
@@ -68,9 +68,8 @@ export default function ShiftConsolidationDialog({
 
 
     // --- CASE 2: Digital (GCash, Maya, Bank Transfer, Card) ---
-    const DIGITAL_METHODS = ['GCash', 'Maya', 'Bank Transfer', 'Card'];
     const digitalTransactions = useMemo(() =>
-        transactions.filter(t => DIGITAL_METHODS.includes(t.paymentMethod) && t.item !== 'Expenses'),
+        transactions.filter(t => isDigitalPayment(t.paymentMethod || t.payment_method) && (t.item ?? t.name) !== 'Expenses'),
         [transactions]
     );
 
@@ -102,7 +101,7 @@ export default function ShiftConsolidationDialog({
 
     // --- CASE 3: Accounts Receivable ---
     const arTransactions = useMemo(() =>
-        transactions.filter(t => t.paymentMethod === 'Charge' && t.item !== 'Expenses'),
+        transactions.filter(t => (t.paymentMethod === 'Charge' || t.payment_method === 'Charge') && (t.item ?? t.name) !== 'Expenses'),
         [transactions]
     );
 
@@ -111,6 +110,12 @@ export default function ShiftConsolidationDialog({
 
     // --- ACTION: SAVE ALL ---
     const handleSave = async () => {
+        if (cashOnHand === 0) {
+            const ok = window.confirm(
+                'No denominations have been entered — cash on hand is ₱0.\n\nSave anyway?'
+            );
+            if (!ok) return;
+        }
         try {
             setSaving(true);
             const now = new Date().toISOString();
@@ -273,21 +278,21 @@ export default function ShiftConsolidationDialog({
                                 {digitalTransactions.map((tx, idx) => (
                                     <TableRow key={tx.id || idx}>
                                         <TableCell>
-                                            <Typography variant="body2" fontWeight="bold">{tx.paymentMethod}</Typography>
-                                            {tx.paymentDetails?.bankName && (
-                                                <Typography variant="caption" color="text.secondary">{tx.paymentDetails.bankName}</Typography>
+                                            <Typography variant="body2" fontWeight="bold">{tx.paymentMethod || tx.payment_method}</Typography>
+                                            {(tx.paymentDetails?.bankName || tx.payment_details?.bankName) && (
+                                                <Typography variant="caption" color="text.secondary">{tx.paymentDetails?.bankName || tx.payment_details?.bankName}</Typography>
                                             )}
                                         </TableCell>
                                         <TableCell>
                                             <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                                                {tx.paymentDetails?.refNumber || '—'}
+                                                {tx.paymentDetails?.refNumber || tx.payment_details?.refNumber || tx.payment_details?.ref_number || '—'}
                                             </Typography>
                                             <Typography variant="caption" color="text.secondary">
-                                                {tx.paymentDetails?.phone}
+                                                {tx.paymentDetails?.phone || tx.payment_details?.phone}
                                             </Typography>
                                         </TableCell>
-                                        <TableCell>{fmtCurrency(tx.total)}</TableCell>
-                                        <TableCell>{tx.customerName || 'Walk-in'}</TableCell>
+                                        <TableCell>{fmtCurrency(tx.total ?? tx.amount)}</TableCell>
+                                        <TableCell>{tx.customerName || tx.customer_name || 'Walk-in'}</TableCell>
                                         <TableCell>
                                             <Select
                                                 size="small"
@@ -335,9 +340,9 @@ export default function ShiftConsolidationDialog({
                                 )}
                                 {arTransactions.map((tx, idx) => (
                                     <TableRow key={tx.id || idx}>
-                                        <TableCell>{tx.customerName}</TableCell>
-                                        <TableCell>{fmtCurrency(tx.total)}</TableCell>
-                                        <TableCell>{tx.item}</TableCell>
+                                        <TableCell>{tx.customerName || tx.customer_name}</TableCell>
+                                        <TableCell>{fmtCurrency(tx.total ?? tx.amount)}</TableCell>
+                                        <TableCell>{tx.item || tx.name}</TableCell>
                                         <TableCell>
                                             {tx.timestamp ? fmtTime(tx.timestamp) : ''}
                                         </TableCell>

@@ -82,64 +82,29 @@ export function AnalyticsProvider({ children }) {
 
         const fetchAnalyticsData = async () => {
             try {
-                // Fetch transactions (order_items)
-                const txPromise = supabase
-                    .from('order_items')
-                    .select('*')
-                    .gte('timestamp', startTs)
-                    .lte('timestamp', endTs)
-                    .order('timestamp', { ascending: false });
+                const { data, error } = await supabase.rpc('get_analytics_data', {
+                    p_start_time: startTs,
+                    p_end_time: endTs
+                });
 
-                // Fetch shifts
-                const shiftPromise = supabase
-                    .from('shifts')
-                    .select('*')
-                    .gte('start_time', startTs)
-                    .lte('start_time', endTs);
+                if (error) throw error;
+                if (!data || data.length === 0) {
+                  setTransactions([]);
+                  setShifts([]);
+                  setInvoices([]);
+                  setLoading(false);
+                  return;
+                }
 
-                // Fetch invoices
-                const invPromise = supabase
-                    .from('invoices')
-                    .select('*')
-                    .gte('created_at', startTs)
-                    .lte('created_at', endTs);
+                const res = data[0]; // Returns a single row with JSON columns
 
-                const [txRes, shiftRes, invRes] = await Promise.all([txPromise, shiftPromise, invPromise]);
+                if (res.earliest_date) {
+                    setAllTimeStart(new Date(res.earliest_date));
+                }
 
-                if (txRes.error) throw txRes.error;
-                if (shiftRes.error) throw shiftRes.error;
-                if (invRes.error) throw invRes.error;
-
-                // Map Supabase snake_case back to expected camelCase for Analytics
-                const mappedTx = (txRes.data || []).map(t => ({
-                    ...t,
-                    item: t.name,
-                    price: t.price,
-                    quantity: t.quantity,
-                    total: t.amount,
-                    timestamp: t.timestamp,
-                    financialCategory: t.financial_category,
-                    isDeleted: t.is_deleted,
-                    serviceId: t.product_id
-                }));
-
-                const mappedShifts = (shiftRes.data || []).map(s => ({
-                    ...s,
-                    startTime: s.start_time,
-                    endTime: s.end_time,
-                    pcRentalTotal: s.pc_rental_total
-                }));
-
-                const mappedInvoices = (invRes.data || []).map(i => ({
-                    ...i,
-                    createdAt: i.created_at,
-                    invoiceNumber: i.invoice_number,
-                    amountPaid: i.amount_paid
-                }));
-
-                setTransactions(mappedTx);
-                setShifts(mappedShifts);
-                setInvoices(mappedInvoices);
+                setTransactions(res.transactions || []);
+                setShifts(res.shifts || []);
+                setInvoices(res.invoices || []);
                 setLoading(false);
             } catch (err) {
                 console.error("[Analytics] Fetch Error:", err);
@@ -162,6 +127,7 @@ export function AnalyticsProvider({ children }) {
         // Subscribe to changes and simply re-fetch the range to ensure data consistency
         const channel = supabase.channel(`analytics_changes_${preset}`)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, debouncedFetch)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, debouncedFetch)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'shifts' }, debouncedFetch)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, debouncedFetch)
             .subscribe();

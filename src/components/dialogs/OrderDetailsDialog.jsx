@@ -33,7 +33,7 @@ export default function OrderDetailsDialog({ open, onClose, order, onUpdate, onP
             supabase
                 .from('order_items')
                 .select('*')
-                .eq('parent_order_number', order.order_number)
+                .eq('parent_order_id', order.id)
                 .eq('is_deleted', false)
                 .then(({ data }) => {
                     if (data) setTransactions(data);

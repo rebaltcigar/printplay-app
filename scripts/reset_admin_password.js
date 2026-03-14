@@ -6,10 +6,10 @@ const envFile = isProd ? '.env.production' : '.env.development';
 dotenv.config({ path: envFile });
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseServiceKey = process.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseServiceKey || !supabaseUrl) {
-    console.error(`❌ SUPABASE_SERVICE_ROLE_KEY or VITE_SUPABASE_URL is missing from ${envFile}`);
+    console.error(`❌ VITE_SUPABASE_SERVICE_ROLE_KEY or VITE_SUPABASE_URL is missing from ${envFile}`);
     process.exit(1);
 }
 

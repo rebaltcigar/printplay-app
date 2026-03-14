@@ -63,27 +63,24 @@ export default function ServiceCatalog({ showSnackbar }) {
   });
 
   useEffect(() => {
+    const reload = () => {
+      supabase.from('products').select('*').neq('category', 'Expense')
+        .then(({ data }) => {
+          if (data) setItems(data);
+        });
+    };
+
     const channel = supabase
       .channel('products-sale-changes')
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
         table: 'products',
-        filter: 'category=eq.Sale',
-      }, () => {
-        // Reload on any change
-        supabase.from('products').select('*').eq('category', 'Sale')
-          .then(({ data }) => {
-            if (data) setItems(data);
-          });
-      })
+      }, reload)
       .subscribe();
 
     // Initial load
-    supabase.from('products').select('*').eq('category', 'Sale')
-      .then(({ data }) => {
-        if (data) setItems(data);
-      });
+    reload();
 
     return () => { supabase.removeChannel(channel); };
   }, []);

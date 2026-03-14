@@ -69,7 +69,7 @@ import { getStaffIdentity } from "../../utils/idUtils";
 // shared helpers
 import { fmtDate } from "../../utils/formatters";
 import { fmtPeso, normalize } from "../../services/analyticsService";
-import { aggregateShiftTransactions } from "../../utils/shiftFinancials";
+import { aggregateShiftTransactions, computeExpectedCash } from "../../utils/shiftFinancials";
 import { useStaff } from "../../contexts/StaffContext";
 import { useServices } from "../../contexts/ServiceContext";
 
@@ -88,7 +88,11 @@ const Shifts = ({ isActive = true, user }) => {
   const [viewingShift, setViewingShift] = useState(null);
 
   // Staff and services from shared context providers
-  const { staffOptions, userMap, seqIdToName } = useStaff();
+  const { staffOptions, userMap, seqIdToName, idToName } = useStaff();
+
+  // Resolves a shift's staff_id (may be a sequential ST-xxx or a legacy UUID) to a display name.
+  const resolveStaffName = (s) =>
+    seqIdToName[s.staffId] || idToName[s.staffId] || userMap[s.staffEmail] || s.staffId || s.staffEmail || '—';
   const { serviceMeta } = useServices();
 
   const [view, setView] = useState("summary");
@@ -176,32 +180,56 @@ const Shifts = ({ isActive = true, user }) => {
 
     const fetchShifts = async () => {
       try {
-        let q = supabase.from('shifts').select('*').order('start_time', { ascending: false });
-
-        if (startDate) {
-          q = q.gte('start_time', new Date(startDate).toISOString());
-        }
-        if (endDate) {
-          const eod = new Date(endDate);
-          eod.setHours(23, 59, 59, 999);
-          q = q.lte('start_time', eod.toISOString());
-        }
-
-        const { data, error } = await q;
+        const { data, error } = await supabase.rpc('get_shift_summaries', {
+          p_start_time: startDate ? (() => {
+            const sod = new Date(startDate);
+            sod.setHours(0, 0, 0, 0);
+            return sod.toISOString();
+          })() : null,
+          p_end_time: endDate ? (() => {
+            const eod = new Date(endDate);
+            eod.setHours(23, 59, 59, 999);
+            return eod.toISOString();
+          })() : null,
+          p_limit: 100,
+          p_offset: 0
+        });
 
         if (error) throw error;
 
         const formatted = data.map(d => ({
           ...d,
+          id: d.id,
+          displayId: d.display_id,
           startTime: d.start_time,
           endTime: d.end_time,
           staffId: d.staff_id,
+          staffEmail: d.staff_email,
           shiftPeriod: d.shift_period,
           pcRentalTotal: Number(d.pc_rental_total || 0),
-          systemTotal: Number(d.system_total || 0)
+          systemTotal: Number(d.system_total_stored || 0),
+          denominations: d.denominations
         }));
 
         setShifts(formatted);
+
+        // Pre-map the aggregations for the UI
+        const next = {};
+        data.forEach(d => {
+          next[d.id] = {
+            sales: Number(d.service_sales_total || 0),
+            expenses: Number(d.expenses_total || 0),
+            cashSales: Number(d.cash_sales || 0),
+            digitalSales: Number(d.digital_sales || 0),
+            arSales: Number(d.ar_sales || 0),
+            pcNonCashSales: Number(d.pc_non_cash_sales || 0),
+            arPayments: Number(d.ar_payments || 0),
+            systemTotal: Number(d.service_sales_total || 0) - Number(d.expenses_total || 0),
+            serviceTotals: d.service_breakdown || {},
+            fullTransactions: [] 
+          };
+        });
+        setTxAggByShift(next);
       } catch (err) {
         console.error("Error fetching shifts:", err);
         showSnackbar("Failed to fetch shifts.", 'error');
@@ -212,64 +240,31 @@ const Shifts = ({ isActive = true, user }) => {
 
     fetchShifts();
 
-    // Subscribe to realtime changes on the shifts table so UI updates when a shift is added/modified
+    // Subscribe to realtime changes on the shifts table so UI updates when a shift is added/modified.
+    // Debounced to prevent cascading re-aggregation when multiple rows change at once.
+    let debounceTimer;
     channel = supabase.channel('public:shifts:list')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'shifts' }, () => {
-        // Debounce or just simply refetch the list.
-        fetchShifts();
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(fetchShifts, 350);
       })
       .subscribe();
 
-    // Re-fetch when dependencies change
     return () => {
+      clearTimeout(debounceTimer);
       if (channel) supabase.removeChannel(channel);
     };
   }, [startDate, endDate]);
 
-  useEffect(() => {
-    if (!shifts.length || !serviceMeta.length) return;
-
-    const shiftIds = shifts.map((s) => s.id);
-
-    Promise.all([
-      supabase.from('order_items').select('*').in('shift_id', shiftIds),
-      supabase.from('pc_transactions').select('*').in('shift_id', shiftIds),
-      supabase.from('expenses').select('*').in('shift_id', shiftIds),
-    ]).then(([resOrders, resPc, resEx]) => {
-      // Group raw rows by shift_id
-      const byShift = {};
-      shiftIds.forEach(id => { byShift[id] = []; });
-
-      (resOrders.data || []).forEach(d =>
-        byShift[d.shift_id]?.push({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount) })
-      );
-      (resPc.data || []).forEach(d =>
-        byShift[d.shift_id]?.push({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount) })
-      );
-      (resEx.data || []).forEach(d =>
-        byShift[d.shift_id]?.push({ ...d, item: 'Expenses', paymentMethod: 'Cash', isDeleted: false, amount: Number(d.amount), total: Number(d.amount) })
-      );
-
-      const next = {};
-      shiftIds.forEach(id => {
-        const txs = byShift[id];
-        const aggregated = aggregateShiftTransactions(txs, serviceMeta);
-        next[id] = { ...aggregated, fullTransactions: txs };
-      });
-
-      setTxAggByShift(next);
-    }).catch(e => {
-      console.warn("batch transactions fetch failed", e);
-    });
-  }, [shifts, serviceMeta]);
+  // Aggregation is now handled by the database RPC
 
   const lastTwoShiftIds = useMemo(() => filteredShifts.slice(0, 2).map((s) => s.id), [filteredShifts]);
 
   const handleResumeShift = async (shift) => {
     try {
       if (isAnyShiftActive) return;
-      const staffId = getStaffIdentity(user);
-      await resumeShift(shift.id, staffId);
+      // Resume the shift using the ID of the staff member who owns it, not the admin's identity.
+      await resumeShift(shift.id, shift.staffId);
     } catch (e) {
       showSnackbar(`Failed to resume: ${e.message}`, 'error');
     }
@@ -285,11 +280,14 @@ const Shifts = ({ isActive = true, user }) => {
         const pc = Number(s.pcRentalTotal || 0);
         const totalSales = Number(agg.sales || 0) + pc;
         const netTotal = totalSales - Number(agg.expenses || 0);
-        const difference = s.cash_difference != null ? Number(s.cash_difference) : null;
+        const onHandCsv = calculateOnHand(s.denominations);
+        const difference = onHandCsv !== null
+            ? Number((onHandCsv - computeExpectedCash(s, agg)).toFixed(2))
+            : null;
 
         return [
           s.startTime ? fmtDate(s.startTime) : "N/A",
-          userMap[s.staffEmail] || s.staffEmail,
+          resolveStaffName(s),
           s.shiftPeriod || "",
           totalSales.toFixed(2),
           Number(agg.expenses || 0).toFixed(2),
@@ -308,7 +306,7 @@ const Shifts = ({ isActive = true, user }) => {
         const netTotal = totalSales - Number(agg.expenses || 0);
         return [
           s.startTime ? fmtDate(s.startTime) : "N/A",
-          userMap[s.staffEmail] || s.staffEmail,
+          resolveStaffName(s),
           s.shiftPeriod || "",
           pc.toFixed(2),
           ...perSvc,
@@ -403,15 +401,29 @@ const Shifts = ({ isActive = true, user }) => {
     }
   };
 
-  const openConsolidation = (shift) => {
-    const agg = txAggByShift[shift.id];
-    if (!agg) {
-      showSnackbar("Loading shift data...", "info");
-      return;
+  const openConsolidation = async (shift) => {
+    try {
+      showSnackbar("Loading shift transactions...", "info");
+      
+      const [resOrders, resPc, resEx] = await Promise.all([
+        supabase.from('order_items').select('*').eq('shift_id', shift.id).eq('is_deleted', false),
+        supabase.from('pc_transactions').select('*').eq('shift_id', shift.id).eq('is_deleted', false),
+        supabase.from('expenses').select('*').eq('shift_id', shift.id).eq('is_deleted', false)
+      ]);
+
+      const transactions = [
+        ...(resOrders.data || []).map(d => ({ ...d, item: d.name, paymentMethod: d.payment_method, total: Number(d.amount), amount: Number(d.amount) })),
+        ...(resPc.data || []).map(d => ({ ...d, item: d.type || 'PC Rental', paymentMethod: d.payment_method, total: Number(d.amount), amount: Number(d.amount) })),
+        ...(resEx.data || []).map(d => ({ ...d, item: 'Expenses', paymentMethod: 'Cash', total: Number(d.amount), amount: Number(d.amount) }))
+      ];
+
+      setConsolidationShift(shift);
+      setConsolidationTx(transactions);
+      setConsolidationOpen(true);
+    } catch (err) {
+      console.error(err);
+      showSnackbar("Failed to load shift transactions for consolidation.", "error");
     }
-    setConsolidationShift(shift);
-    setConsolidationTx(agg.fullTransactions || []);
-    setConsolidationOpen(true);
   };
 
   if (viewingShift) {
@@ -632,8 +644,10 @@ const Shifts = ({ isActive = true, user }) => {
                 const totalSales = serviceSales + pc;
                 const netTotal = totalSales - expenses;
 
-                // Use DB-stored cash_difference (set at consolidation). null = not consolidated.
-                const difference = s.cash_difference != null ? Number(s.cash_difference) : null;
+                // Compute live from denominations — no dependency on stored cash_difference
+                const difference = onHand !== null
+                    ? Number((onHand - computeExpectedCash(s, agg)).toFixed(2))
+                    : null;
 
                 return (
                   <TableRow
@@ -673,7 +687,7 @@ const Shifts = ({ isActive = true, user }) => {
                     <TableCell sx={{ display: { xs: "none", sm: "table-cell" } }}>{s.shiftPeriod || "—"}</TableCell>
                     <TableCell sx={{ pr: 1 }}>
                       <Typography variant="body2" noWrap>
-                        {seqIdToName[s.staffId] || s.staffId}
+                        {resolveStaffName(s)}
                       </Typography>
                     </TableCell>
                     <TableCell align="right">{fmtPeso(totalSales)}</TableCell>
@@ -839,7 +853,7 @@ const Shifts = ({ isActive = true, user }) => {
                       {s.startTime ? fmtDate(s.startTime) : "N/A"}
                     </TableCell>
                     <TableCell sx={{ pl: { xs: 1, sm: 2 }, whiteSpace: "nowrap" }}>{s.shiftPeriod}</TableCell>
-                    <TableCell sx={{ maxWidth: 220 }}><Typography noWrap>{userMap[s.staffEmail] || s.staffEmail}</Typography></TableCell>
+                    <TableCell sx={{ maxWidth: 220 }}><Typography noWrap>{resolveStaffName(s)}</Typography></TableCell>
                     <TableCell align="right">{fmtPeso(s.pcRentalTotal || 0)}</TableCell>
                     {serviceNames.map((h) => (<TableCell key={h} align="right">{fmtPeso(agg?.serviceTotals?.[h] || 0)}</TableCell>))}
                     <TableCell align="right">{fmtPeso((agg?.sales || 0) + Number(s.pcRentalTotal || 0))}</TableCell>

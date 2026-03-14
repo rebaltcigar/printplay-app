@@ -87,7 +87,7 @@ const BLANK_ENTRY = { staffEmail: '', date: '', shiftLabel: '', startTime: '', e
 const BLANK_TPL = { name: '', startTime: '', endTime: '' };
 
 // ---------- Staff chip ----------
-function StaffChip({ entry, onEdit, onDelete, onAbsent, onCoverage }) {
+function StaffChip({ entry, onEdit, onDelete, onAbsent, onCoverage, userMap }) {
   const cfg = STATUS_CFG[entry.status] || STATUS_CFG.scheduled;
   return (
     <Box
@@ -104,9 +104,9 @@ function StaffChip({ entry, onEdit, onDelete, onAbsent, onCoverage }) {
           <Typography variant="caption" fontWeight={600} display="block" noWrap lineHeight={1.3}>
             {entry.staff_name || entry.staff_email}
           </Typography>
-          {entry.covered_by_name && (
+          {entry.covered_by_id && (
             <Typography variant="caption" color="warning.main" display="block" noWrap lineHeight={1.2}>
-              ↳ {entry.covered_by_name}
+              ↳ {userMap?.[entry.covered_by_id] || 'Covered'}
             </Typography>
           )}
         </Box>
@@ -134,7 +134,7 @@ function StaffChip({ entry, onEdit, onDelete, onAbsent, onCoverage }) {
 
 // ---------- Main component ----------
 export default function Schedule({ showSnackbar }) {
-  const { staffOptions, loading: staffLoading } = useStaff();
+  const { staffOptions, userMap, loading: staffLoading } = useStaff();
   const staffOnly = useMemo(() => staffOptions.filter(s => s.role === ROLES.STAFF), [staffOptions]);
 
   const [tab, setTab] = useState(0);
@@ -357,9 +357,7 @@ export default function Schedule({ showSnackbar }) {
       const s = staffOnly.find(x => x.email === coverStaff);
       const { error } = await supabase.from('schedules').update({
         status: 'covered',
-        covered_by_uid: s?.uid || '',
-        covered_by_email: coverStaff,
-        covered_by_name: s ? (s.fullName || coverStaff) : coverStaff,
+        covered_by_id: s?.id || null,
         updated_at: new Date().toISOString(),
       }).eq('id', coverDlg.entry.id);
       if (error) throw error;
@@ -468,8 +466,8 @@ export default function Schedule({ showSnackbar }) {
   const entryActions = {
     onEdit: openEdit,
     onDelete: handleDelete,
-    onAbsent: handleMarkAbsent,
     onCoverage: (e) => { setCoverStaff(''); setCoverDlg({ open: true, entry: e }); },
+    userMap,
   };
 
   return (
@@ -641,8 +639,8 @@ export default function Schedule({ showSnackbar }) {
                           <Chip label={cfg.label} color={cfg.color} size="small" />
                         </TableCell>
                         <TableCell>
-                          {entry.covered_by_name ? (
-                            <Typography variant="body2">{entry.covered_by_name}</Typography>
+                          {entry.covered_by_id ? (
+                            <Typography variant="body2">{userMap?.[entry.covered_by_id] || 'Covered'}</Typography>
                           ) : (
                             <Typography variant="caption" color="text.secondary">—</Typography>
                           )}

@@ -105,7 +105,7 @@ export default function POS({ user, staffId, userRole, activeShiftId, shiftPerio
   // Services and staff from shared hooks (replaces manual useEffect blocks)
   const { allServices, serviceList, expenseTypes: expenseServiceItems, posItems, variantMap } = usePOSServices();
   const services = serviceList;
-  const { staffOptions } = useStaffList();
+  const { staffOptions, seqIdToName, idToName, emailToName } = useStaffList();
 
   // --- SHIFT TIMER ---
   const {
@@ -155,8 +155,22 @@ export default function POS({ user, staffId, userRole, activeShiftId, shiftPerio
     setPrintInvoiceData(order);
   };
 
-  const handleOpenOrderAsTab = (order) => {
-    loadOrder(order);
+  const handleOpenOrderAsTab = async (order) => {
+    const { data } = await supabase
+      .from('order_items')
+      .select('id, name, price, quantity, amount, metadata, is_deleted')
+      .eq('parent_order_id', order.id)
+      .eq('is_deleted', false);
+
+    const transactions = (data || []).map(d => ({
+      ...d,
+      item: d.name,
+      total: d.amount,
+      notes: d.metadata?.note || '',
+      isDeleted: false,
+    }));
+
+    loadOrder(order, transactions);
   };
 
 
@@ -359,29 +373,34 @@ export default function POS({ user, staffId, userRole, activeShiftId, shiftPerio
     const fetchTransactions = async () => {
       console.log(`[POS] Fetching combined transactions for shift: ${activeShiftId}`);
       try {
-        const [resOrders, resPc, resEx] = await Promise.all([
-          supabase.from('order_items').select('*').eq('shift_id', activeShiftId).eq('is_deleted', false),
-          supabase.from('pc_transactions').select('*').eq('shift_id', activeShiftId).eq('is_deleted', false),
-          supabase.from('expenses').select('*').eq('shift_id', activeShiftId).eq('is_deleted', false)
-        ]);
+        const { data, error } = await supabase.rpc('get_combined_transactions', {
+          p_start_time: new Date(0).toISOString(), // All time for this shift
+          p_end_time: new Date().toISOString(),
+          p_shift_id: activeShiftId,
+          p_limit: 50,
+          p_offset: 0
+        });
 
-        const combined = [
-          ...(resOrders.data || []).map(d => ({ ...d, item: d.name, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), staffId: d.staff_id, shiftId: d.shift_id })),
-          ...(resPc.data || []).map(d => ({ ...d, item: d.type || 'PC Rental', paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), staffId: d.staff_id, shiftId: d.shift_id })),
-          ...(resEx.data || []).map(d => ({ ...d, item: 'Expenses', paymentMethod: 'Cash', isDeleted: false, amount: Number(d.amount), total: Number(d.amount), expenseType: d.expense_type, staffId: d.staff_id, shiftId: d.shift_id, expenseStaffName: d.staff_name }))
-        ];
+        if (error) throw error;
 
-        combined.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-
-        setTransactions(combined.map(d => ({
-          ...d,
-          shiftId: d.shift_id,
-          orderNumber: d.order_number,
-          isDeleted: d.is_deleted,
-          paymentMethod: d.payment_method,
-          staffId: d.staff_id,
-          createdAt: d.created_at
-        })));
+        setTransactions((data || []).map(d => {
+          const quantity = Number(d.quantity || 1);
+          const amount = Number(d.amount || 0);
+          return {
+            ...d,
+            shiftId: d.shift_id,
+            isDeleted: d.is_deleted,
+            paymentMethod: d.payment_method,
+            staffId: d.staff_id,
+            createdAt: d.tx_timestamp,
+            timestamp: d.tx_timestamp,
+            total: amount,
+            quantity: quantity,
+            price: amount / Math.max(1, quantity),
+            expenseType: d.expense_type,
+            expenseStaffName: seqIdToName[d.staff_id] || idToName[d.staff_id] || emailToName[d.staff_id] || ''
+          };
+        }));
       } catch (err) {
         console.error("[POS] Fetch Transactions Error:", err);
       }
@@ -526,6 +545,8 @@ export default function POS({ user, staffId, userRole, activeShiftId, shiftPerio
           }}>
             <POSEntryPanel
               posView={posView}
+              manualEntryOpen={manualEntryOpen}
+              setManualEntryOpen={setManualEntryOpen}
               item={item}
               setItem={setItem}
               expenseType={expenseType}
@@ -548,35 +569,6 @@ export default function POS({ user, staffId, userRole, activeShiftId, shiftPerio
               quantityInputRef={quantityInputRef}
               priceInputRef={priceInputRef}
             />
-
-            {posView === 'new' && (
-              <POSEntryPanel
-                posView={posView}
-                manualEntryOpen={manualEntryOpen}
-                setManualEntryOpen={setManualEntryOpen}
-                item={item}
-                setItem={setItem}
-                expenseType={expenseType}
-                setExpenseType={setExpenseType}
-                expenseStaffEmail={expenseStaffEmail}
-                setExpenseStaffEmail={setExpenseStaffEmail}
-                expenseStaffId={expenseStaffId}
-                setExpenseStaffId={setExpenseStaffId}
-                staffOptions={staffOptions}
-                notes={notes}
-                setNotes={setNotes}
-                quantity={quantity}
-                setQuantity={setQuantity}
-                price={price}
-                setPrice={setPrice}
-                handleAddEntry={handleAddEntry}
-                handleItemChange={handleItemChange}
-                services={services}
-                expenseServiceItems={expenseServiceItems}
-                quantityInputRef={quantityInputRef}
-                priceInputRef={priceInputRef}
-              />
-            )}
 
             {/* CART (Flex Grow) */}
             <POSCartPanel
@@ -1026,7 +1018,7 @@ export default function POS({ user, staffId, userRole, activeShiftId, shiftPerio
               value={staffId}
               label="Select Staff"
               onChange={e => {
-                const s = staffOptions.find(o => o.sequential_id === e.target.value || o.id === e.target.value);
+                const s = staffOptions.find(o => o.staff_id === e.target.value || o.id === e.target.value);
                 if (s) {
                   // Actually, we should probably set a separate state for sessionStaffId
                   // But for now, let's just use the selected staff's info
@@ -1036,7 +1028,7 @@ export default function POS({ user, staffId, userRole, activeShiftId, shiftPerio
                 }
               }}
             >
-              {staffOptions.map(s => <MenuItem key={s.id} value={s.sequential_id || s.id}>{s.fullName}</MenuItem>)}
+              {staffOptions.map(s => <MenuItem key={s.id} value={s.staff_id || s.id}>{s.fullName}</MenuItem>)}
             </Select>
           </FormControl>
         </DialogContent>

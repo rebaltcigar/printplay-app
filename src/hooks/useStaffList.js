@@ -23,12 +23,12 @@ function buildMaps(data) {
         const fullName = v.full_name || v.name || v.email || 'Unknown';
         if (v.email) byEmail[v.email] = fullName;
         if (v.id) byId[v.id] = fullName;
-        if (v.sequential_id) bySeqId[v.sequential_id] = fullName;
+        if (v.staff_id) bySeqId[v.staff_id] = fullName;
 
         opts.push({
             id: v.id,
             uid: v.id,
-            sequential_id: v.sequential_id,
+            staff_id: v.staff_id,
             email: v.email,
             fullName,
             role: v.role || 'staff',

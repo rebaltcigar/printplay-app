@@ -448,9 +448,8 @@ export default function ExpenseManagement({ user }) {
 
       const expenseDoc = {
         id: expenseId,
-        item: formType,
         expense_type: formType,
-        staff_id: user?.id || null,
+        staff_id: formStaffId || null,
         quantity: qty,
         amount: total,
         notes: formNotes || "",

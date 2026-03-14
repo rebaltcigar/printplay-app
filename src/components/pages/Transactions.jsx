@@ -94,7 +94,7 @@ const Transactions = ({ isActive = true }) => {
   const [filterStatus, setFilterStatus] = useState("all");
 
   // Option lists from shared context providers
-  const { staffOptions, userMap } = useStaff();
+  const { staffOptions, userMap, seqIdToName, idToName } = useStaff();
   const { parentServiceNames: serviceItems, expenseServiceNames: expenseServiceItems } = useServices();
 
   // Shift options via hook (replaces manual useEffect + useState)
@@ -129,7 +129,7 @@ const Transactions = ({ isActive = true }) => {
   const [systemSettings, setSystemSettings] = useState({});
 
   useEffect(() => {
-    supabase.from('settings').select('*').eq('id', 'config').single().then(({ data }) => {
+    supabase.from('settings').select('*').eq('id', 'config').maybeSingle().then(({ data }) => {
       if (data) setSystemSettings(data);
     });
   }, []);
@@ -187,15 +187,15 @@ const Transactions = ({ isActive = true }) => {
         // for all three tables merged. We will perform a fetch on mount and not use realtime for now.
         try {
           const [resOrders, resPc, resEx] = await Promise.all([
-            supabase.from('order_items').select('*').gte('timestamp', s.toISOString()).lte('timestamp', e.toISOString()).order('timestamp', { ascending: false }).limit(200),
-            supabase.from('pc_transactions').select('*').gte('timestamp', s.toISOString()).lte('timestamp', e.toISOString()).order('timestamp', { ascending: false }).limit(200),
-            supabase.from('expenses').select('*').gte('timestamp', s.toISOString()).lte('timestamp', e.toISOString()).order('timestamp', { ascending: false }).limit(200)
+            supabase.from('order_items').select('id, name, amount, quantity, price, timestamp, is_deleted, is_edited, staff_id, shift_id, added_by_admin, parent_order_id, orders!parent_order_id(order_number, customer_name)').gte('timestamp', s.toISOString()).lte('timestamp', e.toISOString()).order('timestamp', { ascending: false }).limit(200),
+            supabase.from('pc_transactions').select('id, timestamp, amount, type, payment_method, is_deleted, staff_id, shift_id').gte('timestamp', s.toISOString()).lte('timestamp', e.toISOString()).order('timestamp', { ascending: false }).limit(200),
+            supabase.from('expenses').select('id, timestamp, amount, expense_type, is_deleted, staff_id, shift_id').gte('timestamp', s.toISOString()).lte('timestamp', e.toISOString()).order('timestamp', { ascending: false }).limit(200)
           ]);
 
           const combined = [
-            ...(resOrders.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name, addedByAdmin: d.added_by_admin, editedBy: d.edited_by, isEdited: d.is_edited, staffId: d.staff_id, shiftId: d.shift_id, source: d.source })),
-            ...(resPc.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name, addedByAdmin: d.added_by_admin, editedBy: d.edited_by, isEdited: d.is_edited, staffId: d.staff_id, shiftId: d.shift_id, source: d.source })),
-            ...(resEx.data || []).map(d => ({ ...d, item: 'Expenses', paymentMethod: 'Cash', isDeleted: false, amount: Number(d.amount), total: Number(d.amount), expenseType: d.expense_type, expenseStaffName: d.staff_name, editedBy: d.edited_by, isEdited: d.is_edited, staffId: d.staff_id, shiftId: d.shift_id, source: d.source }))
+            ...(resOrders.data || []).map(d => ({ ...d, item: d.name, orderNumber: d.orders?.order_number, paymentMethod: d.payment_method, amount: Number(d.amount), total: Number(d.amount), price: Number(d.price ?? d.amount), quantity: d.quantity || 1, customerName: d.orders?.customer_name, addedByAdmin: d.added_by_admin, editedBy: null, isEdited: d.is_edited, staffId: d.staff_id, shiftId: d.shift_id, source: 'pos' })),
+            ...(resPc.data || []).map(d => ({ ...d, item: d.type || 'PC Rental', paymentMethod: d.payment_method, amount: Number(d.amount), total: Number(d.amount), price: Number(d.amount), quantity: 1, customerName: 'Walk-in', addedByAdmin: false, editedBy: null, isEdited: false, staffId: d.staff_id, shiftId: d.shift_id, source: 'pc' })),
+            ...(resEx.data || []).map(d => ({ ...d, item: 'Expenses', paymentMethod: 'Cash', amount: Number(d.amount), total: Number(d.amount), expenseType: d.expense_type, expenseStaffName: seqIdToName[d.staff_id] || idToName[d.staff_id] || userMap[d.staff_id] || '', quantity: d.quantity || 1, price: Number(d.amount) / Math.max(1, Number(d.quantity || 1)), editedBy: null, isEdited: false, staffId: d.staff_id, shiftId: d.shift_id, source: 'expense' }))
           ];
 
           combined.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
@@ -211,7 +211,7 @@ const Transactions = ({ isActive = true }) => {
     }
   };
 
-  const fetchNextPage = async (isReset = false, forceAll = false) => {
+    const fetchNextPage = async (isReset = false, forceAll = false) => {
     if (forceAll) {
       await fetchAllTransactions(false);
       return;
@@ -221,45 +221,38 @@ const Transactions = ({ isActive = true }) => {
     try {
       const s = new Date(start); s.setHours(0, 0, 0, 0);
       const e = new Date(end); e.setHours(23, 59, 59, 999);
-      // cursor = timestamp of last loaded row; null means first page
-      const cursorTs = isReset ? null : lastDoc;
+      const offset = isReset ? 0 : tx.length;
 
-      const buildQuery = (table) => {
-        let q = supabase.from(table).select('*')
-          .gte('timestamp', s.toISOString())
-          .lte('timestamp', e.toISOString())
-          .order('timestamp', { ascending: false })
-          .limit(PAGE_SIZE);
-        if (cursorTs) q = q.lt('timestamp', cursorTs);
-        return q;
-      };
+      const { data, error } = await supabase.rpc('get_combined_transactions', {
+        p_start_time: s.toISOString(),
+        p_end_time: e.toISOString(),
+        p_limit: PAGE_SIZE,
+        p_offset: offset,
+        p_staff_id: staffId || null,
+        p_shift_id: shiftId || null,
+        p_show_deleted: showDeleted
+      });
 
-      const [resOrders, resPc, resEx] = await Promise.all([
-        buildQuery('order_items'),
-        buildQuery('pc_transactions'),
-        buildQuery('expenses'),
-      ]);
+      if (error) throw error;
 
-      const newRows = [
-        ...(resOrders.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name, addedByAdmin: d.added_by_admin, editedBy: d.edited_by, isEdited: d.is_edited, staffId: d.staff_id, shiftId: d.shift_id, source: d.source })),
-        ...(resPc.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name, addedByAdmin: d.added_by_admin, editedBy: d.edited_by, isEdited: d.is_edited, staffId: d.staff_id, shiftId: d.shift_id, source: d.source })),
-        ...(resEx.data || []).map(d => ({ ...d, item: 'Expenses', paymentMethod: 'Cash', isDeleted: false, amount: Number(d.amount), total: Number(d.amount), expenseType: d.expense_type, expenseStaffName: d.staff_name, editedBy: d.edited_by, isEdited: d.is_edited, staffId: d.staff_id, shiftId: d.shift_id, source: d.source })),
-      ];
+      const newRows = (data || []).map(d => {
+        const quantity = Number(d.quantity || 1);
+        const amount = Number(d.amount || 0);
+        return {
+          ...d,
+          timestamp: d.tx_timestamp, // Maintain backward compatibility in UI
+          isDeleted: d.is_deleted,
+          total: amount,
+          amount: amount,
+          quantity: quantity,
+          price: amount / Math.max(1, quantity),
+          expenseType: d.expense_type,
+          expenseStaffName: seqIdToName[d.staff_id] || idToName[d.staff_id] || userMap[d.staff_id] || ''
+        };
+      });
 
-      newRows.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-      const page = newRows.slice(0, PAGE_SIZE);
-
-      setTx(prev => isReset ? page : [...prev, ...page]);
-
-      if (page.length > 0) {
-        setLastDoc(page[page.length - 1].timestamp);
-      }
-
-      // If any table returned a full PAGE_SIZE batch, there may be more rows
-      const anyTableFull = (resOrders.data?.length || 0) >= PAGE_SIZE
-        || (resPc.data?.length || 0) >= PAGE_SIZE
-        || (resEx.data?.length || 0) >= PAGE_SIZE;
-      setHasMore(page.length === PAGE_SIZE && anyTableFull);
+      setTx(prev => isReset ? newRows : [...prev, ...newRows]);
+      setHasMore(newRows.length === PAGE_SIZE);
 
     } catch (err) {
       console.error("Pagination error", err);
@@ -286,24 +279,24 @@ const Transactions = ({ isActive = true }) => {
         const s = new Date(start); s.setHours(0, 0, 0, 0);
         const e = new Date(end); e.setHours(23, 59, 59, 999);
         const [r1, r2, r3] = await Promise.all([
-          supabase.from('order_items').select('*').gte('timestamp', s.toISOString()).lte('timestamp', e.toISOString()).order('timestamp', { ascending: false }),
-          supabase.from('pc_transactions').select('*').gte('timestamp', s.toISOString()).lte('timestamp', e.toISOString()).order('timestamp', { ascending: false }),
-          supabase.from('expenses').select('*').gte('timestamp', s.toISOString()).lte('timestamp', e.toISOString()).order('timestamp', { ascending: false })
+          supabase.from('order_items').select('id, name, amount, quantity, price, timestamp, is_deleted, is_edited, staff_id, shift_id, added_by_admin, parent_order_id, orders!parent_order_id(order_number, customer_name)').gte('timestamp', s.toISOString()).lte('timestamp', e.toISOString()).order('timestamp', { ascending: false }),
+          supabase.from('pc_transactions').select('id, timestamp, amount, type, payment_method, is_deleted, staff_id, shift_id').gte('timestamp', s.toISOString()).lte('timestamp', e.toISOString()).order('timestamp', { ascending: false }),
+          supabase.from('expenses').select('id, timestamp, amount, expense_type, is_deleted, staff_id, shift_id').gte('timestamp', s.toISOString()).lte('timestamp', e.toISOString()).order('timestamp', { ascending: false })
         ]);
         resOrders = r1; resPc = r2; resEx = r3;
       } else {
         const [r1, r2, r3] = await Promise.all([
-          supabase.from('order_items').select('*').order('timestamp', { ascending: false }),
-          supabase.from('pc_transactions').select('*').order('timestamp', { ascending: false }),
-          supabase.from('expenses').select('*').order('timestamp', { ascending: false })
+          supabase.from('order_items').select('id, name, amount, total, quantity, price, timestamp, is_deleted, is_edited, edited_by, staff_id, shift_id, source, customer_name, added_by_admin, parent_order_id, orders!parent_order_id(order_number)').order('timestamp', { ascending: false }),
+          supabase.from('pc_transactions').select('id, timestamp, amount, type, payment_method, is_deleted, is_edited, edited_by, staff_id, shift_id, source, customer_name, added_by_admin').order('timestamp', { ascending: false }),
+          supabase.from('expenses').select('id, timestamp, amount, expense_type, is_deleted, is_edited, edited_by, staff_id, shift_id, source').order('timestamp', { ascending: false })
         ]);
         resOrders = r1; resPc = r2; resEx = r3;
       }
 
       const combined = [
-        ...(resOrders.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name, addedByAdmin: d.added_by_admin, editedBy: d.edited_by, isEdited: d.is_edited, staffId: d.staff_id, shiftId: d.shift_id, source: d.source })),
-        ...(resPc.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name, addedByAdmin: d.added_by_admin, editedBy: d.edited_by, isEdited: d.is_edited, staffId: d.staff_id, shiftId: d.shift_id, source: d.source })),
-        ...(resEx.data || []).map(d => ({ ...d, item: 'Expenses', paymentMethod: 'Cash', isDeleted: false, amount: Number(d.amount), total: Number(d.amount), expenseType: d.expense_type, expenseStaffName: d.staff_name, editedBy: d.edited_by, isEdited: d.is_edited, staffId: d.staff_id, shiftId: d.shift_id, source: d.source }))
+        ...(resOrders.data || []).map(d => ({ ...d, item: d.name, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), price: Number(d.price ?? d.amount), quantity: d.quantity || 1, customerName: d.customer_name, addedByAdmin: d.added_by_admin, editedBy: d.edited_by, isEdited: d.is_edited, staffId: d.staff_id, shiftId: d.shift_id, source: d.source })),
+        ...(resPc.data || []).map(d => ({ ...d, item: d.type || 'PC Rental', paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), price: Number(d.amount), quantity: 1, customerName: d.customer_name, addedByAdmin: d.added_by_admin, editedBy: d.edited_by, isEdited: d.is_edited, staffId: d.staff_id, shiftId: d.shift_id, source: d.source })),
+        ...(resEx.data || []).map(d => ({ ...d, item: 'Expenses', paymentMethod: 'Cash', isDeleted: false, amount: Number(d.amount), total: Number(d.amount), expenseType: d.expense_type, expenseStaffName: seqIdToName[d.staff_id] || idToName[d.staff_id] || userMap[d.staff_id] || '', quantity: d.quantity || 1, price: Number(d.amount) / Math.max(1, Number(d.quantity || 1)), editedBy: d.edited_by, isEdited: d.is_edited, staffId: d.staff_id, shiftId: d.shift_id, source: d.source }))
       ];
 
       combined.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
@@ -440,10 +433,10 @@ const Transactions = ({ isActive = true }) => {
   const handleReprint = async (row) => {
     try {
       let rawOrder;
-      if (row.order_id) {
+      if (row.parent_order_id) {
         const [ordRes, itemsRes] = await Promise.all([
-          supabase.from('orders').select('id, order_number, total, staff_name, customer_name, timestamp, payment_method, amount_tendered, change').eq('id', row.order_id).single(),
-          supabase.from('order_items').select('*').eq('parent_order_number', row.order_number)
+          supabase.from('orders').select('id, order_number, total, staff_id, customer_name, timestamp, payment_method, amount_tendered, change').eq('id', row.parent_order_id).single(),
+          supabase.from('order_items').select('*').eq('parent_order_id', row.parent_order_id)
         ]);
 
         if (ordRes.data) {
@@ -459,7 +452,7 @@ const Transactions = ({ isActive = true }) => {
               subtotal: i.amount
             })),
             total: ord.total,
-            staffName: ord.staff_name,
+            staffName: seqIdToName[ord.staff_id] || ord.staff_id || 'Staff',
             customerName: ord.customer_name,
             timestamp: ord.timestamp,
             paymentMethod: ord.payment_method,
@@ -475,7 +468,7 @@ const Transactions = ({ isActive = true }) => {
           id: row.id,
           orderNumber: row.orderNumber || "ADHOC",
           timestamp: row.timestamp,
-          staffName: row.staffEmail || 'Staff',
+          staffName: seqIdToName[row.staffId] || row.staffId || 'Staff',
           customerName: row.customerName || 'Walk-in',
           items: [{
             name: row.item,
@@ -523,10 +516,10 @@ const Transactions = ({ isActive = true }) => {
   const handlePrintInvoice = async (row) => {
     try {
       let rawOrder;
-      if (row.order_id) {
+      if (row.parent_order_id) {
         const [ordRes, itemsRes] = await Promise.all([
-          supabase.from('orders').select('id, order_number, total, staff_name, customer_name, timestamp, payment_method, amount_tendered, change, customer_phone, customer_address, customer_tin').eq('id', row.order_id).single(),
-          supabase.from('order_items').select('*').eq('parent_order_number', row.order_number)
+          supabase.from('orders').select('id, order_number, total, staff_id, customer_name, timestamp, payment_method, amount_tendered, change, customer_phone, customer_address, customer_tin').eq('id', row.parent_order_id).single(),
+          supabase.from('order_items').select('*').eq('parent_order_id', row.parent_order_id)
         ]);
 
         if (ordRes.data) {
@@ -542,7 +535,7 @@ const Transactions = ({ isActive = true }) => {
               subtotal: i.amount
             })),
             total: ord.total,
-            staffName: ord.staff_name,
+            staffName: seqIdToName[ord.staff_id] || ord.staff_id || 'Staff',
             customerName: ord.customer_name,
             customerPhone: ord.customer_phone,
             customerAddress: ord.customer_address,
@@ -561,7 +554,7 @@ const Transactions = ({ isActive = true }) => {
           id: row.id,
           orderNumber: row.orderNumber || "ADHOC",
           timestamp: row.timestamp,
-          staffName: row.staffEmail || 'Staff',
+          staffName: seqIdToName[row.staffId] || row.staffId || 'Staff',
           customerName: row.customerName || 'Walk-in',
           items: [{
             name: row.item,
@@ -959,12 +952,12 @@ const Transactions = ({ isActive = true }) => {
             <InputLabel>Staff</InputLabel>
             <Select
               label="Staff"
-              value={staffEmail}
-              onChange={(e) => setStaffEmail(e.target.value)}
+              value={staffId}
+              onChange={(e) => setStaffId(e.target.value)}
             >
               <MenuItem value="">All staff</MenuItem>
               {staffOptions.map((s) => (
-                <MenuItem key={s.email} value={s.email}>
+                <MenuItem key={s.staff_id || s.id} value={s.staff_id || s.id}>
                   {s.fullName}
                 </MenuItem>
               ))}
@@ -1151,7 +1144,7 @@ const Transactions = ({ isActive = true }) => {
                       }
                     </TableCell>
                     <TableCell>
-                      {userMap[r.staffEmail] || r.staffEmail || '—'}
+                      {seqIdToName[r.staffId] || idToName[r.staffId] || '—'}
                     </TableCell>
                     <TableCell sx={{ whiteSpace: 'nowrap' }}>
                       {shiftOptions.find(s => s.id === r.shiftId)?.displayId || (r.shiftId ? r.shiftId.slice(-8).toUpperCase() : '—')}
@@ -1288,7 +1281,7 @@ const Transactions = ({ isActive = true }) => {
                 </Box>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                   <Typography variant="body2" color="text.secondary">Staff</Typography>
-                  <Typography variant="body2">{userMap[detailRow.staffEmail] || detailRow.staffEmail || '—'}</Typography>
+                  <Typography variant="body2">{seqIdToName[detailRow.staffId] || idToName[detailRow.staffId] || '—'}</Typography>
                 </Box>
               </Stack>
             </Box>
@@ -1422,109 +1415,113 @@ const Transactions = ({ isActive = true }) => {
         )}
       </DetailDrawer>
 
-      {/* EDIT DIALOG (single row) */}
-      <Dialog open={editOpen} onClose={closeEdit} fullWidth maxWidth="sm">
-        <DialogTitle>Edit Transaction</DialogTitle>
-        <DialogContent dividers>
-          <Stack spacing={2} sx={{ mt: 1 }}>
-            <FormControl fullWidth>
-              <InputLabel>Item</InputLabel>
-              <Select
-                label="Item"
-                value={editItem}
-                onChange={(e) => setEditItem(e.target.value)}
-              >
-                {serviceItems.map((svc) => (
-                  <MenuItem key={svc} value={svc}>{svc}</MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+      {/* EDIT DRAWER (single row) */}
+      <DetailDrawer
+        open={editOpen}
+        onClose={closeEdit}
+        title="Edit Transaction"
+        width={480}
+        actions={
+          <>
+            <Button onClick={closeEdit}>Cancel</Button>
+            <Button variant="contained" onClick={saveEdit}>Save</Button>
+          </>
+        }
+      >
+        <Stack spacing={2} sx={{ p: 2 }}>
+          <FormControl fullWidth>
+            <InputLabel>Item</InputLabel>
+            <Select
+              label="Item"
+              value={editItem}
+              onChange={(e) => setEditItem(e.target.value)}
+            >
+              {serviceItems.map((svc) => (
+                <MenuItem key={svc} value={svc}>{svc}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
 
-            {editItem === "Expenses" && (
-              <>
+          {editItem === "Expenses" && (
+            <>
+              <FormControl fullWidth>
+                <InputLabel>Expense Type</InputLabel>
+                <Select
+                  label="Expense Type"
+                  value={editExpenseType}
+                  onChange={(e) => setEditExpenseType(e.target.value)}
+                >
+                  {expenseServiceItems.map((t) => (
+                    <MenuItem key={t} value={t}>{t}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              {(editExpenseType === "Salary" || editExpenseType === "Salary Advance") && (
                 <FormControl fullWidth>
-                  <InputLabel>Expense Type</InputLabel>
+                  <InputLabel>Staff</InputLabel>
                   <Select
-                    label="Expense Type"
-                    value={editExpenseType}
-                    onChange={(e) => setEditExpenseType(e.target.value)}
+                    label="Staff"
+                    value={editExpenseStaffId}
+                    onChange={(e) => setEditExpenseStaffId(e.target.value)}
                   >
-                    {expenseServiceItems.map((t) => (
-                      <MenuItem key={t} value={t}>{t}</MenuItem>
-                    ))}
+                    {staffOptions.length === 0 ? (
+                      <MenuItem value="" disabled>No staff available</MenuItem>
+                    ) : (
+                      staffOptions.map((s) => (
+                        <MenuItem key={s.id} value={s.id}>
+                          {s.fullName} — {s.email}
+                        </MenuItem>
+                      ))
+                    )}
                   </Select>
                 </FormControl>
-                {(editExpenseType === "Salary" || editExpenseType === "Salary Advance") && (
-                  <FormControl fullWidth>
-                    <InputLabel>Staff</InputLabel>
-                    <Select
-                      label="Staff"
-                      value={editExpenseStaffId}
-                      onChange={(e) => setEditExpenseStaffId(e.target.value)}
-                    >
-                      {staffOptions.length === 0 ? (
-                        <MenuItem value="" disabled>No staff available</MenuItem>
-                      ) : (
-                        staffOptions.map((s) => (
-                          <MenuItem key={s.id} value={s.id}>
-                            {s.fullName} — {s.email}
-                          </MenuItem>
-                        ))
-                      )}
-                    </Select>
-                  </FormControl>
-                )}
-              </>
-            )}
+              )}
+            </>
+          )}
 
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-              <TextField
-                label="Date"
-                type="date"
-                value={editDate}
-                onChange={(e) => setEditDate(e.target.value)}
-                InputLabelProps={{ shrink: true }}
-                fullWidth
-              />
-              <TextField
-                label="Time"
-                type="time"
-                value={editTime}
-                onChange={(e) => setEditTime(e.target.value)}
-                InputLabelProps={{ shrink: true }}
-                fullWidth
-              />
-            </Stack>
-
+          <Stack direction="row" spacing={2}>
             <TextField
-              label="Quantity"
-              type="number"
-              value={editQuantity}
-              onChange={(e) => setEditQuantity(e.target.value)}
+              label="Date"
+              type="date"
+              value={editDate}
+              onChange={(e) => setEditDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
               fullWidth
             />
             <TextField
-              label="Price"
-              type="number"
-              value={editPrice}
-              onChange={(e) => setEditPrice(e.target.value)}
-              fullWidth
-            />
-            <TextField
-              label="Notes"
-              multiline
-              rows={3}
-              value={editNotes}
-              onChange={(e) => setEditNotes(e.target.value)}
+              label="Time"
+              type="time"
+              value={editTime}
+              onChange={(e) => setEditTime(e.target.value)}
+              InputLabelProps={{ shrink: true }}
               fullWidth
             />
           </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={closeEdit}>Cancel</Button>
-          <Button variant="contained" onClick={saveEdit}>Save</Button>
-        </DialogActions>
-      </Dialog>
+
+          <TextField
+            label="Quantity"
+            type="number"
+            value={editQuantity}
+            onChange={(e) => setEditQuantity(e.target.value)}
+            fullWidth
+          />
+          <TextField
+            label="Price"
+            type="number"
+            value={editPrice}
+            onChange={(e) => setEditPrice(e.target.value)}
+            fullWidth
+          />
+          <TextField
+            label="Notes"
+            multiline
+            rows={3}
+            value={editNotes}
+            onChange={(e) => setEditNotes(e.target.value)}
+            fullWidth
+          />
+        </Stack>
+      </DetailDrawer>
 
       {/* BULK DATE DIALOG */}
       <Dialog open={bulkOpen} onClose={() => setBulkOpen(false)} fullWidth maxWidth="xs">

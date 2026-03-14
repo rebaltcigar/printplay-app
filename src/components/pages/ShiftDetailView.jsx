@@ -121,9 +121,9 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
       ]);
 
       const combined = [
-        ...(resOrders.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name, addedBy: d.added_by, addedByAdmin: d.added_by_admin, isEdited: d.is_edited, editedBy: d.edited_by, expenseType: null, expenseStaffName: null, quantity: d.quantity || 1, price: d.price ?? d.amount })),
-        ...(resPc.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name, addedBy: d.added_by, addedByAdmin: d.added_by_admin, isEdited: d.is_edited, editedBy: d.edited_by, expenseType: null, expenseStaffName: null, quantity: 1, price: d.amount })),
-        ...(resEx.data || []).map(d => ({ ...d, item: 'Expenses', paymentMethod: 'Cash', isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: null, addedBy: d.added_by, addedByAdmin: d.added_by_admin, isEdited: d.is_edited, editedBy: d.edited_by, expenseType: d.expense_type, expenseStaffName: d.staff_name, quantity: d.quantity || 1, price: Number(d.amount || 0) / Math.max(1, Number(d.quantity || 1)) }))
+        ...(resOrders.data || []).map(d => ({ ...d, item: d.name, paymentMethod: d.payment_method, isDeleted: !!d.is_deleted, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name, addedBy: d.added_by, addedByAdmin: d.added_by_admin, isEdited: d.is_edited, editedBy: d.edited_by, expenseType: null, expenseStaffName: null, quantity: d.quantity || 1, price: d.price ?? d.amount })),
+        ...(resPc.data || []).map(d => ({ ...d, item: d.type || 'PC Rental', paymentMethod: d.payment_method, isDeleted: !!d.is_deleted, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name, addedBy: d.added_by, addedByAdmin: d.added_by_admin, isEdited: d.is_edited, editedBy: d.edited_by, expenseType: null, expenseStaffName: null, quantity: 1, price: d.amount })),
+        ...(resEx.data || []).map(d => ({ ...d, item: 'Expenses', paymentMethod: 'Cash', isDeleted: !!d.is_deleted, amount: Number(d.amount), total: Number(d.amount), customerName: null, addedBy: d.added_by, addedByAdmin: d.added_by_admin, isEdited: d.is_edited, editedBy: d.edited_by, expenseType: d.expense_type, expenseStaffName: d.staff_name, quantity: d.quantity || 1, price: Number(d.amount || 0) / Math.max(1, Number(d.quantity || 1)) }))
       ];
 
       combined.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
@@ -367,7 +367,7 @@ export default function ShiftDetailView({ shift, userMap, onBack }) {
 
         const displayId = item === "Expenses"
           ? await generateDisplayId("expenses", "EXP")
-          : await generateDisplayId("transactions", "TX");
+          : await generateDisplayId("order_items", "OI");
 
         const isExpense = item === "Expenses";
         const table = isExpense ? 'expenses' : 'order_items'; // Simplify: new added tx are usually order items unless PC

@@ -33,7 +33,7 @@ export default function ExpenseSettings({ showSnackbar }) {
             const { data } = await supabase
                 .from('products')
                 .select('*')
-                .eq('category', 'Expense');
+                .or('category.eq.Expense,financial_category.eq.Expense');
             if (data) {
                 const list = [...data].sort((a, b) => {
                     if (a.active === b.active) return a.name.localeCompare(b.name);

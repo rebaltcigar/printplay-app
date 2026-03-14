@@ -1,127 +1,139 @@
-import admin from 'firebase-admin';
+// scripts/migrate_auth.js
+// CSV-based auth migration — no Firebase dependency.
+// Reads exports/users.csv, creates Supabase Auth users + profiles rows.
+// staff_id is auto-assigned by the trg_profile_staff_id trigger on insert.
+
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-const isProd = process.argv.includes('--prod');
-const envFile = isProd ? '.env.production' : '.env.development';
-const serviceAccountPath = isProd
-    ? './firebase-service-account-prod.json'
-    : './firebase-service-account-dev.json';
-
-dotenv.config({ path: envFile });
-
-const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
-if (!admin.apps.length) {
-    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-}
-const db = admin.firestore();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const root = path.join(__dirname, '..');
+dotenv.config({ path: path.join(root, '.env.development') });
 
 const supabase = createClient(
     process.env.VITE_SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
+    process.env.VITE_SUPABASE_SERVICE_ROLE_KEY
 );
 
-async function migrateAuth() {
-    try {
-        console.log('🔄 Fetching users from Firebase Auth...');
-        const listUsersResult = await admin.auth().listUsers(1000);
-        let fbUsers = listUsersResult.users;
+// ---- CSV parser (handles quoted fields, "" escape, BOM) ----
+function parseCSV(text) {
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    let i = 0;
+    const n = text.length;
+    let headers = null;
+    const records = [];
 
-        console.log(`Found ${fbUsers.length} users in Firebase Auth.`);
-
-        // 1. Fetch Firestore Roles and Pins
-        const usersSnap = await db.collection('users').get();
-        const firestoreUsers = {};
-        usersSnap.docs.forEach(d => {
-            firestoreUsers[d.id] = d.data();
-        });
-
-        // 2. Fetch legacy app_admins
-        const adminSnap = await db.collection('app_admins').doc('admin_list').get();
-        let appAdmins = [];
-        if (adminSnap.exists) {
-            appAdmins = adminSnap.data().emails || [];
+    function readField() {
+        if (i >= n) return '';
+        if (text[i] === '"') {
+            i++;
+            let f = '';
+            while (i < n) {
+                if (text[i] === '"' && text[i + 1] === '"') { f += '"'; i += 2; }
+                else if (text[i] === '"') { i++; break; }
+                else f += text[i++];
+            }
+            return f;
         }
-
-        for (const fbu of fbUsers) {
-            console.log(`\n👨‍💼 Processing: ${fbu.email}`);
-
-            // Generate a secure but temporary password holding
-            const tempPassword = 'PrintPlay$' + Math.random().toString(36).slice(-8);
-
-            // Create Supabase Auth User via Admin API
-            const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-                email: fbu.email,
-                email_confirm: true,
-                password: tempPassword,
-                user_metadata: {
-                    full_name: fbu.displayName || ''
-                }
-            });
-
-            if (authError) {
-                if (authError.message.includes('already registered')) {
-                    console.log(`   🔸 User already exists in Auth, skipping auth creation.`);
-                } else {
-                    console.error(`   ❌ Failed to create auth user:`, authError.message);
-                    continue;
-                }
-            }
-
-            // If user already exists, we must fetch their UUID to link the Profile
-            let supaUserId = authData?.user?.id;
-            if (!supaUserId) {
-                const { data: existingUser } = await supabase.auth.admin.listUsers();
-                const matched = existingUser.users.find(u => u.email === fbu.email);
-                if (matched) supaUserId = matched.id;
-            }
-
-            if (!supaUserId) {
-                console.error(`   ❌ Could not resolve Supabase ID for ${fbu.email}`);
-                continue;
-            }
-
-            // 3. Reconcile Role & Pin
-            let fsUser = firestoreUsers[fbu.uid] || Object.values(firestoreUsers).find(u => u.email === fbu.email);
-
-            let role = 'staff';
-            if (appAdmins.includes(fbu.email)) {
-                role = 'admin';
-            }
-            if (fsUser && fsUser.role) {
-                if (fsUser.role.toLowerCase() === 'admin') role = 'admin';
-                else if (fsUser.role.toLowerCase() === 'owner') role = 'owner';
-                else if (fsUser.role.toLowerCase() === 'superadmin') role = 'superadmin';
-            }
-
-            const profileData = {
-                id: supaUserId,
-                email: fbu.email,
-                full_name: fbu.displayName
-                    || (fsUser ? (fsUser.fullName || fsUser.full_name || fsUser.name || fsUser.displayName) : null)
-                    || fbu.email.split('@')[0],
-                role: role,
-                pin_code: fsUser ? fsUser.pinCode : null,
-                requires_password_reset: true // Force them to set a real password via UI later
-            };
-
-            // 4. Upsert into public.profiles
-            const { error: profileError } = await supabase.from('profiles').upsert(profileData);
-            if (profileError) {
-                console.error(`   ❌ Failed to insert profile map:`, profileError.message);
-            } else {
-                console.log(`   ✅ Success! Created as [${role}] with pin: [${profileData.pin_code || 'None'}]`);
-            }
-        }
-
-        console.log('\n🚀 ALL USERS AND PROFILES MIGRATED!');
-        process.exit(0);
-
-    } catch (e) {
-        console.error('💥 Crash:', e);
-        process.exit(1);
+        let f = '';
+        while (i < n && text[i] !== ',' && text[i] !== '\r' && text[i] !== '\n') f += text[i++];
+        return f;
     }
+
+    while (i < n) {
+        const fields = [];
+        while (i < n && text[i] !== '\r' && text[i] !== '\n') {
+            fields.push(readField());
+            if (i < n && text[i] === ',') i++;
+            else break;
+        }
+        while (i < n && (text[i] === '\r' || text[i] === '\n')) i++;
+
+        if (!fields.length || (fields.length === 1 && !fields[0])) continue;
+        if (!headers) { headers = fields; }
+        else {
+            const obj = {};
+            headers.forEach((h, j) => { obj[h] = fields[j] ?? ''; });
+            records.push(obj);
+        }
+    }
+    return records;
 }
 
-migrateAuth();
+async function main() {
+    const csvPath = path.join(root, 'exports', 'users.csv');
+    const rows = parseCSV(fs.readFileSync(csvPath, 'utf8'));
+    console.log(`Found ${rows.length} users in users.csv\n`);
+
+    for (const r of rows) {
+        const email = r.email?.trim();
+        if (!email) { console.log('Skip: no email'); continue; }
+
+        // Assemble payroll_config from CSV fields
+        const defaultRate = parseFloat(r['payroll.defaultRate']) || 0;
+        let rateHistory = [];
+        if (r['payroll.rateHistory']) {
+            try {
+                rateHistory = JSON.parse(r['payroll.rateHistory']).map(e => ({
+                    rate: e.rate,
+                    effectiveFrom: e.effectiveFrom?._seconds
+                        ? new Date(e.effectiveFrom._seconds * 1000).toISOString()
+                        : (e.effectiveFrom || null)
+                }));
+            } catch { /* malformed rateHistory — skip */ }
+        }
+
+        console.log(`Processing: ${email}`);
+
+        // Create Supabase Auth user
+        const tempPassword = 'Kunek$' + Math.random().toString(36).slice(-8);
+        const { data: authData, error: authErr } = await supabase.auth.admin.createUser({
+            email,
+            email_confirm: true,
+            password: tempPassword,
+            user_metadata: { full_name: r.fullName }
+        });
+
+        let uid = authData?.user?.id;
+
+        if (authErr) {
+            if (authErr.message.match(/already|registered/i)) {
+                const { data: list } = await supabase.auth.admin.listUsers({ perPage: 1000 });
+                uid = list?.users?.find(u => u.email === email)?.id;
+                console.log(`  Already exists — uid: ${uid}`);
+            } else {
+                console.error(`  ❌ Auth error: ${authErr.message}`);
+                continue;
+            }
+        }
+
+        if (!uid) { console.error(`  ❌ Could not resolve UID for ${email}`); continue; }
+
+        // Upsert profile
+        // Note: staff_id is auto-assigned by trg_profile_staff_id trigger on insert.
+        const role = ['superadmin', 'admin', 'owner', 'staff'].includes(r.role?.toLowerCase())
+            ? r.role.toLowerCase() : 'staff';
+
+        const { error: pErr } = await supabase.from('profiles').upsert({
+            id: uid,
+            email,
+            full_name: r.fullName || email.split('@')[0],
+            role,
+            suspended: r.suspended === 'true',
+            payroll_config: { defaultRate, rateHistory },
+            requires_password_reset: true,
+        });
+
+        if (pErr) console.error(`  ❌ Profile error: ${pErr.message}`);
+        else console.log(`  ✅ [${role}]  payroll_config: rate=${defaultRate}, history=${rateHistory.length} entries`);
+    }
+
+    console.log('\n✅ Auth migration complete!');
+    console.log('\nVerify: check Supabase Auth dashboard — should show', rows.length, 'users.');
+    console.log('Next:   node scripts/import-from-csv.mjs');
+}
+
+main().catch(e => { console.error('Fatal:', e); process.exit(1); });

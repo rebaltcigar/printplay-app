@@ -27,15 +27,25 @@ function mapRow(d) {
 }
 
 async function fetchAndCache() {
-    const { data, error } = await supabase
-        .from('products')
-        .select('*')
-        .order('sort_order', { ascending: true });
+    const { data, error } = await supabase.rpc('get_pos_catalog');
 
-    if (error) { console.error("Error fetching services:", error); return; }
+    if (error) { console.error("Error fetching POS catalog:", error); return; }
     if (!data) return;
 
-    const allServices = data.map(mapRow);
+    // The RPC might return a single object (JSONB) or an array of rows (RETURNS TABLE)
+    // Supabase JS client returns an array for set-returning functions/TABLEs
+    const res = Array.isArray(data) ? data[0] : data;
+    if (!res) return;
+
+    // We combine products, variants, and expense_types into allServices for backward compatibility
+    // We tag items from expense_types so they can be identified even if RPC doesn't return the parent product
+    const allRows = [
+        ...(res.products || []),
+        ...(res.variants || []),
+        ...(res.expense_types || []).map(e => ({ ...e, _isExpense: true }))
+    ];
+
+    const allServices = allRows.map(mapRow);
     _cache = { allServices, setAt: Date.now() };
     notifyListeners(_cache);
 }
@@ -85,7 +95,7 @@ export function useServiceList() {
     // { name, category } for aggregateShiftTransactions (Shifts.jsx)
     const serviceMeta = useMemo(() =>
         allServices
-            .map(s => ({ name: s.serviceName || '', category: s.category || '' }))
+            .map(s => ({ name: s.serviceName || '', category: s.financialCategory || '' }))
             .filter(s => s.name),
         [allServices]
     );

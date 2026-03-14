@@ -30,223 +30,128 @@ const resolveCustomer = async (customer, userEmail) => {
  */
 export const saveCheckout = async ({ currentOrder, paymentData, user, activeShiftId, currentTotal }) => {
     const { discount, subtotal } = paymentData;
-
-    // 1. Resolve customer (create if new)
-    const finalCustomer = await resolveCustomer(currentOrder.customer, user?.email);
-
-    const isUnpaid = paymentData.paymentMethod === 'Charge' || paymentData.paymentMethod === 'Pay Later';
-    
-    // Use the same sequential ID for both PK and display number
-    const orderId = await generateDisplayId('orders', 'OR');
-    const orderNum = orderId; 
-
     const staffId = getStaffIdentity(user);
 
-    // 2. Prepare Order Object
-    const fullOrder = {
-        id: orderId,
-        order_number: orderNum,
+    // Prepare Payload for perform_checkout RPC
+    const payload = {
+        staff_id: staffId,
+        staff_name: user?.full_name || user?.displayName || user?.email || 'Staff',
         shift_id: activeShiftId,
-        invoice_status: isUnpaid ? 'UNPAID' : 'PAID',
-        ...createOrderObject(
-            currentOrder.items,
-            currentTotal,
-            paymentData.paymentMethod,
-            paymentData.paymentDetails,
-            paymentData.amountTendered,
-            paymentData.change,
-            finalCustomer,
-            user,
-            discount,
-            subtotal
-        ),
-        staff_id: staffId // Override if createOrderObject uses old mapping
+        payment_method: paymentData.paymentMethod,
+        payment_details: paymentData.paymentDetails || {},
+        amount_tendered: Number(paymentData.amountTendered),
+        change: Number(paymentData.change),
+        subtotal: Number(subtotal || currentTotal),
+        total: Number(paymentData.total || currentTotal),
+        discount: discount || {},
+        due_date: paymentData.dueDate || null,
+        customer: {
+            isNew: currentOrder.customer?.isNew || false,
+            id: currentOrder.customer?.id || null,
+            fullName: currentOrder.customer?.fullName || currentOrder.customer?.full_name || 'Walk-in Customer',
+            phone: currentOrder.customer?.phone || '',
+            address: currentOrder.customer?.address || '',
+            tin: currentOrder.customer?.tin || ''
+        },
+        items: currentOrder.items.map(item => ({
+            serviceId: item.serviceId || null,
+            name: item.serviceName || item.name,
+            price: Number(item.price),
+            costPrice: Number(item.costPrice || 0),
+            quantity: Number(item.quantity),
+            category: item.category || 'Revenue',
+            note: item.note || '',
+            consumables: item.consumables || [],
+            trackStock: item.trackStock || false
+        }))
     };
 
-    // 3. Add Order to DB
-    const { error: orderErr } = await supabase.from('orders').insert([fullOrder]);
-    if (orderErr) throw orderErr;
-
-    // 4. Create AR Invoice if Charge
-    if (paymentData.paymentMethod === 'Charge') {
-        await createInvoice(
-            { ...fullOrder, id: orderId },
-            { staffId, shiftId: activeShiftId, dueDate: paymentData.dueDate || null }
-        );
+    const { data, error } = await supabase.rpc('perform_checkout', { p_payload: payload });
+    if (error) {
+        console.error("Checkout RPC failed:", error);
+        throw error;
     }
 
-    // 5. Process Line Items (Bulk Insert to order_items)
-    const txIds = await generateBatchIds("transactions", "TX", currentOrder.items.length);
-    const orderItemsPayload = currentOrder.items.map((item, index) => ({
-        id: txIds[index],
-        order_id: orderId,
-        name: item.serviceName || item.name,
-        product_id: item.serviceId || null,
-        price: Number(item.price),
-        cost_price: Number(item.costPrice || 0),
-        quantity: Number(item.quantity),
-        amount: Number(item.price) * Number(item.quantity),
-        timestamp: new Date().toISOString(),
-        staff_id: staffId,
-        customer_name: finalCustomer?.fullName || 'Walk-in',
-        customer_id: finalCustomer?.id || null,
-        shift_id: activeShiftId,
-        category: 'Revenue',
-        payment_method: paymentData.paymentMethod,
-        invoice_status: isUnpaid ? 'UNPAID' : 'PAID',
-        financial_category: 'Revenue',
-        is_deleted: false,
-        metadata: {
-            note: item.note || '',
-            parentServiceId: item.parentServiceId || null,
-            variantGroup: item.variantGroup || null,
-            variantLabel: item.variantLabel || null,
-            paymentDetails: paymentData.paymentDetails || {},
-            consumables: item.consumables || []
-        }
-    }));
-
-    if (orderItemsPayload.length > 0) {
-        const { error: txErr } = await supabase.from('order_items').insert(orderItemsPayload);
-        if (txErr) throw txErr;
-    }
-
-    // 6. Inventory Deduction (Atomic Batch RPC)
-    const inventoryItems = [];
-    for (const item of currentOrder.items) {
-        if (item.trackStock && item.serviceId) {
-            inventoryItems.push({ id: item.serviceId, qty: Number(item.quantity) });
-        }
-        if (item.consumables && item.consumables.length > 0) {
-            for (const c of item.consumables) {
-                inventoryItems.push({ id: c.itemId, qty: Number(c.qty) * Number(item.quantity) });
-            }
-        }
-    }
-
-    if (inventoryItems.length > 0) {
-        const { error: invErr } = await supabase.rpc('batch_decrement_stock', { p_items: inventoryItems });
-        if (invErr) {
-            console.error("Batch inventory deduction failed:", invErr);
-        }
-    }
-
-    return { ...fullOrder, id: orderId };
+    return { ...payload, id: data.id, order_number: data.order_number };
 };
 
 /**
  * Updates an existing order (re-checkout/edit).
  */
 export const updateCheckout = async ({ order, paymentData, user, activeShiftId, currentTotal }) => {
-    // 1. Resolve customer
-    const finalCustomer = await resolveCustomer(order.customer, user?.email);
+    const staffId = getStaffIdentity(user);
 
-    const finalItems = [];
-    const newItemsToInsert = [];
+    const itemsToInsert = [];
     const itemsToUpdate = [];
+    const inventoryAdjustments = []; // Array of { id, delta }
 
-    // 2. Pre-generate IDs for new items
-    const newItemsCount = order.items.filter(i => !i.transactionId).length;
-    let newIds = [];
-    if (newItemsCount > 0) {
-        newIds = await generateBatchIds("transactions", "TX", newItemsCount);
-    }
-    let newIdIndex = 0;
+    // 1. Process Items (Calculate deltas for inventory if needed, though RPC update is safer)
+    // To keep the RPC simple, we can pass inventory deltas from the frontend
+    // or let the RPC handle it if we pass the original state.
+    // For now, let's keep it consistent: the RPC updates stock based on deltas provided.
+    
+    // NOTE: This implementation assumes the frontend knows the delta.
+    // However, a better way is to pass current items and let RPC reconcile.
+    // Given the request for efficiency, a single RPC with a well-defined payload is best.
 
-    // 3. Process Items
     for (const item of order.items) {
         const itemAmount = Number(item.price) * Number(item.quantity);
-
         if (item.transactionId) {
             itemsToUpdate.push({
                 id: item.transactionId,
-                payment_method: paymentData.paymentMethod,
-                amount: itemAmount,
-                quantity: Number(item.quantity),
-                price: Number(item.price)
-            });
-        } else {
-            const displayId = newIds[newIdIndex++] || `TX-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-            newItemsToInsert.push({
-                id: displayId,
-                order_id: order.originalId || order.id,
-                name: item.name || item.serviceName,
-                product_id: item.serviceId || null,
                 price: Number(item.price),
                 quantity: Number(item.quantity),
                 amount: itemAmount,
-                timestamp: new Date().toISOString(),
-                staff_id: getStaffIdentity(user),
-                customer_name: finalCustomer?.fullName || 'Walk-in',
-                customer_id: finalCustomer?.id || null,
-                shift_id: activeShiftId,
-                category: 'Revenue',
-                payment_method: paymentData.paymentMethod,
-                financial_category: 'Revenue',
-                is_deleted: false,
-                metadata: {
-                    note: item.note || '',
-                    paymentDetails: paymentData.paymentDetails || {}
-                }
+                payment_method: paymentData.paymentMethod
+            });
+        } else {
+            itemsToInsert.push({
+                serviceId: item.serviceId || null,
+                name: item.name || item.serviceName,
+                price: Number(item.price),
+                costPrice: Number(item.costPrice || 0),
+                quantity: Number(item.quantity),
+                category: item.category || 'Revenue',
+                note: item.note || '',
+                consumables: item.consumables || [],
+                trackStock: item.trackStock || false
             });
         }
-        finalItems.push({
-            itemId: item.id || item.itemId,
-            name: item.name || item.serviceName,
-            price: Number(item.price),
-            quantity: Number(item.quantity),
-            subtotal: itemAmount
-        });
     }
 
-    // Insert new items
-    if (newItemsToInsert.length > 0) {
-        const { error: insErr } = await supabase.from('order_items').insert(newItemsToInsert);
-        if (insErr) throw insErr;
-    }
-
-    // Update existing items in parallel in order_items
-    const updatePromises = itemsToUpdate.map(upItem => {
-        const payload = {
-            payment_method: upItem.payment_method,
-            amount: upItem.amount,
-            quantity: upItem.quantity,
-            price: upItem.price,
-            updated_at: new Date().toISOString()
-        };
-        return supabase.from('order_items').update(payload).eq('id', upItem.id);
-    });
-    await Promise.all(updatePromises);
-
-    // 4. Process Deletions
-    if (order.deletedItems && order.deletedItems.length > 0) {
-        const delIds = order.deletedItems.map(d => d.transactionId);
-        await supabase.from('order_items')
-            .update({
-                is_deleted: true,
-                metadata: { deleted_by: user.email, deleted_at: new Date().toISOString() }
-            })
-            .in('id', delIds);
-    }
-
-    // 5. Update Order Doc
-    const updateObj = {
-        subtotal: paymentData.subtotal || currentTotal,
-        total: paymentData.total || currentTotal,
+    const payload = {
+        order_id: order.originalId || order.id,
+        staff_id: staffId,
+        shift_id: activeShiftId,
         payment_method: paymentData.paymentMethod,
         payment_details: paymentData.paymentDetails || {},
         amount_tendered: Number(paymentData.amountTendered),
         change: Number(paymentData.change),
-        customer_id: finalCustomer?.id || null,
-        customer_name: finalCustomer?.fullName || 'Walk-in Customer',
-        customer_phone: finalCustomer?.phone || '',
-        customer_address: finalCustomer?.address || '',
-        customer_tin: finalCustomer?.tin || '',
-        updated_at: new Date().toISOString()
+        subtotal: Number(paymentData.subtotal || currentTotal),
+        total: Number(paymentData.total || currentTotal),
+        customer: {
+            isNew: order.customer?.isNew || false,
+            id: order.customer?.id || null,
+            fullName: order.customer?.fullName || order.customer?.full_name || 'Walk-in Customer',
+            phone: order.customer?.phone || '',
+            address: order.customer?.address || '',
+            tin: order.customer?.tin || ''
+        },
+        itemsToInsert,
+        itemsToUpdate,
+        itemsToDelete: (order.deletedItems || []).map(d => ({
+            id: d.transactionId,
+            reason: d.deleteReason || 'Unknown',
+            deleted_by: user.email
+        })),
+        inventoryAdjustments: [] // Assuming stock is handled separately or by a separate RPC call if complex
     };
 
-    const { error: ordErr } = await supabase.from('orders').update(updateObj).eq('id', order.originalId);
-    if (ordErr) throw ordErr;
+    const { data, error } = await supabase.rpc('update_checkout', { p_payload: payload });
+    if (error) {
+        console.error("Update Checkout RPC failed:", error);
+        throw error;
+    }
 
-    return { ...updateObj, id: order.originalId, order_number: order.orderNumber };
+    return { ...payload, id: data.id, order_number: order.orderNumber };
 };

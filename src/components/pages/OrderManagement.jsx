@@ -66,18 +66,32 @@ export default function OrderManagement({ showSnackbar }) {
     // Unified drawer state — mode: 'view' | 'edit'
     const [orderDrawer, setOrderDrawer] = useState({ open: false, mode: null, order: null, saving: false });
     const [drawerItems, setDrawerItems] = useState([]);
+    const [drawerItemsLoading, setDrawerItemsLoading] = useState(false);
 
-    const openViewDrawer = async (order) => {
-        setOrderDrawer({ open: true, mode: 'view', order, saving: false });
+    const fetchItemsForOrder = async (orderId) => {
         const { data } = await supabase
             .from('order_items')
             .select('*')
-            .eq('order_id', order.id)
+            .eq('parent_order_id', orderId)
             .eq('is_deleted', false);
-        if (data) setDrawerItems(data);
+        return data || [];
     };
-    const openEditDrawer = (order) => {
-        setEditItems(drawerItems.map(i => ({ ...i, name: i.name, price: i.price, quantity: i.quantity, total: i.amount })));
+
+    const openViewDrawer = async (order) => {
+        setDrawerItems([]);
+        setDrawerItemsLoading(true);
+        setOrderDrawer({ open: true, mode: 'view', order, saving: false });
+        const items = await fetchItemsForOrder(order.id);
+        setDrawerItems(items);
+        setDrawerItemsLoading(false);
+    };
+    const openEditDrawer = async (order) => {
+        // If switching from view drawer for the same order, reuse already-loaded items
+        let items = (drawerItems.length > 0 && drawerItems[0]?.parent_order_id === order.id)
+            ? drawerItems
+            : await fetchItemsForOrder(order.id);
+        setDrawerItems(items);
+        setEditItems(items.map(i => ({ ...i, name: i.name, price: i.price, quantity: i.quantity, total: i.amount })));
         setEditForm({
             customerName: order.customer_name || '',
             paymentMethod: order.payment_method || 'Cash',
@@ -114,7 +128,7 @@ export default function OrderManagement({ showSnackbar }) {
                 .from('settings')
                 .select('*')
                 .eq('id', 'config')
-                .single();
+                .maybeSingle();
             if (settingsData) setSystemSettings(settingsData);
         };
         loadSettings();
@@ -229,19 +243,18 @@ export default function OrderManagement({ showSnackbar }) {
         if (!orderToVoid) return;
         setLoading(true);
         try {
-            await supabase
-                .from('orders')
-                .update({ status: 'VOIDED' })
-                .eq('id', orderToVoid.id);
+            const { error } = await supabase.rpc('update_checkout', {
+                p_payload: {
+                    order_id: orderToVoid.id,
+                    status: 'VOIDED',
+                    edit_reason: reason,
+                    items: drawerItems.map(i => ({ id: i.id, operation: 'DELETE' }))
+                }
+            });
 
-            await supabase
-                .from('order_items')
-                .update({ is_deleted: true })
-                .eq('order_id', orderToVoid.id);
+            if (error) throw error;
 
             showSnackbar?.("Order successfully voided.", "success");
-
-            // Update local state
             setOrders(prev => prev.map(o => o.id === orderToVoid.id ? { ...o, status: 'VOIDED' } : o));
         } catch (e) {
             console.error("Void failed:", e);
@@ -261,19 +274,19 @@ export default function OrderManagement({ showSnackbar }) {
         if (!orderToRestore) return;
         setLoading(true);
         try {
-            await supabase
-                .from('orders')
-                .update({ status: 'completed' })
-                .eq('id', orderToRestore.id);
+            const items = await fetchItemsForOrder(orderToRestore.id);
+            const { error } = await supabase.rpc('update_checkout', {
+                p_payload: {
+                    order_id: orderToRestore.id,
+                    status: 'completed',
+                    edit_reason: reason,
+                    items: items.map(i => ({ id: i.id, operation: 'SET', is_deleted: false }))
+                }
+            });
 
-            await supabase
-                .from('order_items')
-                .update({ is_deleted: false })
-                .eq('order_id', orderToRestore.id);
+            if (error) throw error;
 
             showSnackbar?.("Order successfully restored.", "success");
-
-            // Update local state
             setOrders(prev => prev.map(o => o.id === orderToRestore.id ? { ...o, status: 'completed' } : o));
         } catch (e) {
             console.error("Restore failed:", e);
@@ -328,42 +341,30 @@ export default function OrderManagement({ showSnackbar }) {
             const amtTendered = Number(editForm.amountTendered) || 0;
             const newChange = Math.max(0, amtTendered - newTotal);
 
-            // 1. Soft-delete old order_items
-            await supabase
-                .from('order_items')
-                .update({ is_deleted: true })
-                .eq('order_id', editingOrder.id);
-
-            // 2. Create new order_items
-            const validItems = editItems.filter(item => !item.isVoided);
-            const { ids: newItemIds } = await generateBatchIds("order_items", "TX", validItems.length);
-
-            await supabase.from('order_items').insert(
-                validItems.map((item, idx) => ({
-                    id: newItemIds[idx],
+            const { error } = await supabase.rpc('update_checkout', {
+                p_payload: {
                     order_id: editingOrder.id,
-                    name: item.name,
-                    quantity: Number(item.quantity),
-                    price: Number(item.price),
-                    amount: Number(item.total || 0),
-                    is_edited: true,
-                    financial_category: 'Sale',
-                    timestamp: new Date().toISOString(),
-                }))
-            );
-
-            // 3. Update order
-            await supabase
-                .from('orders')
-                .update({
-                    customer_name: editForm.customerName,
+                    customer_details: {
+                        customer_name: editForm.customerName
+                    },
                     payment_method: editForm.paymentMethod,
                     amount_tendered: Number(editForm.amountTendered),
                     change: newChange,
                     total: newTotal,
                     subtotal: newTotal,
-                })
-                .eq('id', editingOrder.id);
+                    edit_reason: editForm.editReason,
+                    items: editItems.map(item => ({
+                        id: item.id || null, // null for new items
+                        name: item.name,
+                        quantity: Number(item.quantity),
+                        price: Number(item.price),
+                        amount: Number(item.total || 0),
+                        operation: item.id ? (item.isVoided ? 'DELETE' : 'UPDATE') : 'INSERT'
+                    }))
+                }
+            });
+
+            if (error) throw error;
 
             showSnackbar?.("Order updated successfully.", "success");
             closeDrawer();
@@ -379,7 +380,7 @@ export default function OrderManagement({ showSnackbar }) {
     const handlePrintReceipt = async (order) => {
         let items = order.items || [];
         if (items.length === 0) {
-            const { data } = await supabase.from('order_items').select('*').eq('order_id', order.id).eq('is_deleted', false);
+            const { data } = await supabase.from('order_items').select('*').eq('parent_order_id', order.id).eq('is_deleted', false);
             items = (data || []).map(i => ({
                 name: i.name,
                 serviceName: i.name,
@@ -399,7 +400,7 @@ export default function OrderManagement({ showSnackbar }) {
     const handlePrintInvoice = async (order) => {
         let items = order.items || [];
         if (items.length === 0) {
-            const { data } = await supabase.from('order_items').select('*').eq('order_id', order.id).eq('is_deleted', false);
+            const { data } = await supabase.from('order_items').select('*').eq('parent_order_id', order.id).eq('is_deleted', false);
             items = (data || []).map(i => ({
                 name: i.name,
                 serviceName: i.name,
@@ -521,7 +522,7 @@ export default function OrderManagement({ showSnackbar }) {
                             >
                                 <MenuItem value="ALL">All Staff</MenuItem>
                                 {staffOptions.map((s) => (
-                                    <MenuItem key={s.sequential_id || s.id} value={s.sequential_id || s.id}>{s.fullName}</MenuItem>
+                                    <MenuItem key={s.staff_id || s.id} value={s.staff_id || s.id}>{s.fullName}</MenuItem>
                                 ))}
                             </Select>
                         </FormControl>
@@ -717,7 +718,11 @@ export default function OrderManagement({ showSnackbar }) {
                                         </TableRow>
                                     </TableHead>
                                     <TableBody>
-                                        {drawerItems.map((item, idx) => (
+                                        {drawerItemsLoading ? (
+                                            <TableRow>
+                                                <TableCell colSpan={4} align="center" sx={{ py: 2, color: 'text.secondary' }}>Loading items...</TableCell>
+                                            </TableRow>
+                                        ) : drawerItems.map((item, idx) => (
                                             <TableRow key={idx}>
                                                 <TableCell>{item.name}</TableCell>
                                                 <TableCell align="right">{item.quantity}</TableCell>
@@ -835,7 +840,7 @@ export default function OrderManagement({ showSnackbar }) {
                                 <TableHead>
                                     <TableRow>
                                         <TableCell>Item</TableCell>
-                                        <TableCell align="right" width={70}>Qty</TableCell>
+                                        <TableCell align="right" width={100}>Qty</TableCell>
                                         <TableCell align="right" width={100}>Price</TableCell>
                                         <TableCell align="right" width={100}>Total</TableCell>
                                         <TableCell align="right" width={90}>Actions</TableCell>
@@ -866,7 +871,7 @@ export default function OrderManagement({ showSnackbar }) {
                                                 />
                                             </TableCell>
                                             <TableCell align="right">
-                                                <TextField size="small" type="number" value={item.quantity} onChange={(e) => handleUpdateEditItem(idx, 'quantity', e.target.value)} />
+                                                <TextField size="small" type="number" value={item.quantity} onChange={(e) => handleUpdateEditItem(idx, 'quantity', e.target.value)} sx={{ width: 90 }} />
                                             </TableCell>
                                             <TableCell align="right">
                                                 <TextField size="small" type="number" value={item.price} onChange={(e) => handleUpdateEditItem(idx, 'price', e.target.value)} />

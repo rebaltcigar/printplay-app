@@ -182,11 +182,12 @@ export default function App() {
           setStaffDisplayName('');
           setStaffSequentialId(null);
         } else {
-          // Look up user role
+          // Now that we have the staff UUID (p.id) and/or sequential staff_id (p.staff_id),
+          // we can correctly query the schedules table. (Fix 5 applied)
           const { data: userData, error: profileError } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle();
 
           if (profileError) {
-            console.warn("[App] Profile fetch error (RLS or network):", profileError.message);
+            console.warn("[App] Profile fetch error:", profileError.message);
           }
           // Always set the user — if profile is missing/blocked, role=null routes to login
           const role = userData?.role || null;
@@ -201,17 +202,19 @@ export default function App() {
             }
             
             setStaffDisplayName(userData?.full_name || userData?.email || user.email || '');
-            setStaffSequentialId(userData?.sequential_id || null);
+            setStaffSequentialId(userData?.staff_id || null);
 
             if (role === "staff") {
               const { data: statusData } = await supabase.from('app_status').select('*').eq('id', 'current_shift').maybeSingle();
 
-              if (statusData?.active_shift_id && (statusData.staff_id === user.id || statusData.staff_id === userData?.sequential_id)) {
+              if (statusData?.active_shift_id && (statusData.staff_id === user.id || statusData.staff_id === userData?.staff_id)) {
                 const shiftId = statusData.active_shift_id;
                 
                 // Accept both UUID format and sequential IDs (e.g. SH-100000000001)
-                const isValidShiftId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(shiftId)
-                  || /^[A-Z]{2}-\d+$/.test(shiftId);
+                const isValidShiftId = shiftId && (
+                  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(shiftId)
+                  || /^[A-Z]{2}-\d+$/.test(shiftId)
+                );
 
                 let shiftData = null;
                 if (isValidShiftId) {
@@ -356,22 +359,28 @@ export default function App() {
     }
 
     // Check shift lock only for staff
-    const { data: statusSnap } = await supabase.from('app_status').select('*').eq('id', 'current_shift').single();
+    const { data: statusSnap } = await supabase.from('app_status').select('*').eq('id', 'current_shift').maybeSingle();
     const lock = statusSnap || null;
 
-    const staffOwnsShift = lock?.staff_id === user.id || lock?.staff_id === userData.sequential_id;
+    const staffOwnsShift = lock?.staff_id === user.id || lock?.staff_id === userData.staff_id;
 
+    // Offer clock-in if shift is locked by another staff
     if (lock?.active_shift_id && !staffOwnsShift) {
-      // Another staff owns this shift — offer clock-in instead of blocking
-      const { data: shiftSnap } = await supabase.from('shifts').select('shift_period').eq('id', lock.active_shift_id).single();
+      // Re-validate shiftId presence and format
+      if (!lock.active_shift_id || typeof lock.active_shift_id !== 'string') {
+        console.warn("[App] Corrupt active_shift_id found:", lock.active_shift_id);
+        return { type: "fallback" };
+      }
+
+      const { data: shiftSnap } = await supabase.from('shifts').select('shift_period').eq('id', lock.active_shift_id).maybeSingle();
       const shiftPeriod = shiftSnap ? shiftSnap.shift_period || "" : "";
 
-      // Try to get the cashier's display name (lookup by UUID first, fall back to sequential_id)
+      // Try to get the cashier's display name (lookup by UUID first, fall back to staff_id)
       let cashierName = lock.staff_id;
       let cashierEmail = '';
       try {
         const { data: cashierSnap } = await supabase.from('profiles').select('full_name, email')
-          .or(`id.eq.${lock.staff_id},sequential_id.eq.${lock.staff_id}`)
+          .or(`id.eq.${lock.staff_id},staff_id.eq.${lock.staff_id}`)
           .maybeSingle();
         if (cashierSnap) {
           cashierName = cashierSnap.full_name || cashierSnap.email;
@@ -384,14 +393,14 @@ export default function App() {
 
     // Re-login: same staff has active shift
     if (lock?.active_shift_id && staffOwnsShift) {
-      const { data: shiftSnap } = await supabase.from('shifts').select('shift_period').eq('id', lock.active_shift_id).single();
+      const { data: shiftSnap } = await supabase.from('shifts').select('shift_period').eq('id', lock.active_shift_id).maybeSingle();
       const shiftPeriod = shiftSnap ? shiftSnap.shift_period || "" : "";
       return { type: "relogin", shiftPeriod };
     }
 
     // Query today's own scheduled entry
     const today = todayPHT();
-    const staffKey = userData.sequential_id || email;
+    const staffKey = userData.staff_id || email;
     const { data: ownSnap } = await supabase.from('schedules').select('*').eq('staff_id', staffKey);
     const ownEntry = (ownSnap || []).find(e => e.date === today && (e.status === "scheduled" || e.status === "in-progress"));
     if (ownEntry) return {
@@ -403,7 +412,11 @@ export default function App() {
     };
 
     // Query coverage entries (where this staff is covering someone)
-    const { data: coverSnap } = await supabase.from('schedules').select('*').eq('covered_by_email', email);
+    const { data: profileSnap } = await supabase.from('profiles').select('staff_id').eq('email', email).single();
+    const coverStaffId = profileSnap?.staff_id;
+    const { data: coverSnap } = coverStaffId
+        ? await supabase.from('schedules').select('*').eq('covered_by_id', coverStaffId)
+        : { data: [] };
     const coverEntry = (coverSnap || []).find(e => e.date === today && e.status === "covered");
     if (coverEntry) return {
       type: "covered", scheduleEntry: {
@@ -428,8 +441,10 @@ export default function App() {
     if (type === "relogin") {
       const { data: lock } = await supabase.from('app_status').select('*').eq('id', 'current_shift').single();
       const shiftId = lock?.active_shift_id;
-      const isValidShiftId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(shiftId)
-        || /^[A-Z]{2}-\d+$/.test(shiftId);
+      const isValidShiftId = shiftId && (
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(shiftId)
+        || /^[A-Z]{2}-\d+$/.test(shiftId)
+      );
 
       let shiftSnap = null;
       if (isValidShiftId) {
@@ -520,7 +535,7 @@ export default function App() {
 
     const { data: logRef, error: logError } = await supabase.from('payroll_logs').insert([{
       id: logId,
-      staff_uid: userData?.sequential_id || user.id,
+      staff_uid: userData?.staff_id || user.id,
       staff_email: user.email,
       staff_name: userData?.full_name || user.email,
       clock_in: new Date().toISOString(),

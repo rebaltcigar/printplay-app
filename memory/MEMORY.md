@@ -3,6 +3,16 @@
 ## Prod DB Migration Plan
 See [prod-migration-plan.md](prod-migration-plan.md) — 6 phases: Schema setup → Auth migration → Data migration → Backfill fixups → Local-to-prod testing → Go-live.
 
+## Migration Source Map (Firebase → Supabase)
+See [migration-source-map.md](migration-source-map.md) — full table/column mapping, JSONB reassembly rules, ID resequencing guide, transactions.csv split logic, and post-migration checklist. Schema v3.1.
+
+## Post-Import Code Fix Plan
+See [post-import-code-fix-plan.md](post-import-code-fix-plan.md) — 4 fix blocks across 11 files, to be applied after migration phases 1–6 complete:
+- Fix 1: `sequential_id` → `staff_id` (7 locations, idUtils + App + hooks + components)
+- Fix 2: `parent_order_number` → `parent_order_id` (3 query sites)
+- Fix 3: `covered_by_uid/email/name` → `covered_by_id` (Schedule + App + MyScheduleDrawer)
+- Fix 4: Remove `order_id` + `customer_name` from invoiceService insert payload
+
 ## Active Fix Plan (legacy dev reference)
 See [fix-plan-supabase-migration.md](fix-plan-supabase-migration.md) — 4 phases:
 - Phase 1: Auth stuck on loading screen (App.jsx authTimeout bug)

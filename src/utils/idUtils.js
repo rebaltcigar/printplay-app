@@ -2,10 +2,10 @@ import { supabase } from "../supabase";
 
 /**
  * Resolves the sequential staff ID from a user object.
- * Priority: user.sequential_id -> user.id -> 'unknown'
+ * Priority: user.staff_id -> user.id -> 'unknown'
  */
 export const getStaffIdentity = (user) => {
-    return user?.sequential_id || user?.id || 'unknown';
+    return user?.staff_id || user?.id || 'unknown';
 };
 
 /**

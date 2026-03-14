@@ -9,7 +9,6 @@ import { supabase } from '../../supabase';
 import { fmtDate as sharedFmtDate } from '../../utils/formatters';
 import DetailDrawer from '../common/DetailDrawer';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
-
 function todayPHT() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
 }
@@ -58,7 +57,7 @@ export default function MyScheduleDrawer({ open, onClose, staffId }) {
             shiftLabel: e.shift_label,
             startTime: e.start_time,
             endTime: e.end_time,
-            coveredByName: e.covered_by_name
+            coveredById: e.covered_by_id
           }))
           .filter(e => e.date >= today && e.date <= limit)
           .sort((a, b) => a.date.localeCompare(b.date));
@@ -110,9 +109,9 @@ export default function MyScheduleDrawer({ open, onClose, staffId }) {
                     {entry.startTime} – {entry.endTime}
                   </Typography>
                 )}
-                {entry.coveredByName && entry.status === 'covered' && (
+                {entry.coveredById && entry.status === 'covered' && (
                   <Typography variant="caption" color="warning.main" display="block">
-                    Covered by {entry.coveredByName}
+                    Covered by another staff
                   </Typography>
                 )}
               </Box>

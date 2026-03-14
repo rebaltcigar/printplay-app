@@ -1,6 +1,7 @@
 // src/hooks/useShiftFilters.js
 import { useState, useMemo } from 'react';
 import { getThisMonthDefaults, calculateOnHand } from '../services/shiftService';
+import { computeExpectedCash } from '../utils/shiftFinancials';
 
 export function useShiftFilters(shifts, txAggByShift, serviceMeta) {
     const { startStr: defaultStart, endStr: defaultEnd } = getThisMonthDefaults();
@@ -21,14 +22,14 @@ export function useShiftFilters(shifts, txAggByShift, serviceMeta) {
             // Period Filter
             if (filterShiftPeriod.length > 0 && !filterShiftPeriod.includes(s.shiftPeriod)) return false;
 
-            // Short/Overage Filters — use DB cash_difference (null = not consolidated)
-            if (s.cash_difference == null) {
+            // Short/Overage Filters — computed live from denominations
+            const _onHand = calculateOnHand(s.denominations);
+            if (_onHand === null) {
                 if (!filterShowShort || !filterShowOverage) return false;
             } else {
-                const isShort = s.cash_difference < 0;
-                const isOverage = s.cash_difference > 0;
-                if (!filterShowShort && isShort) return false;
-                if (!filterShowOverage && isOverage) return false;
+                const _diff = _onHand - computeExpectedCash(s, txAggByShift[s.id]);
+                if (!filterShowShort && _diff < 0) return false;
+                if (!filterShowOverage && _diff > 0) return false;
             }
 
             return true;
@@ -51,9 +52,9 @@ export function useShiftFilters(shifts, txAggByShift, serviceMeta) {
                 shiftsWithDenominations++;
             }
 
-            // Sum DB-stored differences (only consolidated shifts contribute)
-            if (s.cash_difference != null) {
-                difference += Number(s.cash_difference);
+            // Sum live-computed differences (only counted shifts contribute)
+            if (onHandVal !== null) {
+                difference += onHandVal - computeExpectedCash(s, agg);
             }
 
             if (agg) {

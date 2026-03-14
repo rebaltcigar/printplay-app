@@ -280,7 +280,6 @@ export default function UserManagement({ showSnackbar }) {
     if (createErr) throw createErr;
     const { error: insertErr } = await supabase.from('profiles').insert([{
       id: createData.user.id,
-      sequential_id: await generateDisplayId("profiles", "ST"),
       email,
       full_name: fullName,
       role,

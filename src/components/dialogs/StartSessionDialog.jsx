@@ -19,6 +19,7 @@ import AddIcon from '@mui/icons-material/Add';
 import { supabase } from '../../supabase';
 import { pcSessionService } from '../../services/pcSessionService';
 import { fmtCurrency } from '../../utils/formatters';
+import { generateDisplayId, getStaffIdentity } from '../../utils/idUtils';
 import { getBankIcon, GCashIcon, MayaIcon } from '../../assets/icons/bankIcons';
 import CustomerSelectionDrawer from '../pos/CustomerSelectionDrawer';
 
@@ -278,15 +279,21 @@ export default function StartSessionDialog({ open, station, activeSession, isQui
             }).eq('id', customerId);
           }
 
-          const txId = await generateDisplayId("transactions", "TX");
-          await supabase.from('transactions').insert([{
+          const txId = await generateDisplayId("pc_transactions", "PX");
+          await supabase.from('pc_transactions').insert([{
             id: txId,
-            item: `Account Top-up — ${customerName}`,
-            type: 'pc-topup', price: finalTotal, qty: 1,
-            payment_method: form.paymentMethod, staff_email: staff?.email,
-            customer_id: customerId, customer_name: customerName,
-            discount_amount: discountAmount, subtotal: Number(form.amountDue),
-            created_at: now,
+            type: 'pc-topup',
+            amount: finalTotal,
+            payment_method: form.paymentMethod,
+            staff_id: getStaffIdentity(user) || null,
+            customer_id: customerId || null,
+            financial_category: 'Sale',
+            metadata: {
+              item: `Account Top-up — ${customerName}`,
+              discount_amount: discountAmount,
+              subtotal: Number(form.amountDue),
+            },
+            timestamp: now,
           }]);
 
           showSnackbar(`Topped up ${addedMinutes} min to ${customerName}'s account`);

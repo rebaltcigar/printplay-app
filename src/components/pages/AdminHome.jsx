@@ -11,6 +11,7 @@ import { fmtCurrency } from "../../utils/formatters";
 import { getFriendlyErrorMessage } from "../../services/errorService";
 import { ROLES } from "../../utils/permissions";
 import dayjs from "dayjs";
+import debounce from "lodash.debounce";
 
 import {
   buildServiceMap,
@@ -34,13 +35,19 @@ import PageHeader from "../common/PageHeader";
 
 
 async function clearShiftLockIfMatches(shiftId, endedByEmail) {
-  const { data } = await supabase.from('app_status').select('*').eq('id', 'current_shift').maybeSingle();
-  if (data?.active_shift_id === shiftId) {
-    await supabase.from('app_status').update({
-      active_shift_id: null,
-      ended_by: endedByEmail || ROLES.ADMIN,
-      updated_at: new Date().toISOString()
-    }).eq('id', 'current_shift');
+  try {
+    const { data } = await supabase.from('app_status').select('*').eq('id', 'current_shift').maybeSingle();
+    if (data?.active_shift_id === shiftId) {
+      await supabase.from('app_status').update({
+        active_shift_id: null,
+        ended_by: endedByEmail || ROLES.ADMIN,
+        staff_id: null,
+        staff_email: null,
+        updated_at: new Date().toISOString()
+      }).eq('id', 'current_shift');
+    }
+  } catch (err) {
+    console.error("[AdminHome] Failed to clear shift lock:", err);
   }
 }
 
@@ -107,88 +114,66 @@ export default function AdminHome({ user, isActive = true }) {
   const [activeShiftTx, setActiveShiftTx] = useState([]);
   const fetchActiveDebounceRef = useRef(null);
 
-  /* 3. CURRENT SHIFT STATUS */
-  useEffect(() => {
-    const fetchStatus = async () => {
-      const { data } = await supabase.from('app_status').select('*').eq('id', 'current_shift').maybeSingle();
-      if (data) {
-        setCurrentShiftStatus({ id: data.id, activeShiftId: data.active_shift_id, staffEmail: data.staff_email });
-      } else {
-        setCurrentShiftStatus(null);
-      }
-    };
+  /* 3. INITIAL & LIVE DATA */
+  const fetchDashboardData = useCallback(async () => {
+    const { data, error } = await supabase.rpc('get_pos_init_data');
+    if (error) { console.error("[AdminHome] Init Error:", error); return; }
+    if (!data || data.length === 0) return;
 
-    fetchStatus();
+    const res = data[0];
+    if (res.app_status) {
+      setCurrentShiftStatus({
+        id: res.app_status.id,
+        activeShiftId: res.app_status.active_shift_id,
+        staffEmail: res.app_status.staff_email
+      });
+    } else {
+      setCurrentShiftStatus(null);
+    }
 
-    const channel = supabase.channel('current-shift-admin')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_status', filter: 'id=eq.current_shift' }, (payload) => {
-        if (payload.new && Object.keys(payload.new).length > 0) {
-          setCurrentShiftStatus({ id: payload.new.id, activeShiftId: payload.new.active_shift_id, staffEmail: payload.new.staff_email });
-        } else {
-          setCurrentShiftStatus(null);
-        }
-      })
-      .subscribe();
+    if (res.active_shift) {
+      setTheActiveShift({
+        ...res.active_shift,
+        pcRentalTotal: Number(res.active_shift.pc_rental_total),
+        startTime: res.active_shift.start_time
+      });
+    } else {
+      setTheActiveShift(null);
+    }
 
-    return () => supabase.removeChannel(channel);
+    if (res.recent_transactions) {
+      const list = res.recent_transactions.map(d => ({
+        ...d,
+        item: d.item,
+        total: Number(d.amount),
+        amount: Number(d.amount),
+        customerName: d.customer_name,
+        createdAt: d.timestamp
+      }));
+      setActiveShiftTx(list);
+    } else {
+      setActiveShiftTx([]);
+    }
   }, []);
 
-  /* 4. ACTIVE SHIFT DETAILS */
-  const fetchActiveShiftData = useCallback(async () => {
-    if (!currentShiftStatus?.activeShiftId) return;
-    const sid = currentShiftStatus.activeShiftId;
-
-    const { data: shiftData } = await supabase.from('shifts').select('*').eq('id', sid).maybeSingle();
-    if (shiftData) {
-      setTheActiveShift({
-        id: shiftData.id,
-        ...shiftData,
-        pcRentalTotal: Number(shiftData.pc_rental_total),
-        staffEmail: shiftData.staff_email,
-        startTime: shiftData.start_time
-      });
-    }
-
-    const [resOrders, resPc, resEx] = await Promise.all([
-      supabase.from('order_items').select('*').eq('shift_id', sid),
-      supabase.from('pc_transactions').select('*').eq('shift_id', sid),
-      supabase.from('expenses').select('*').eq('shift_id', sid)
-    ]);
-
-    const list = [
-      ...(resOrders.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name })),
-      ...(resPc.data || []).map(d => ({ ...d, paymentMethod: d.payment_method, isDeleted: false, amount: Number(d.amount), total: Number(d.amount), customerName: d.customer_name })),
-      ...(resEx.data || []).map(d => ({ ...d, item: 'Expenses', paymentMethod: 'Cash', isDeleted: false, amount: Number(d.amount), total: Number(d.amount), expenseType: d.expense_type }))
-    ];
-    setActiveShiftTx(list);
-  }, [currentShiftStatus?.activeShiftId]);
-
   useEffect(() => {
-    if (!currentShiftStatus?.activeShiftId) {
-      setTheActiveShift(null);
-      setActiveShiftTx([]);
-      return;
-    }
+    fetchDashboardData();
 
-    fetchActiveShiftData();
+    const debouncedFetch = debounce(fetchDashboardData, 1000, { leading: true, trailing: true });
 
-    const sid = currentShiftStatus.activeShiftId;
-    const debouncedFetch = () => {
-      clearTimeout(fetchActiveDebounceRef.current);
-      fetchActiveDebounceRef.current = setTimeout(fetchActiveShiftData, 300);
-    };
-
-    const channel = supabase.channel(`admin-tx-${sid}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items', filter: `shift_id=eq.${sid}` }, debouncedFetch)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'pc_transactions', filter: `shift_id=eq.${sid}` }, debouncedFetch)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses', filter: `shift_id=eq.${sid}` }, debouncedFetch)
+    const channel = supabase.channel('admin-dashboard-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_status', filter: 'id=eq.current_shift' }, fetchDashboardData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shifts' }, debouncedFetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, debouncedFetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pc_transactions' }, debouncedFetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, debouncedFetch)
       .subscribe();
 
     return () => {
-      clearTimeout(fetchActiveDebounceRef.current);
+      debouncedFetch.cancel();
       supabase.removeChannel(channel);
     };
-  }, [currentShiftStatus?.activeShiftId, fetchActiveShiftData]);
+  }, [fetchDashboardData]);
 
   // Map services from context
   const serviceMap = useMemo(() => buildServiceMap(services), [services]);
@@ -270,13 +255,21 @@ export default function AdminHome({ user, isActive = true }) {
       confirmLabel: "End Shift",
       confirmColor: "error",
       onConfirm: async (reason) => {
-        await supabase.from('shifts').update({
-          end_time: new Date().toISOString(),
-          forced_end_by: user.email,
-          forced_end_reason: reason,
-        }).eq('id', sid);
-        await clearShiftLockIfMatches(sid, user.email);
-        showSnackbar("Shift forced ended", "warning");
+        try {
+          const { error } = await supabase.from('shifts').update({
+            end_time: new Date().toISOString(),
+            forced_end_by: user.email,
+            forced_end_reason: reason,
+          }).eq('id', sid);
+          
+          if (error) throw error;
+
+          await clearShiftLockIfMatches(sid, user.email);
+          showSnackbar("Shift forced ended", "warning");
+        } catch (err) {
+          console.error("[AdminHome] Force end shift failed:", err);
+          showSnackbar(`Failed to end shift: ${getFriendlyErrorMessage(err)}`, "error");
+        }
       },
     });
   };

@@ -82,21 +82,23 @@ export default function EndSessionDialog({ open, station, session, onClose, show
 
       // Write transaction for postpaid (payment collected now)
       if (isPostpaid) {
-        const txId = await generateDisplayId("transactions", "TX");
-        await supabase.from('transactions').insert([{
+        const txId = await generateDisplayId("pc_transactions", "PX");
+        await supabase.from('pc_transactions').insert([{
           id: txId,
-          item: `PC Session — ${station.label || station.name}`,
           type: 'pc-session',
-          price: billAmount,
-          qty: 1,
+          amount: billAmount,
           payment_method: paymentMethod,
-          staff_id: getStaffIdentity(user) || staffUser?.email || null,
-          session_id: session.id,
-          station_id: station.id,
-          customer_id: session.customerId || null,
-          customer_name: session.customerName || 'Walk-in',
-          notes: `Postpaid · ${fmtDuration(billableMinutes)} · ${session.rateSnapshot?.name || ''}`,
-          created_at: now,
+          staff_id: getStaffIdentity(user) || null,
+          shift_id: session.shift_id || null,
+          customer_id: session.customer_id || null,
+          financial_category: 'Sale',
+          metadata: {
+            item: `PC Session — ${station.label || station.name}`,
+            session_id: session.id,
+            station_id: station.id,
+            notes: `Postpaid · ${fmtDuration(billableMinutes)} · ${session.rateSnapshot?.name || ''}`,
+          },
+          timestamp: now,
         }]);
       }
 

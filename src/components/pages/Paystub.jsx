@@ -39,8 +39,8 @@ export function Paystub({ stub }) {
   const paystubRef = useRef(null);
   const [storeName, setStoreName] = useState('Kunek');
   useEffect(() => {
-    supabase.from('settings').select('value').eq('id', 'config').single().then(({ data }) => {
-      if (data?.value?.storeName) setStoreName(data.value.storeName);
+    supabase.from('settings').select('store_name').eq('id', 'config').maybeSingle().then(({ data }) => {
+      if (data?.store_name) setStoreName(data.store_name);
     }).catch(() => { });
   }, []);
 

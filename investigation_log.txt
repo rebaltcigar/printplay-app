@@ -1,0 +1,59 @@
+Investigating Shift: SHIFT-001021
+Shift ID: SH-10000583
+
+--- Shift Record ---
+{
+  "id": "SH-10000583",
+  "display_id": "SHIFT-001021",
+  "staff_id": "ST-10000002",
+  "shift_period": "Morning",
+  "notes": null,
+  "schedule_id": null,
+  "start_time": "2026-03-14T01:00:00+00:00",
+  "end_time": "2026-03-14T13:00:00+00:00",
+  "system_total": 1236,
+  "pc_rental_total": 1005,
+  "services_total": 331,
+  "expenses_total": 100,
+  "total_ar": 0,
+  "total_cash": 1321,
+  "total_digital": 15,
+  "ar_payments_total": 0,
+  "denominations": {},
+  "last_consolidated_at": null,
+  "cash_difference": null,
+  "forced_end_by": null,
+  "forced_end_reason": null
+}
+
+--- Order Items ---
+- Print: ₱30 (Cash) [Cat: Revenue] 
+- Photocopy: ₱21 (Cash) [Cat: Revenue] 
+- Print: ₱18 (Cash) [Cat: Revenue] 
+- Print: ₱5 (Cash) [Cat: Revenue] 
+- Laminate: ₱20 (Cash) [Cat: Revenue] 
+- Print: ₱10 (Cash) [Cat: Revenue] 
+- Print: ₱10 (Cash) [Cat: Revenue] 
+- Laminate: ₱20 (Cash) [Cat: Revenue] 
+- Print: ₱10 (Cash) [Cat: Revenue] 
+- PC Rental: ₱15 (GCash) [Cat: Revenue] 
+- Photo: ₱40 (Cash) [Cat: Revenue] 
+- Photocopy: ₱21 (Cash) [Cat: Revenue] 
+- Print: ₱10 (Cash) [Cat: Revenue] 
+- Photocopy: ₱6 (Cash) [Cat: Revenue] 
+- Print: ₱110 (Cash) [Cat: Revenue] 
+
+--- PC Transactions ---
+
+--- Expenses ---
+- Misc: ₱50 
+
+--- Summary Analysis ---
+Stored pc_rental_total: ₱1005
+Sum of pc_transactions table total: ₱0
+Sum of order_items (exc. AR Payment): ₱346
+Sum of AR Payments: ₱0
+Sum of expenses: ₱50
+
+Calculation: (OI exc AR) + (PC Stored) = ₱1351
+Calculation: (OI inc AR) + (PC Table) = ₱346

@@ -16,11 +16,13 @@ export function useInvoices(filters = {}) {
 
   useEffect(() => {
     const fetchInvoices = async () => {
-      let query = supabase.from('invoices').select('*').order('created_at', { ascending: false });
+      let query = supabase.from('invoices').select('*, customer:customers!customer_id(full_name)').order('created_at', { ascending: false });
 
       if (filters.customerId) query = query.eq('customer_id', filters.customerId);
       if (filters.from) query = query.gte('created_at', filters.from.toISOString());
       if (filters.to) query = query.lte('created_at', filters.to.toISOString());
+      // Push non-overdue status filters to the DB; 'overdue' requires client-side date logic
+      if (filters.status && filters.status !== 'overdue') query = query.eq('status', filters.status);
 
       const { data, error } = await query;
 
@@ -30,18 +32,14 @@ export function useInvoices(filters = {}) {
           createdAt: d.created_at,
           dueDate: d.due_date,
           customerId: d.customer_id,
-          customerName: d.customer_name,
+          customerName: d.customer?.full_name || '',
           invoiceNumber: d.invoice_number,
           amountPaid: d.amount_paid
         }));
 
-        // Client-side status filtering
-        if (filters.status) {
-          if (filters.status === 'overdue') {
-            docs = docs.filter(isOverdue);
-          } else {
-            docs = docs.filter(inv => inv.status === filters.status);
-          }
+        // Client-side filter only for 'overdue' (needs date comparison)
+        if (filters.status === 'overdue') {
+          docs = docs.filter(isOverdue);
         }
 
         setInvoices(docs);

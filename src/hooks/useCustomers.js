@@ -13,24 +13,11 @@ export function useCustomers() {
     useEffect(() => {
         const fetchCustomers = async () => {
             setLoading(true);
-            const { data, error } = await supabase
-                .from('customers')
-                .select('*')
-                .order('full_name', { ascending: true });
+            const { data, error } = await supabase.rpc('get_customer_summaries');
 
             if (data) {
-                // Map full_name to fullName for backward compatibility
-                const mapped = data.map(d => ({
-                    ...d,
-                    fullName: d.full_name,
-                    lifetimeValue: d.lifetime_value,
-                    outstandingBalance: d.outstanding_balance,
-                    totalOrders: d.total_orders,
-                    createdAt: d.created_at
-                }));
-                // Client-side deleted check just in case legacy customers had it
-                const activeDocs = mapped.filter(d => d.isDeleted !== true);
-                setCustomers(activeDocs);
+                // The RPC already projects and sorts correctly
+                setCustomers(data);
             }
             if (error) console.error('useCustomers error:', error);
             setLoading(false);

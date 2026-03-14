@@ -25,7 +25,7 @@ export default function MyPaystubsDrawer({ open, onClose, staffId }) {
           .from('paystubs')
           .select('*')
           .eq('staff_id', staffId)
-          .order('pay_date', { ascending: false });
+          .order('created_at', { ascending: false });
 
         const list = (data || []).map(d => ({
           ...d,

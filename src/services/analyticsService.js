@@ -371,7 +371,9 @@ export function buildHourlySeries(transactions) {
   const hours = Array.from({ length: 24 }, (_, i) => ({ hour: i, count: 0, sales: 0 }));
 
   (transactions || []).forEach(t => {
-    if (t.isDeleted || t.financialCategory !== 'Revenue') return;
+    const isDeleted = t.isDeleted || t.is_deleted;
+    const finCat = t.financialCategory || t.financial_category;
+    if (isDeleted || finCat !== 'Revenue') return;
     const ts = dayjs(t.timestamp).tz(ZONE);
 
     if (!ts.isValid()) return;

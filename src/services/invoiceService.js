@@ -27,10 +27,7 @@ export const createInvoice = async (order, { staffId, staffEmail, user, shiftId,
     const invoiceDoc = {
         id: newId,
         invoice_number: invoiceNumber,
-        order_id: order.id || null,
-
         customer_id: normalized.customerId || normalized.customer_id || null,
-        customer_name: normalized.customerName,
 
         items: itemsForPg,
         subtotal: total,
@@ -85,14 +82,13 @@ export const recordPayment = async (invoiceId, { amount, method, note = '', staf
             amount_paid: newAmountPaid,
             balance: newBalance,
             status: newStatus,
-            updated_at: new Date().toISOString()
         })
         .eq('id', invoiceId);
 
     if (invErr) throw invErr;
 
     if (shiftId) {
-        const txId = await generateDisplayId('transactions', 'TX');
+        const txId = await generateDisplayId('order_items', 'OI');
         const tx = {
             id: txId,
             price: Number(amount),
@@ -104,7 +100,6 @@ export const recordPayment = async (invoiceId, { amount, method, note = '', staf
             },
             payment_method: method === 'gcash' ? 'GCash' : 'Cash',
             customer_id: current.customerId || current.customer_id || null,
-            customer_name: current.customerName || current.customer_name || 'Walk-in',
             staff_id: finalStaffId,
             shift_id: shiftId,
             timestamp: new Date().toISOString(),
@@ -230,7 +225,6 @@ export const writeOffInvoice = async (invoiceId, { reason, staffId, staffEmail, 
             amount_paid: Number(current.total),
             balance: 0,
             status: 'written_off',
-            updated_at: new Date().toISOString()
         })
         .eq('id', invoiceId);
 

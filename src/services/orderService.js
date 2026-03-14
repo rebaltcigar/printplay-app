@@ -47,9 +47,9 @@ export const deleteOrder = async (orderId, orderNumber, shiftId, userEmail, reas
         .from('orders')
         .update({
             status: 'VOIDED',
+            is_deleted: true,
             deleted_by: userEmail,
-            delete_reason: reason,
-            deleted_at: new Date().toISOString()
+            updated_at: new Date().toISOString()
         })
         .eq('id', orderId);
 
@@ -59,7 +59,7 @@ export const deleteOrder = async (orderId, orderNumber, shiftId, userEmail, reas
     const { data: linkedItems, error: itemsErr } = await supabase
         .from('order_items')
         .select('product_id, quantity, metadata')
-        .eq('order_id', orderId)
+        .eq('parent_order_id', orderId)
         .eq('shift_id', shiftId);
 
     if (itemsErr) throw itemsErr;
@@ -71,7 +71,7 @@ export const deleteOrder = async (orderId, orderNumber, shiftId, userEmail, reas
             is_deleted: true,
             metadata: { deleted_by: userEmail, delete_reason: reason, deleted_at: new Date().toISOString() }
         })
-        .eq('order_id', orderId)
+        .eq('parent_order_id', orderId)
         .eq('shift_id', shiftId);
 
     if (updateItemsErr) throw updateItemsErr;

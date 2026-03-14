@@ -20,13 +20,19 @@
     "samples": [
       {
         "_id": "current_shift",
-        "activeShiftId": "string",
-        "staffEmail": "string"
+        "active_shift_id": "string",
+        "staff_id": "string",
+        "staff_email": "string",
+        "ended_by": "string",
+        "updated_at": "timestamp"
       }
     ],
     "fields": [
-      "activeShiftId",
-      "staffEmail"
+      "active_shift_id",
+      "staff_id",
+      "staff_email",
+      "ended_by",
+      "updated_at"
     ]
   },
   "counters": {
@@ -948,18 +954,21 @@
     "samples": [
       {
         "_id": "04oRpX3dC1sBycrPIHTx",
-        "shiftPeriod": "string",
-        "staffEmail": "string",
-        "startTime": "timestamp",
-        "endTime": "timestamp",
-        "pcRentalTotal": "number",
-        "servicesTotal": "number",
-        "systemTotal": "number",
-        "expensesTotal": "number",
-        "displayId": "string",
-        "totalAr": "number",
-        "totalCash": "number",
-        "totalGcash": "number"
+        "shift_period": "string",
+        "staff_id": "string",
+        "staff_email": "string",
+        "start_time": "timestamp",
+        "end_time": "timestamp",
+        "pc_rental_total": "number",
+        "services_total": "number",
+        "system_total": "number",
+        "expenses_total": "number",
+        "display_id": "string",
+        "total_ar": "number",
+        "total_cash": "number",
+        "total_digital": "number",
+        "forced_end_by": "string",
+        "forced_end_reason": "string"
       },
       {
         "_id": "0PHQzMzCnyEQe7AQ3ECM",
@@ -1029,21 +1038,23 @@
       }
     ],
     "fields": [
-      "shiftPeriod",
-      "staffEmail",
-      "startTime",
-      "endTime",
-      "pcRentalTotal",
-      "servicesTotal",
-      "systemTotal",
-      "expensesTotal",
-      "displayId",
-      "totalAr",
-      "totalCash",
-      "totalGcash",
-      "scheduleId",
-      "notes",
-      "arPaymentsTotal"
+      "shift_period",
+      "staff_id",
+      "staff_email",
+      "start_time",
+      "end_time",
+      "pc_rental_total",
+      "services_total",
+      "system_total",
+      "expenses_total",
+      "display_id",
+      "total_ar",
+      "total_cash",
+      "total_digital",
+      "ar_payments_total",
+      "forced_end_by",
+      "forced_end_reason",
+      "notes"
     ]
   },
   "station_logs": {

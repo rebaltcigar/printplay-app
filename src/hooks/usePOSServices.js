@@ -1,46 +1,11 @@
 // src/hooks/usePOSServices.js
-import { useEffect, useMemo, useState } from 'react';
-import { supabase } from '../supabase';
+// Delegates to useServiceList for shared module-level cache + realtime.
+// This prevents a duplicate products fetch when both POS and admin contexts are active.
+import { useMemo } from 'react';
+import { useServiceList } from './useServiceList';
 
 export function usePOSServices() {
-    const [allServices, setAllServices] = useState([]);
-    const [loading, setLoading] = useState(true);
-
-    useEffect(() => {
-        const fetchServices = async () => {
-            const { data, error } = await supabase
-                .from('products')
-                .select('*')
-                .order('sort_order', { ascending: true });
-
-            if (data) {
-                // Map Supabase snake_case back to frontend expected camelCase
-                const mapped = data.map(d => ({
-                    id: d.id,
-                    ...d,
-                    serviceName: d.name,
-                    parentServiceId: d.parent_service_id,
-                    sortOrder: d.sort_order,
-                    adminOnly: d.admin_only,
-                    financialCategory: d.financial_category,
-                    costPrice: d.cost_price
-                }));
-                setAllServices(mapped);
-            }
-            if (error) {
-                console.error("Error fetching POS services:", error);
-            }
-            setLoading(false);
-        };
-
-        fetchServices();
-
-        const channel = supabase.channel('public:products:usePOSServices')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, fetchServices)
-            .subscribe();
-
-        return () => supabase.removeChannel(channel);
-    }, []);
+    const { allServices, loading } = useServiceList();
 
     // Expense parent ID — used to exclude expense items from all POS lists
     const expenseParentId = useMemo(() => {
@@ -48,16 +13,31 @@ export function usePOSServices() {
         return expenseParent?.id ?? null;
     }, [allServices]);
 
+    // --- v0.2.0: allServicesWithAliases ---
+    // Expose POS-specific camelCase aliases for fields useServiceList spreads as snake_case.
+    // We do this first so derived lists (posItems, serviceList) benefit from aliases.
+    const allServicesWithAliases = useMemo(() =>
+        allServices.map(s => ({
+            ...s,
+            hasVariants: s.has_variants ?? s.hasVariants,
+            priceType: s.price_type ?? s.priceType,
+            pricingNote: s.pricing_note ?? s.pricingNote,
+            trackStock: s.track_stock ?? s.trackStock,
+            stockCount: s.stock_count ?? s.stockCount,
+            lowStockThreshold: s.low_stock_threshold ?? s.lowStockThreshold,
+        })),
+        [allServices]
+    );
+
     // --- Legacy: serviceList ---
-    // Flat dropdown list used by POS.jsx until the tile grid replaces it in v0.2.1.
     const serviceList = useMemo(() => {
-        let list = allServices.filter(
+        let list = allServicesWithAliases.filter(
             (i) =>
                 i.active &&
-                i.category !== 'Expense' &&
-                i.id !== expenseParentId &&
-                i.parentServiceId !== expenseParentId &&
-                i.adminOnly === false
+                i.financialCategory !== 'Expense' &&
+                !i._isExpense &&
+                (expenseParentId ? (i.id !== expenseParentId && i.parentServiceId !== expenseParentId) : true) &&
+                !i.adminOnly
         );
 
         // PC Rental must always be available
@@ -65,7 +45,6 @@ export function usePOSServices() {
             list.push({ id: 'pcrental_hc', serviceName: 'PC Rental', price: 0, active: true });
         }
 
-        // PC Rental always first, then preserve project sortOrder for the rest
         list.sort((a, b) => {
             if (a.serviceName === 'PC Rental') return -1;
             if (b.serviceName === 'PC Rental') return 1;
@@ -73,14 +52,17 @@ export function usePOSServices() {
         });
 
         return list;
-    }, [allServices, expenseParentId]);
+    }, [allServicesWithAliases, expenseParentId]);
 
     // --- Legacy: expenseTypes ---
     const expenseTypes = useMemo(() =>
-        allServices.filter(
-            (i) => i.category === 'Expense' && i.active !== false
+        allServicesWithAliases.filter(
+            (i) => {
+                const isExpense = i._isExpense || (expenseParentId && i.parentServiceId === expenseParentId);
+                return isExpense && i.active !== false && !i.adminOnly;
+            }
         ),
-        [allServices]
+        [allServicesWithAliases, expenseParentId]
     );
 
     // --- Legacy: categories ---
@@ -91,21 +73,21 @@ export function usePOSServices() {
 
     // --- v0.2.0: posItems ---
     const posItems = useMemo(() =>
-        allServices.filter(i =>
+        allServicesWithAliases.filter(i =>
             i.active &&
-            i.category !== 'Expense' &&
-            i.id !== expenseParentId &&
-            i.parentServiceId !== expenseParentId &&
+            i.financialCategory !== 'Expense' &&
+            !i._isExpense &&
+            (expenseParentId ? (i.id !== expenseParentId && i.parentServiceId !== expenseParentId) : true) &&
             !i.parentServiceId &&
-            i.adminOnly === false
+            !i.adminOnly
         ),
-        [allServices, expenseParentId]
+        [allServicesWithAliases, expenseParentId]
     );
 
     // --- v0.2.0: variantMap ---
     const variantMap = useMemo(() => {
         const map = new Map();
-        allServices
+        allServicesWithAliases
             .filter(i =>
                 i.parentServiceId &&
                 i.active &&
@@ -119,13 +101,13 @@ export function usePOSServices() {
             map.set(key, [...children].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)));
         });
         return map;
-    }, [allServices, expenseParentId]);
+    }, [allServicesWithAliases, expenseParentId]);
 
     return {
         serviceList,
         expenseTypes,
         categories,
-        allServices,
+        allServices: allServicesWithAliases,
         loading,
         posItems,
         variantMap,

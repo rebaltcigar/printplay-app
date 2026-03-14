@@ -41,14 +41,12 @@ export const pcSessionService = {
       .insert([{
         id: sessId,
         station_id: stationId,
-        station_name: stationName,
         customer_id: customerId,
-        customer_name: customerName || 'Walk-in',
         type,
         status: 'active',
         rate_id: rateId,
         rate_snapshot: rateSnapshot,
-        started_at: now,
+        start_time: now,
         minutes_allotted: minutesAllotted,
         minutes_used: 0,
         amount_charged: amountDue,
@@ -99,19 +97,16 @@ export const pcSessionService = {
     const pxId = await generateDisplayId('pc_transactions', 'PX');
     await supabase.from('pc_transactions').insert([{
       id: pxId,
-      item: `PC Session — ${stationName}${usingBalance ? ' (Balance Use)' : ''}`,
       type: 'pc-session',
       amount: usingBalance ? 0 : amountPaid,
       payment_method: usingBalance ? 'Account Balance' : paymentMethod,
       staff_id: finalStaffId,
-      session_id: session.id,
-      station_id: stationId,
       customer_id: customerId,
-      customer_name: customerName,
       financial_category: 'PC Rental',
       category: 'Revenue',
       is_deleted: false,
       timestamp: now,
+      metadata: { description: `PC Session — ${stationName}${usingBalance ? ' (Balance Use)' : ''}`, session_id: session.id, station_id: stationId },
     }]);
 
     // 5. Log Event
@@ -122,8 +117,7 @@ export const pcSessionService = {
       severity: 'info',
       timestamp: now,
       staff_id: finalStaffId,
-      station_name: stationName,
-      metadata: { customerName, minutesAllotted, amountPaid, type }
+      metadata: { stationName, customerName, minutesAllotted, amountPaid, type }
     }]);
 
     return session;
@@ -175,18 +169,15 @@ export const pcSessionService = {
     const pxId = await generateDisplayId('pc_transactions', 'PX');
     await supabase.from('pc_transactions').insert([{
       id: pxId,
-      item: `PC Top-up — ${stationName}`,
       type: 'pc-topup',
       amount: amountPaid,
       payment_method: paymentMethod,
       staff_id: finalStaffId,
-      session_id: sessionId,
-      station_id: stationId,
-      customer_name: customerName,
       financial_category: 'PC Rental',
       category: 'Revenue',
       is_deleted: false,
       timestamp: now,
+      metadata: { description: `PC Top-up — ${stationName}`, session_id: sessionId, station_id: stationId, customerName },
     }]);
 
     // 4. Log Event
@@ -197,8 +188,7 @@ export const pcSessionService = {
       severity: 'info',
       timestamp: now,
       staff_id: finalStaffId,
-      station_name: stationName,
-      metadata: { customerName, addedMinutes, amountPaid }
+      metadata: { stationName, customerName, addedMinutes, amountPaid }
     }]);
   },
 
@@ -223,7 +213,7 @@ export const pcSessionService = {
       .from('sessions')
       .update({
         status,
-        ended_at: now,
+        end_time: now,
         amount_charged: amountCharged,
         updated_at: now
       })
@@ -252,8 +242,7 @@ export const pcSessionService = {
       severity: 'info',
       timestamp: now,
       staff_id: finalStaffId,
-      station_name: stationName,
-      metadata: { reason, amountCharged }
+      metadata: { stationName, reason, amountCharged }
     }]);
   },
 

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
     TextField, Box, Typography, Switch, FormControlLabel,
     InputAdornment, Stack, Paper, Alert, Button, CircularProgress, LinearProgress, MenuItem,
-    Autocomplete, IconButton, Tooltip
+    Autocomplete, IconButton, Tooltip, Divider
 } from '@mui/material';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
@@ -90,7 +90,13 @@ export default function StoreSettings({ section, showSnackbar, user }) {
     const loadSettings = async () => {
         try {
             setLoading(true);
-            const { data } = await supabase.from('settings').select('*').eq('id', 'config').single();
+            const { data, error } = await supabase.from('settings').select('*').eq('id', 'config').maybeSingle();
+            
+            if (error) {
+                console.warn("[StoreSettings] Error loading settings:", error.message);
+                return;
+            }
+
             if (data) {
                 const mapped = {
                     storeName: data.store_name || 'Kunek',
@@ -130,9 +136,17 @@ export default function StoreSettings({ section, showSnackbar, user }) {
     const checkBiometricStatus = async () => {
         if (!user?.id && !user?.uid) return;
         try {
-            const { data } = await supabase.from('profiles').select('biometric_id').eq('id', user.id || user.uid).single();
+            const { data, error } = await supabase
+                .from('profiles')
+                .select('biometric_id')
+                .eq('id', user.id || user.uid)
+                .maybeSingle();
+
+            if (error) throw error;
             setBiometricStatus(data?.biometric_id ? "Counter registered." : "");
-        } catch (e) { console.error(e); }
+        } catch (e) {
+            console.warn("[StoreSettings] Biometric status check failed:", e.message);
+        }
     };
 
     const handleSave = async () => {
@@ -154,7 +168,6 @@ export default function StoreSettings({ section, showSnackbar, user }) {
                 drawer_hotkey: settings.drawerHotkey,
                 checkout_hotkey: settings.checkoutHotkey,
                 id_prefixes: settings.idPrefixes,
-                id_padding: settings.idPadding,
                 shift_duration_hours: settings.shiftDurationHours,
                 shift_alert_minutes: settings.shiftAlertMinutes,
                 schedule_posting_frequency: settings.schedulePostingFrequency,
@@ -606,6 +619,7 @@ export default function StoreSettings({ section, showSnackbar, user }) {
             {section === 'store' && (
                 <Stack spacing={3}>
                     {renderHeader("Store Profile", "Basic information about your business shown on invoices and receipts.")}
+
                     <TextField
                         label="Store Name"
                         fullWidth
