@@ -2,6 +2,10 @@
 // CSV-based auth migration — no Firebase dependency.
 // Reads exports/users.csv, creates Supabase Auth users + profiles rows.
 // staff_id is auto-assigned by the trg_profile_staff_id trigger on insert.
+//
+// Usage:
+//   node scripts/migrate_auth.js          # dev
+//   node scripts/migrate_auth.js --prod   # production
 
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
@@ -11,12 +15,19 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
-dotenv.config({ path: path.join(root, '.env.development') });
+const isProd  = process.argv.includes('--prod');
+const envFile = isProd ? '.env.production' : '.env.development';
+dotenv.config({ path: path.join(root, envFile) });
 
-const supabase = createClient(
-    process.env.VITE_SUPABASE_URL,
-    process.env.VITE_SUPABASE_SERVICE_ROLE_KEY
-);
+const supabaseUrl        = process.env.VITE_SUPABASE_URL;
+const supabaseServiceKey = process.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseUrl || !supabaseServiceKey) {
+    console.error(`❌  Missing VITE_SUPABASE_URL or VITE_SUPABASE_SERVICE_ROLE_KEY in ${envFile}`);
+    process.exit(1);
+}
+
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 // ---- CSV parser (handles quoted fields, "" escape, BOM) ----
 function parseCSV(text) {
@@ -64,6 +75,9 @@ function parseCSV(text) {
 }
 
 async function main() {
+    console.log(`=== Auth Migration — ${isProd ? 'PRODUCTION' : 'DEV'} ===`);
+    console.log(`    Target: ${supabaseUrl}\n`);
+
     const csvPath = path.join(root, 'exports', 'users.csv');
     const rows = parseCSV(fs.readFileSync(csvPath, 'utf8'));
     console.log(`Found ${rows.length} users in users.csv\n`);

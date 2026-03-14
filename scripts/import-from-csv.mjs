@@ -1,7 +1,11 @@
 // scripts/import-from-csv.mjs
-// CSV → Supabase import. Reads from ./exports/*.csv, writes to dev Supabase.
+// CSV → Supabase import. Reads from ./exports/*.csv, writes to Supabase.
 // Run AFTER: migrate_auth.js (profiles must exist first).
 // Run BEFORE: post-import.sql, resolve-staff-ids.sql, sync-counters.sql
+//
+// Usage:
+//   node scripts/import-from-csv.mjs          # dev
+//   node scripts/import-from-csv.mjs --prod   # production
 
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
@@ -11,12 +15,19 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
-dotenv.config({ path: path.join(root, '.env.development') });
+const isProd  = process.argv.includes('--prod');
+const envFile = isProd ? '.env.production' : '.env.development';
+dotenv.config({ path: path.join(root, envFile) });
 
-const supabase = createClient(
-    process.env.VITE_SUPABASE_URL,
-    process.env.VITE_SUPABASE_SERVICE_ROLE_KEY
-);
+const supabaseUrl        = process.env.VITE_SUPABASE_URL;
+const supabaseServiceKey = process.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseUrl || !supabaseServiceKey) {
+    console.error(`❌  Missing VITE_SUPABASE_URL or VITE_SUPABASE_SERVICE_ROLE_KEY in ${envFile}`);
+    process.exit(1);
+}
+
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 // =============================================================================
 // CSV PARSER — handles quoted fields, "" escapes, embedded commas, BOM

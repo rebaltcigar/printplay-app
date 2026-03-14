@@ -241,7 +241,6 @@ export default function StartSessionDialog({ open, station, activeSession, isQui
           amountPaid: finalTotal,
           paymentMethod: form.paymentMethod,
           discountAmount,
-          discountAmount,
           staffId,
           staffEmail: staff?.email,
           user: user

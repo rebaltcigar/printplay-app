@@ -96,3 +96,27 @@ export const deleteOrder = async (orderId, orderNumber, shiftId, userEmail, reas
         if (invErr) console.error("Batch inventory restoration failed:", invErr);
     }
 };
+
+/**
+ * Fetches live order_items for a given orderNumber.
+ * Returns items shaped for receipt/invoice printing, or null on failure.
+ */
+export const fetchLiveItemsForOrder = async (orderNumber) => {
+    if (!orderNumber) return null;
+    const { data, error } = await supabase
+        .from('order_items')
+        .select('name, quantity, price, amount, is_deleted')
+        .eq('parent_order_id', orderNumber)
+        .eq('is_deleted', false);
+    if (error) {
+        console.error('[fetchLiveItemsForOrder] error:', error.message);
+        return null;
+    }
+    return (data || []).map(item => ({
+        name:     item.name,
+        quantity: item.quantity,
+        price:    item.price,
+        subtotal: item.amount,
+        total:    item.amount,
+    }));
+};
