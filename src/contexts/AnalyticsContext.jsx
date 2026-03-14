@@ -112,6 +112,12 @@ export function AnalyticsProvider({ children }) {
                     setLoading(false);
                 } else {
                     console.log(`[Analytics] Subscribing to REAL-TIME updates for ${preset}...`);
+                    
+                    // Cleanup existing if any (though effect cleanup handles it, belt & suspenders)
+                    if (unsubTx) unsubTx(); 
+                    if (unsubShifts) unsubShifts();
+                    if (unsubInvoices) unsubInvoices();
+
                     unsubTx = onSnapshot(txQuery, (snap) => {
                         setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
                     }, (err) => setError(err));

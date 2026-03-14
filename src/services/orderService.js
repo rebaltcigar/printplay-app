@@ -97,7 +97,13 @@ export const generateBatchIds = async (counterName, defaultPrefix, count, paddin
         return ids;
     } catch (error) {
         console.error(`Error generating batch IDs for ${counterName}:`, error);
-        return [];
+        // Fallback: Return random IDs so the checkout doesn't crash with "undefined" fields
+        const ids = [];
+        for (let i = 0; i < count; i++) {
+            const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
+            ids.push(`${prefix}-FALLBACK-${Date.now()}-${rand}-${i}`);
+        }
+        return ids;
     }
 };
 

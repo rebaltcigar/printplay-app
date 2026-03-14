@@ -14,7 +14,8 @@ import {
     getDocs,
     query,
     where,
-    Timestamp
+    Timestamp,
+    increment
 } from "firebase/firestore";
 import { generateDisplayId } from "./orderService";
 import { sumDenominations } from "../utils/shiftFinancials";
@@ -111,10 +112,24 @@ export const updateShift = async (shiftId, payload) => {
 
 /**
  * Deletes a shift and either unlinks or purges its transactions.
+ * Optionally deletes associated orders (hard-delete) and reverts inventory.
  */
-export const deleteShift = async (shiftId, mode = "unlink") => {
+export const deleteShift = async (shiftId, mode = "unlink", deleteOrders = false) => {
     const txSnap = await getDocs(query(collection(db, "transactions"), where("shiftId", "==", shiftId)));
     const txDocs = txSnap.docs;
+
+    let orderDocs = [];
+    let activeOrderNumbers = new Set();
+
+    if (deleteOrders) {
+        const orderSnap = await getDocs(query(collection(db, "orders"), where("shiftId", "==", shiftId)));
+        orderDocs = orderSnap.docs;
+        // Collect order numbers of active (non-deleted) orders to revert inventory correctly
+        orderDocs.forEach(d => {
+            const data = d.data();
+            if (!data.isDeleted) activeOrderNumbers.add(data.orderNumber);
+        });
+    }
 
     // Helper to chunk array for batches
     const chunk = (arr, size = 500) => {
@@ -123,15 +138,43 @@ export const deleteShift = async (shiftId, mode = "unlink") => {
         return chunks;
     };
 
-    const chunksArr = chunk(txDocs);
+    // Combine transactions and orders for batch deletion if applicable
+    const allDocsToDelete = [...txDocs, ...orderDocs];
+    const chunksArr = chunk(allDocsToDelete);
 
     for (const ck of chunksArr) {
         const batch = writeBatch(db);
-        if (mode === "unlink") {
-            ck.forEach((d) => batch.update(d.ref, { shiftId: null, unlinkedFromShift: shiftId }));
-        } else if (mode === "purge") {
-            ck.forEach((d) => batch.delete(d.ref));
-        }
+        ck.forEach((d) => {
+            const isTransaction = d.ref.path.startsWith('transactions/');
+            const isOrder = d.ref.path.startsWith('orders/');
+
+            if (isTransaction) {
+                if (mode === "unlink") {
+                    batch.update(d.ref, { shiftId: null, unlinkedFromShift: shiftId });
+                } else if (mode === "purge") {
+                    const txData = d.data();
+                    
+                    // If we are also deleting orders, revert inventory for transactions 
+                    // that belong to an order that was NOT already soft-deleted.
+                    if (deleteOrders && activeOrderNumbers.has(txData.orderNumber)) {
+                        const revertStock = (svcId, q) => {
+                            if (!svcId) return;
+                            batch.update(doc(db, 'services', svcId), { stockCount: increment(q) });
+                        };
+
+                        if (txData.serviceId) revertStock(txData.serviceId, Number(txData.quantity));
+                        if (txData.consumables && txData.consumables.length > 0) {
+                            txData.consumables.forEach(c => {
+                                revertStock(c.itemId, Number(c.qty) * Number(txData.quantity));
+                            });
+                        }
+                    }
+                    batch.delete(d.ref);
+                }
+            } else if (isOrder && deleteOrders) {
+                batch.delete(d.ref);
+            }
+        });
         await batch.commit();
     }
 

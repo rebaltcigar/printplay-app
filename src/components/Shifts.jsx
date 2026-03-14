@@ -125,6 +125,7 @@ const Shifts = ({ isActive = true }) => {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [shiftToDelete, setShiftToDelete] = useState(null);
   const [deleteMode, setDeleteMode] = useState("unlink");
+  const [deleteOrders, setDeleteOrders] = useState(false);
 
   const [consolidationOpen, setConsolidationOpen] = useState(false);
   const [consolidationShift, setConsolidationShift] = useState(null);
@@ -183,7 +184,10 @@ const Shifts = ({ isActive = true }) => {
     return () => unsub();
   }, [startDate, endDate]);
 
+  // Optimize: Don't create listeners for ALL historical shifts.
+  // This causes a massive "Listener Leak" that hits Firebase Quotas.
   useEffect(() => {
+    // 1. Cleanup old unsubs that are no longer in the current filtered list
     const desired = new Set(shifts.map((s) => s.id));
     for (const id of Object.keys(txUnsubsRef.current)) {
       if (!desired.has(id)) {
@@ -192,28 +196,49 @@ const Shifts = ({ isActive = true }) => {
       }
     }
 
-    shifts.forEach((s) => {
-      if (txUnsubsRef.current[s.id]) return;
-      const q1 = query(collection(db, "transactions"), where("shiftId", "==", s.id));
-      const unsub = onSnapshot(q1,
-        (snap) => {
+    // 2. Only run real-time listeners for the ACTIVE shift.
+    // Historical shifts get a ONE-TIME fetch (getDocs) to populate totals.
+    shifts.forEach(async (s) => {
+      const isActive = s.id === activeShiftId;
+
+      if (isActive) {
+        // KEEP real-time listener for current shift
+        if (txUnsubsRef.current[s.id]) return;
+        const q1 = query(collection(db, "transactions"), where("shiftId", "==", s.id));
+        const unsub = onSnapshot(q1,
+          (snap) => {
+            const txs = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((t) => t && t.isDeleted !== true);
+            const aggregated = aggregateShiftTransactions(txs, serviceMeta);
+            setTxAggByShift((prev) => ({
+              ...prev,
+              [s.id]: { ...aggregated, fullTransactions: txs }
+            }));
+          },
+          (e) => console.warn("transactions listener failed for shift", s.id, e)
+        );
+        txUnsubsRef.current[s.id] = unsub;
+      } else {
+        // ONE-TIME FETCH for historical shifts (stops the 'Bleed')
+        if (txAggByShift[s.id]) return; // Already fetched
+        try {
+          const q1 = query(collection(db, "transactions"), where("shiftId", "==", s.id));
+          const snap = await getDocs(q1);
           const txs = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((t) => t && t.isDeleted !== true);
           const aggregated = aggregateShiftTransactions(txs, serviceMeta);
           setTxAggByShift((prev) => ({
             ...prev,
             [s.id]: { ...aggregated, fullTransactions: txs }
           }));
-        },
-        (e) => console.warn("transactions listener failed for shift", s.id, e)
-      );
-      txUnsubsRef.current[s.id] = unsub;
+        } catch (e) {
+          console.warn("One-time fetch failed for shift", s.id, e);
+        }
+      }
     });
 
     return () => {
-      for (const id of Object.keys(txUnsubsRef.current)) try { txUnsubsRef.current[id](); } catch { }
-      txUnsubsRef.current = {};
+      // We don't clear everything on every render, just keep the unsubs alive in the ref
     };
-  }, [shifts, serviceMeta]);
+  }, [shifts, serviceMeta, activeShiftId]);
 
   const lastTwoShiftIds = useMemo(() => filteredShifts.slice(0, 2).map((s) => s.id), [filteredShifts]);
 
@@ -334,15 +359,17 @@ const Shifts = ({ isActive = true }) => {
   const openDelete = (shift) => {
     setShiftToDelete(shift);
     setDeleteMode("unlink");
+    setDeleteOrders(false);
     setDeleteOpen(true);
   };
 
   const handleDeleteShift = async () => {
     if (!shiftToDelete) return;
     try {
-      await deleteShift(shiftToDelete.id, deleteMode);
+      await deleteShift(shiftToDelete.id, deleteMode, deleteOrders);
       setDeleteOpen(false);
       setShiftToDelete(null);
+      setDeleteOrders(false);
     } catch (e) {
       showSnackbar(`Failed to delete: ${e.message}`, 'error');
     }
@@ -900,6 +927,30 @@ const Shifts = ({ isActive = true }) => {
               Delete all transactions for this shift
             </Button>
           </Stack>
+
+          {deleteMode === "purge" && (
+            <Box sx={{ mt: 3, p: 2, bgcolor: "error.lighter", borderRadius: 1, border: "1px solid", borderColor: "error.light" }}>
+              <FormControlLabel
+                control={
+                  <Checkbox 
+                    checked={deleteOrders} 
+                    onChange={(e) => setDeleteOrders(e.target.checked)}
+                    color="error"
+                  />
+                }
+                label={
+                  <Box>
+                    <Typography variant="subtitle2" color="error.main" sx={{ fontWeight: "bold" }}>
+                      Hard-delete associated orders (Permanent)
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      This will permanently remove all orders linked to this shift and revert inventory stock.
+                    </Typography>
+                  </Box>
+                }
+              />
+            </Box>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDeleteOpen(false)}>Cancel</Button>
