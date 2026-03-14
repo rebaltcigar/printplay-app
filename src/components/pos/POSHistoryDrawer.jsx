@@ -99,14 +99,14 @@ export default function POSHistoryDrawer({
                                                 ) : (
                                                     <Typography variant="body2" fontWeight="bold">{tx.item}</Typography>
                                                 )}
-                                                <Typography variant="caption" display="block" color="text.secondary">
-                                                    {tx.expenseStaffName || ''}
-                                                </Typography>
+
                                             </TableCell>
                                             <TableCell>
-                                                <Typography variant="caption" color="text.secondary">
-                                                    {tx.quantity} x {currency(tx.price)}
-                                                </Typography>
+                                                {tx.quantity > 0 && (
+                                                    <Typography variant="caption" color="text.secondary">
+                                                        {tx.quantity} x {currency(tx.price)}
+                                                    </Typography>
+                                                )}
                                             </TableCell>
                                             <TableCell align="right">{currency(tx.total)}</TableCell>
                                         </TableRow>
