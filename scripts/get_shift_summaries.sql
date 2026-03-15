@@ -54,10 +54,10 @@ BEGIN
     item_aggregation AS (
         SELECT 
             oi.shift_id,
-            -- Sales: Revenue/Service items only (exclude payments and expenses)
+            -- Sales: Revenue/Service items only (exclude payments, expenses, AND PC rental)
             SUM(CASE 
                 WHEN oi.is_deleted = false 
-                AND TRIM(LOWER(oi.name)) NOT IN ('ar payment', 'paid debt', 'expenses', 'new debt') 
+                AND TRIM(LOWER(oi.name)) NOT IN ('ar payment', 'paid debt', 'expenses', 'new debt', 'pc rental') 
                 AND (LOWER(oi.financial_category) IN ('sale', 'debit', 'revenue', 'service') OR oi.financial_category IS NULL) 
                 THEN oi.amount 
                 ELSE 0 
@@ -67,10 +67,11 @@ BEGIN
                 WHEN oi.is_deleted = false AND TRIM(LOWER(oi.name)) IN ('ar payment', 'paid debt') THEN oi.amount 
                 ELSE 0 
             END) as ar_payments,
-            -- Digital Sales: Any sale or payment made via digital methods
+            -- Digital Sales: Any sale or payment made via digital methods (exclude PC rental)
             SUM(CASE 
                 WHEN oi.is_deleted = false 
                 AND TRIM(LOWER(oi.payment_method)) IN ('gcash', 'maya', 'bank transfer', 'card') 
+                AND TRIM(LOWER(oi.name)) != 'pc rental'
                 AND (
                     TRIM(LOWER(oi.name)) IN ('ar payment', 'paid debt')
                     OR (LOWER(oi.financial_category) IN ('sale', 'debit', 'revenue', 'service') OR oi.financial_category IS NULL)
@@ -78,28 +79,37 @@ BEGIN
                 THEN oi.amount 
                 ELSE 0 
             END) as digital_sales,
-            -- AR Sales: Items charged to account
+            -- AR Sales: Items charged to account (exclude PC rental)
             SUM(CASE 
                 WHEN oi.is_deleted = false 
                 AND TRIM(LOWER(oi.payment_method)) = 'charge' 
+                AND TRIM(LOWER(oi.name)) != 'pc rental'
                 AND (LOWER(oi.financial_category) IN ('sale', 'debit', 'revenue', 'service') OR oi.financial_category IS NULL) 
                 THEN oi.amount 
                 ELSE 0 
             END) as ar_sales,
-            -- Cash Sales: Used for Expected Cash (Sales + AR Payments paid in Cash)
+            -- Cash Sales: Used for Expected Cash (Sales + AR Payments paid in Cash, exclude PC rental)
             SUM(CASE 
                 WHEN oi.is_deleted = false 
                 AND TRIM(LOWER(oi.payment_method)) NOT IN ('gcash', 'maya', 'bank transfer', 'card', 'charge') 
                 AND (
                     TRIM(LOWER(oi.name)) IN ('ar payment', 'paid debt')
                     OR (
-                        TRIM(LOWER(oi.name)) NOT IN ('expenses', 'new debt') 
+                        TRIM(LOWER(oi.name)) NOT IN ('expenses', 'new debt', 'pc rental') 
                         AND (LOWER(oi.financial_category) IN ('sale', 'debit', 'revenue', 'service') OR oi.financial_category IS NULL)
                     )
                 )
                 THEN oi.amount 
                 ELSE 0 
             END) as cash_sales,
+            -- PC Rental non-cash from order_items (digital/charge payments for PC Rental logged as order_items)
+            SUM(CASE 
+                WHEN oi.is_deleted = false 
+                AND TRIM(LOWER(oi.name)) = 'pc rental'
+                AND TRIM(LOWER(oi.payment_method)) IN ('gcash', 'maya', 'bank transfer', 'card', 'charge')
+                THEN oi.amount 
+                ELSE 0 
+            END) as pc_oi_non_cash,
             -- Expenses from order_items
             SUM(CASE 
                 WHEN oi.is_deleted = false AND TRIM(LOWER(oi.name)) IN ('expenses', 'new debt') THEN oi.amount 
@@ -143,9 +153,9 @@ BEGIN
         COALESCE(ia.cash_sales, 0) as cash_sales,
         COALESCE(ia.digital_sales, 0) as digital_sales,
         COALESCE(ia.ar_sales, 0) as ar_sales,
-        COALESCE(pa.pc_non_cash, 0) as pc_non_cash_sales, -- Use proper name from RETURNS TABLE
+        COALESCE(pa.pc_non_cash, 0) + COALESCE(ia.pc_oi_non_cash, 0) as pc_non_cash_sales,
         COALESCE(ia.ar_payments, 0) as ar_payments,
-        COALESCE(ea.expenses, 0) + COALESCE(ia.item_expenses, 0) as expenses_total, -- Sum both sources
+        COALESCE(ea.expenses, 0) + COALESCE(ia.item_expenses, 0) as expenses_total,
         COALESCE(ia.service_sales, 0) as service_sales_total,
         COALESCE(ia.breakdown, '{}'::jsonb) as service_breakdown
     FROM shift_records sr
