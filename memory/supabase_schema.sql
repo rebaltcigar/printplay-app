@@ -249,48 +249,96 @@ CREATE TABLE payroll_logs (
 );
 
 CREATE TABLE payroll_runs (
-    id              TEXT PRIMARY KEY,
-    display_id      TEXT UNIQUE,                          -- format PY-xxxxxxxx
-    period_start    TIMESTAMPTZ,
-    period_end      TIMESTAMPTZ,
-    pay_date        TIMESTAMPTZ,
-    status          TEXT DEFAULT 'draft',
-    expense_mode    TEXT,
-    totals          JSONB DEFAULT '{}',                   -- { staffCount, minutes, gross, advances, shortages, otherDeductions, net, additions }
-    created_by      TEXT,                                 -- FK → profiles.staff_id (post-migration; from createdBy)
-    updated_by      TEXT,                                 -- FK → profiles.staff_id (post-migration; from updatedBy)
-    created_at      TIMESTAMPTZ DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ DEFAULT NOW()
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  display_id      TEXT UNIQUE NOT NULL,
+  period_start    TIMESTAMPTZ NOT NULL,
+  period_end      TIMESTAMPTZ NOT NULL,
+  pay_date        TIMESTAMPTZ NOT NULL,
+  status          TEXT NOT NULL DEFAULT 'draft'
+                    CHECK (status IN ('draft', 'reviewed', 'approved', 'posted', 'voided')),
+  totals          JSONB DEFAULT '{}'::JSONB,
+  notes           TEXT DEFAULT '',
+  created_by      UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  approved_by     UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE payroll_line_items (
-    id              TEXT PRIMARY KEY,
-    run_id          TEXT REFERENCES payroll_runs(id) ON DELETE CASCADE,
-    staff_id        TEXT,                                 -- FK → profiles.staff_id (post-migration; from staffEmail)
-    -- staff_name removed (get from profiles)
-    -- staff_email removed (get from profiles)
-    -- staffUid discarded after migration
-    role            TEXT,                                 -- not in Firebase export; NULL on import
-    base_pay        DECIMAL(12, 2) DEFAULT 0,             -- from Firebase: rate
-    regular_hours   DECIMAL(8, 2) DEFAULT 0,              -- from Firebase: minutes ÷ 60
-    overtime_hours  DECIMAL(8, 2) DEFAULT 0,              -- not in Firebase export; 0 on import
-    total_pay       DECIMAL(12, 2) DEFAULT 0,             -- from Firebase: gross
-    deductions      JSONB DEFAULT '[]',                   -- from Firebase: adjustments (negative entries)
-    additions       JSONB DEFAULT '[]',                   -- from Firebase: adjustments (positive entries)
-    shifts          JSONB DEFAULT '[]',                   -- from Firebase: source.shiftIds
-    status          TEXT DEFAULT 'pending'                -- not in Firebase export; default 'pending'
+CREATE TABLE payroll_lines (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id            UUID NOT NULL REFERENCES payroll_runs(id) ON DELETE CASCADE,
+  staff_id          TEXT NOT NULL,
+  staff_name        TEXT NOT NULL,
+  staff_email       TEXT NOT NULL,
+  rate              NUMERIC NOT NULL DEFAULT 0,
+  total_minutes     INTEGER NOT NULL DEFAULT 0,
+  total_hours       NUMERIC GENERATED ALWAYS AS (ROUND(total_minutes / 60.0, 2)) STORED,
+  gross             NUMERIC NOT NULL DEFAULT 0,
+  total_deductions  NUMERIC NOT NULL DEFAULT 0,
+  total_additions   NUMERIC NOT NULL DEFAULT 0,
+  net               NUMERIC NOT NULL DEFAULT 0,
+  created_at        TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE paystubs (
-    id              TEXT PRIMARY KEY,
-    run_id          TEXT REFERENCES payroll_runs(id) ON DELETE CASCADE,
-    staff_id        TEXT,                                 -- FK → profiles.staff_id (post-migration; from staffEmail)
-    -- staff_email removed (get from profiles)
-    -- staffName, staffUid discarded
-    paystub_data    JSONB DEFAULT '{}',                   -- { periodStart, periodEnd, payDate, shifts, deductionItems,
-                                                          --   additionItems, totalHours, grossPay, totalDeductions,
-                                                          --   totalAdditions, netPay, createdBy }
-    created_at      TIMESTAMPTZ DEFAULT NOW()
+CREATE TABLE payroll_line_shifts (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  line_id         UUID NOT NULL REFERENCES payroll_lines(id) ON DELETE CASCADE,
+  run_id          UUID NOT NULL REFERENCES payroll_runs(id) ON DELETE CASCADE,
+  shift_id        TEXT NOT NULL,            -- references shifts.id (text format like SH-xxx)
+  original_start  TIMESTAMPTZ,
+  original_end    TIMESTAMPTZ,              -- null if ongoing
+  override_start  TIMESTAMPTZ,              -- null = use original
+  override_end    TIMESTAMPTZ,              -- null = use original
+  minutes_used    INTEGER NOT NULL DEFAULT 0,
+  excluded        BOOLEAN NOT NULL DEFAULT FALSE,
+  shortage        NUMERIC NOT NULL DEFAULT 0,
+  notes           TEXT DEFAULT ''
+);
+
+CREATE TABLE payroll_deductions (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  line_id       UUID NOT NULL REFERENCES payroll_lines(id) ON DELETE CASCADE,
+  run_id        UUID NOT NULL REFERENCES payroll_runs(id) ON DELETE CASCADE,
+  type          TEXT NOT NULL DEFAULT 'manual'
+                  CHECK (type IN ('shortage', 'advance', 'manual', 'other')),
+  label         TEXT NOT NULL,
+  amount        NUMERIC NOT NULL DEFAULT 0,
+  source_id     TEXT,                       -- nullable — links to expense.id or shift.id
+  auto_applied  BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE payroll_additions (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  line_id       UUID NOT NULL REFERENCES payroll_lines(id) ON DELETE CASCADE,
+  run_id        UUID NOT NULL REFERENCES payroll_runs(id) ON DELETE CASCADE,
+  type          TEXT NOT NULL DEFAULT 'manual'
+                  CHECK (type IN ('bonus', 'overtime', 'allowance', 'manual', 'other')),
+  label         TEXT NOT NULL,
+  amount        NUMERIC NOT NULL DEFAULT 0,
+  auto_applied  BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE payroll_stubs (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id            UUID NOT NULL REFERENCES payroll_runs(id) ON DELETE CASCADE,
+  line_id           UUID NOT NULL REFERENCES payroll_lines(id) ON DELETE CASCADE,
+  staff_id          TEXT NOT NULL,
+  staff_name        TEXT NOT NULL,
+  period_start      TIMESTAMPTZ NOT NULL,
+  period_end        TIMESTAMPTZ NOT NULL,
+  pay_date          TIMESTAMPTZ NOT NULL,
+  rate              NUMERIC NOT NULL DEFAULT 0,
+  total_hours       NUMERIC NOT NULL DEFAULT 0,
+  gross_pay         NUMERIC NOT NULL DEFAULT 0,
+  deductions        JSONB DEFAULT '[]'::JSONB,   -- [{type, label, amount}]
+  additions         JSONB DEFAULT '[]'::JSONB,   -- [{type, label, amount}]
+  total_deductions  NUMERIC NOT NULL DEFAULT 0,
+  total_additions   NUMERIC NOT NULL DEFAULT 0,
+  net_pay           NUMERIC NOT NULL DEFAULT 0,
+  shifts            JSONB DEFAULT '[]'::JSONB,   -- [{id, label, start, end, hours, pay}]
+  created_at        TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- =============================================================================
@@ -1436,6 +1484,174 @@ BEGIN
         (SELECT MIN(timestamp) FROM order_items) as earliest_date;
 END; $$;
 
+-- Create a function to get shift summaries with pre-aggregated data
+DROP FUNCTION IF EXISTS get_shift_summaries(TIMESTAMPTZ, TIMESTAMPTZ, INTEGER, INTEGER);
+CREATE OR REPLACE FUNCTION get_shift_summaries(
+    p_start_time TIMESTAMPTZ DEFAULT NULL,
+    p_end_time TIMESTAMPTZ DEFAULT NULL,
+    p_limit INTEGER DEFAULT 50,
+    p_offset INTEGER DEFAULT 0
+)
+RETURNS TABLE (
+    id TEXT,
+    display_id TEXT,
+    staff_id TEXT,
+    staff_email TEXT,
+    shift_period TEXT,
+    start_time TIMESTAMPTZ,
+    end_time TIMESTAMPTZ,
+    pc_rental_total NUMERIC,
+    system_total_stored NUMERIC,
+    denominations JSONB,
+    cash_sales NUMERIC,
+    digital_sales NUMERIC,
+    ar_sales NUMERIC,
+    pc_non_cash_sales NUMERIC,
+    ar_payments NUMERIC,
+    expenses_total NUMERIC,
+    service_sales_total NUMERIC,
+    service_breakdown JSONB
+) 
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    RETURN QUERY
+    WITH shift_records AS (
+        SELECT 
+            s.id,
+            s.display_id,
+            s.staff_id,
+            s.shift_period,
+            s.start_time,
+            s.end_time,
+            s.pc_rental_total,
+            s.system_total,
+            s.denominations,
+            p.email as staff_email
+        FROM shifts s
+        LEFT JOIN profiles p ON s.staff_id = p.staff_id
+        WHERE (p_start_time IS NULL OR s.start_time >= p_start_time)
+          AND (p_end_time IS NULL OR s.start_time <= p_end_time)
+        ORDER BY s.start_time DESC
+        LIMIT p_limit
+        OFFSET p_offset
+    ),
+    item_aggregation AS (
+        SELECT 
+            oi.shift_id,
+            -- Sales: Revenue/Service items only (exclude payments, expenses, AND PC rental)
+            SUM(CASE 
+                WHEN oi.is_deleted = FALSE 
+                AND TRIM(LOWER(oi.name)) NOT IN ('ar payment', 'paid debt', 'expenses', 'new debt', 'pc rental') 
+                AND (LOWER(oi.financial_category) IN ('sale', 'debit', 'revenue', 'service') OR oi.financial_category IS NULL) 
+                THEN oi.amount 
+                ELSE 0 
+            END) as service_sales,
+            -- AR Payments: "Paid Debt" or "AR Payment"
+            SUM(CASE 
+                WHEN oi.is_deleted = FALSE AND TRIM(LOWER(oi.name)) IN ('ar payment', 'paid debt') THEN oi.amount 
+                ELSE 0 
+            END) as ar_payments,
+            -- Digital Sales: Any sale or payment made via digital methods (exclude PC rental)
+            SUM(CASE 
+                WHEN oi.is_deleted = FALSE 
+                AND TRIM(LOWER(oi.payment_method)) IN ('gcash', 'maya', 'bank transfer', 'card') 
+                AND TRIM(LOWER(oi.name)) != 'pc rental'
+                AND (
+                    TRIM(LOWER(oi.name)) IN ('ar payment', 'paid debt')
+                    OR (LOWER(oi.financial_category) IN ('sale', 'debit', 'revenue', 'service') OR oi.financial_category IS NULL)
+                )
+                THEN oi.amount 
+                ELSE 0 
+            END) as digital_sales,
+            -- AR Sales: Items charged to account (exclude PC rental)
+            SUM(CASE 
+                WHEN oi.is_deleted = FALSE 
+                AND TRIM(LOWER(oi.payment_method)) = 'charge' 
+                AND TRIM(LOWER(oi.name)) != 'pc rental'
+                AND (LOWER(oi.financial_category) IN ('sale', 'debit', 'revenue', 'service') OR oi.financial_category IS NULL) 
+                THEN oi.amount 
+                ELSE 0 
+            END) as ar_sales,
+            -- Cash Sales: Used for Expected Cash (Sales + AR Payments paid in Cash, exclude PC rental)
+            SUM(CASE 
+                WHEN oi.is_deleted = FALSE 
+                AND TRIM(LOWER(oi.payment_method)) NOT IN ('gcash', 'maya', 'bank transfer', 'card', 'charge') 
+                AND (
+                    TRIM(LOWER(oi.name)) IN ('ar payment', 'paid debt')
+                    OR (
+                        TRIM(LOWER(oi.name)) NOT IN ('expenses', 'new debt', 'pc rental') 
+                        AND (LOWER(oi.financial_category) IN ('sale', 'debit', 'revenue', 'service') OR oi.financial_category IS NULL)
+                    )
+                )
+                THEN oi.amount 
+                ELSE 0 
+            END) as cash_sales,
+            -- PC Rental non-cash from order_items (digital/charge payments for PC Rental logged as order_items)
+            SUM(CASE 
+                WHEN oi.is_deleted = FALSE 
+                AND TRIM(LOWER(oi.name)) = 'pc rental'
+                AND TRIM(LOWER(oi.payment_method)) IN ('gcash', 'maya', 'bank transfer', 'card', 'charge')
+                THEN oi.amount 
+                ELSE 0 
+            END) as pc_oi_non_cash,
+            -- Expenses from order_items
+            SUM(CASE 
+                WHEN oi.is_deleted = FALSE AND TRIM(LOWER(oi.name)) IN ('expenses', 'new debt') THEN oi.amount 
+                ELSE 0 
+            END) as item_expenses,
+            jsonb_object_agg(oi.name, (SELECT SUM(amount) FROM order_items oi2 WHERE oi2.shift_id = oi.shift_id AND oi2.name = oi.name AND oi2.is_deleted = FALSE)) FILTER (WHERE oi.is_deleted = FALSE) as breakdown
+        FROM order_items oi
+        WHERE oi.shift_id IN (SELECT sr.id FROM shift_records sr)
+        GROUP BY oi.shift_id
+    ),
+    pc_aggregation AS (
+        SELECT 
+            pt.shift_id,
+            SUM(CASE 
+                WHEN pt.is_deleted = FALSE AND TRIM(LOWER(pt.payment_method)) IN ('gcash', 'maya', 'bank transfer', 'card', 'charge') THEN pt.amount 
+                ELSE 0 
+            END) as pc_non_cash
+        FROM pc_transactions pt
+        WHERE pt.shift_id IN (SELECT sr.id FROM shift_records sr)
+        GROUP BY pt.shift_id
+    ),
+    expense_aggregation AS (
+        SELECT 
+            e.shift_id,
+            SUM(CASE WHEN e.is_deleted = FALSE THEN e.amount ELSE 0 END) as expenses
+        FROM expenses e
+        WHERE e.shift_id IN (SELECT sr.id FROM shift_records sr)
+        GROUP BY e.shift_id
+    )
+    SELECT 
+        sr.id,
+        sr.display_id,
+        sr.staff_id,
+        sr.staff_email,
+        sr.shift_period,
+        sr.start_time,
+        sr.end_time,
+        sr.pc_rental_total,
+        sr.system_total,
+        sr.denominations,
+        COALESCE(ia.cash_sales, 0) as cash_sales,
+        COALESCE(ia.digital_sales, 0) as digital_sales,
+        COALESCE(ia.ar_sales, 0) as ar_sales,
+        COALESCE(pa.pc_non_cash, 0) + COALESCE(ia.pc_oi_non_cash, 0) as pc_non_cash_sales,
+        COALESCE(ia.ar_payments, 0) as ar_payments,
+        COALESCE(ea.expenses, 0) + COALESCE(ia.item_expenses, 0) as expenses_total,
+        COALESCE(ia.service_sales, 0) as service_sales_total,
+        COALESCE(ia.breakdown, '{}'::JSONB) as service_breakdown
+    FROM shift_records sr
+    LEFT JOIN item_aggregation ia ON sr.id = ia.shift_id
+    LEFT JOIN pc_aggregation pa ON sr.id = pa.shift_id
+    LEFT JOIN expense_aggregation ea ON sr.id = ea.shift_id
+    ORDER BY sr.start_time DESC;
+END;
+$$;
+
 -- Atomic sequential ID generator (SECURITY DEFINER bypasses RLS on counters)
 DROP FUNCTION IF EXISTS get_next_sequence_batch(text, integer);
 CREATE OR REPLACE FUNCTION get_next_sequence_batch(p_counter_id TEXT, p_count INT DEFAULT 1)
@@ -1495,8 +1711,19 @@ CREATE INDEX IF NOT EXISTS idx_expenses_shift_id          ON expenses(shift_id);
 CREATE INDEX IF NOT EXISTS idx_expenses_timestamp         ON expenses(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_station_id        ON sessions(station_id);
 CREATE INDEX IF NOT EXISTS idx_shifts_start_time          ON shifts(start_time DESC);
-CREATE INDEX IF NOT EXISTS idx_payroll_logs_staff_id      ON payroll_logs(staff_id);
-CREATE INDEX IF NOT EXISTS idx_payroll_line_items_run_id  ON payroll_line_items(run_id);
+CREATE INDEX IF NOT EXISTS idx_payroll_runs_status ON payroll_runs(status);
+CREATE INDEX IF NOT EXISTS idx_payroll_runs_period ON payroll_runs(period_start, period_end);
+CREATE INDEX IF NOT EXISTS idx_payroll_lines_run ON payroll_lines(run_id);
+CREATE INDEX IF NOT EXISTS idx_payroll_lines_staff ON payroll_lines(staff_id);
+CREATE INDEX IF NOT EXISTS idx_pls_line ON payroll_line_shifts(line_id);
+CREATE INDEX IF NOT EXISTS idx_pls_run ON payroll_line_shifts(run_id);
+CREATE INDEX IF NOT EXISTS idx_pls_shift ON payroll_line_shifts(shift_id);
+CREATE INDEX IF NOT EXISTS idx_pd_line ON payroll_deductions(line_id);
+CREATE INDEX IF NOT EXISTS idx_pd_run ON payroll_deductions(run_id);
+CREATE INDEX IF NOT EXISTS idx_pa_line ON payroll_additions(line_id);
+CREATE INDEX IF NOT EXISTS idx_pa_run ON payroll_additions(run_id);
+CREATE INDEX IF NOT EXISTS idx_ps_run ON payroll_stubs(run_id);
+CREATE INDEX IF NOT EXISTS idx_ps_staff ON payroll_stubs(staff_id);
 CREATE INDEX IF NOT EXISTS idx_station_logs_station_id    ON station_logs(station_id);
 CREATE INDEX IF NOT EXISTS idx_products_category          ON products(category);
 
@@ -1564,13 +1791,25 @@ ALTER TABLE payroll_runs ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "payroll_runs_all" ON payroll_runs;
 CREATE POLICY "payroll_runs_all" ON payroll_runs FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
-ALTER TABLE payroll_line_items ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "payroll_line_items_all" ON payroll_line_items;
-CREATE POLICY "payroll_line_items_all" ON payroll_line_items FOR ALL TO authenticated USING (true) WITH CHECK (true);
+ALTER TABLE payroll_lines ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "payroll_lines_all" ON payroll_lines;
+CREATE POLICY "payroll_lines_all" ON payroll_lines FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
-ALTER TABLE paystubs ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "paystubs_all" ON paystubs;
-CREATE POLICY "paystubs_all" ON paystubs FOR ALL TO authenticated USING (true) WITH CHECK (true);
+ALTER TABLE payroll_line_shifts ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "payroll_line_shifts_all" ON payroll_line_shifts;
+CREATE POLICY "payroll_line_shifts_all" ON payroll_line_shifts FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE payroll_deductions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "payroll_deductions_all" ON payroll_deductions;
+CREATE POLICY "payroll_deductions_all" ON payroll_deductions FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE payroll_additions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "payroll_additions_all" ON payroll_additions;
+CREATE POLICY "payroll_additions_all" ON payroll_additions FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE payroll_stubs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "payroll_stubs_all" ON payroll_stubs;
+CREATE POLICY "payroll_stubs_all" ON payroll_stubs FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 ALTER TABLE zones ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "zones_all" ON zones;
@@ -1628,6 +1867,20 @@ ALTER TABLE drawer_logs ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "drawer_logs_all" ON drawer_logs;
 CREATE POLICY "drawer_logs_all" ON drawer_logs FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
+-- Assets Storage Bucket (Admin Uploads)
+-- Policies on storage.objects for the 'assets' bucket
+DROP POLICY IF EXISTS "Public Access" ON storage.objects;
+CREATE POLICY "Public Access" ON storage.objects FOR SELECT USING ( bucket_id = 'assets' );
+
+DROP POLICY IF EXISTS "Authenticated Upload" ON storage.objects;
+CREATE POLICY "Authenticated Upload" ON storage.objects FOR INSERT WITH CHECK ( bucket_id = 'assets' AND auth.role() = 'authenticated' );
+
+DROP POLICY IF EXISTS "Authenticated Update" ON storage.objects;
+CREATE POLICY "Authenticated Update" ON storage.objects FOR UPDATE USING ( bucket_id = 'assets' AND auth.role() = 'authenticated' );
+
+DROP POLICY IF EXISTS "Authenticated Delete" ON storage.objects;
+CREATE POLICY "Authenticated Delete" ON storage.objects FOR DELETE USING ( bucket_id = 'assets' AND auth.role() = 'authenticated' );
+
 -- =============================================================================
 -- 12. REALTIME PUBLICATION
 -- =============================================================================
@@ -1638,7 +1891,7 @@ BEGIN
     FOREACH t IN ARRAY ARRAY[
         'orders', 'order_items', 'pc_transactions', 'expenses', 'shifts',
         'settings', 'profiles', 'products', 'customers', 'invoices',
-        'app_status', 'payroll_runs'
+        'app_status', 'payroll_runs', 'payroll_lines', 'payroll_stubs'
     ] LOOP
         IF NOT EXISTS (
             SELECT 1 FROM pg_publication_tables

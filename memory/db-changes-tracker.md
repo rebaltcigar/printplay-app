@@ -35,7 +35,7 @@ Before deploying to production, run these in order:
 2. [ ] `scripts/setup_assets_storage.sql` — storage RLS
 3. [ ] `scripts/fix_payroll_staff_id.sql` — staff_id uuid→text
 4. [ ] `scripts/get_shift_summaries.sql` — shift difference fix
-5. [ ] Update `supabase_schema.sql` with all changes above
+5. [x] Update `supabase_schema.sql` with all changes above
 
 ---
 
