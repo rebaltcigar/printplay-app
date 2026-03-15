@@ -8,6 +8,7 @@ import AppsIcon from '@mui/icons-material/Apps';
 import HistoryIcon from '@mui/icons-material/History';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import SwitchAccountIcon from '@mui/icons-material/SwitchAccount';
+import SyncIcon from '@mui/icons-material/Sync';
 
 const POSHeader = ({
     systemSettings,
@@ -24,7 +25,8 @@ const POSHeader = ({
     menuAnchor,
     setMenuAnchor,
     setOpenInvoiceLookup,
-    onSwitchStaff
+    onSwitchStaff,
+    onRefresh
 }) => {
     return (
         <AppBar position="static" color="default" elevation={1} sx={{ bgcolor: 'background.paper', borderBottom: 1, borderColor: 'divider' }}>
@@ -83,6 +85,11 @@ const POSHeader = ({
                             <SwitchAccountIcon fontSize="small" />
                         </IconButton>
                     </Tooltip>
+                    <Tooltip title="Refresh Data">
+                        <IconButton size="small" onClick={onRefresh} color="primary">
+                            <SyncIcon fontSize="small" />
+                        </IconButton>
+                    </Tooltip>
                     <Button size="small" variant="outlined" color="primary" onClick={() => setOpenHistoryDrawer(true)} startIcon={<HistoryIcon />}>Logs</Button>
                     <Button size="small" variant="outlined" color="error" onClick={() => setOpenDrawerDialog(true)}>Drawer</Button>
                     <Button size="small" variant="outlined" color="error" onClick={() => setOpenExpense(true)}>+ Expense</Button>
@@ -101,6 +108,7 @@ const POSHeader = ({
 
                 {/* Mobile Menu */}
                 <MuiMenu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)}>
+                    <MenuItem onClick={() => { setMenuAnchor(null); onRefresh?.(); }}>Refresh Data</MenuItem>
                     <MenuItem onClick={() => { setMenuAnchor(null); onSwitchStaff(); }}>Switch Staff</MenuItem>
                     <MenuItem onClick={() => { setMenuAnchor(null); setOpenHistoryDrawer(true); }}>Logs</MenuItem>
                     <MenuItem onClick={() => { setMenuAnchor(null); setOpenExpense(true); }}>+ Expense</MenuItem>

@@ -272,7 +272,89 @@ export default function POS({ user, staffId, userRole, activeShiftId, shiftPerio
   const [changeDialogOpen, setChangeDialogOpen] = useState(false);
   const [lastChange, setLastChange] = useState(0);
 
-  // --- CUSTOM HOOK FOR HANDLERS --
+  // =========================================================================
+  // 1. DATA LOADING & INITIALIZATION
+  // =========================================================================
+
+  // Reusable fetchers for manual refresh & visibility change
+  const fetchOrders = async () => {
+    if (!activeShiftId) return;
+    console.log(`[POS] Fetching orders for shift: ${activeShiftId}`);
+    const { data, error } = await supabase
+      .from('orders')
+      .select('id, order_number, shift_id, status, subtotal, total, amount_tendered, change, payment_method, customer_id, customer_name, timestamp, invoice_status')
+      .eq('shift_id', activeShiftId)
+      .neq('status', 'VOIDED')
+      .order('order_number', { ascending: false });
+
+    if (error) {
+      console.error("[POS] Fetch Orders Error:", error);
+    }
+    if (data) {
+      setShiftOrders(data.map(d => ({
+        ...d,
+        shiftId: d.shift_id,
+        orderNumber: d.order_number,
+        isDeleted: d.status === 'VOIDED',
+        subtotal: d.subtotal,
+        totalDue: d.total,
+        amountPaid: Number(d.amount_tendered || 0) - Number(d.change || 0),
+        createdAt: d.timestamp,
+        paymentMethod: d.payment_method
+      })));
+    }
+  };
+
+  const fetchTransactions = async () => {
+    if (!activeShiftId) return;
+    console.log(`[POS] Fetching combined transactions for shift: ${activeShiftId}`);
+    try {
+      const { data, error } = await supabase.rpc('get_combined_transactions', {
+        p_start_time: new Date(0).toISOString(), // All time for this shift
+        p_end_time: new Date().toISOString(),
+        p_shift_id: activeShiftId,
+        p_limit: 50,
+        p_offset: 0
+      });
+
+      if (error) throw error;
+
+      setTransactions((data || []).map(d => {
+        const quantity = Number(d.quantity || 1);
+        const amount = Number(d.amount || 0);
+        return {
+          ...d,
+          shiftId: d.shift_id,
+          isDeleted: d.is_deleted,
+          paymentMethod: d.payment_method,
+          staffId: d.staff_id,
+          createdAt: d.tx_timestamp,
+          timestamp: d.tx_timestamp,
+          total: amount,
+          quantity: quantity,
+          price: amount / Math.max(1, quantity),
+          expenseType: d.expense_type,
+          expenseStaffName: seqIdToName[d.staff_id] || idToName[d.staff_id] || emailToName[d.staff_id] || ''
+        };
+      }));
+    } catch (err) {
+      console.error("[POS] Fetch Transactions Error:", err);
+    }
+  };
+
+  // Visibility change effect - refresh data when user returns to the tab
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && activeShiftId) {
+        console.log("[POS] Tab focused, refreshing data...");
+        fetchOrders();
+        fetchTransactions();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [activeShiftId, seqIdToName]); // Dependencies for fetchers
+
   const {
     isLoading,
     item, setItem,
@@ -309,45 +391,16 @@ export default function POS({ user, staffId, userRole, activeShiftId, shiftPerio
     showSnackbar, setChangeDialogOpen, setLastChange, setOpenCheckout,
     shiftOrders, staffDisplayName, sessionStaffEmail,
     setPrintOrder, loadOrder,
-    services, canViewFin
+    services, canViewFin,
+    refreshOrders: fetchOrders, // Pass refreshers to handlers
+    refreshTransactions: fetchTransactions
   });
-
-  // =========================================================================
-  // 1. DATA LOADING & INITIALIZATION
-  // =========================================================================
 
 
 
   // Load Shift Orders
   useEffect(() => {
     if (!activeShiftId) return;
-
-    const fetchOrders = async () => {
-      console.log(`[POS] Fetching orders for shift: ${activeShiftId}`);
-      const { data, error } = await supabase
-        .from('orders')
-        .select('id, order_number, shift_id, status, subtotal, total, amount_tendered, change, payment_method, customer_id, customer_name, timestamp, invoice_status')
-        .eq('shift_id', activeShiftId)
-        .neq('status', 'VOIDED')
-        .order('order_number', { ascending: false });
-
-      if (error) {
-        console.error("[POS] Fetch Orders Error:", error);
-      }
-      if (data) {
-        setShiftOrders(data.map(d => ({
-          ...d,
-          shiftId: d.shift_id,
-          orderNumber: d.order_number,
-          isDeleted: d.status === 'VOIDED',
-          subtotal: d.subtotal,
-          totalDue: d.total,
-          amountPaid: Number(d.amount_tendered || 0) - Number(d.change || 0),
-          createdAt: d.timestamp,
-          paymentMethod: d.payment_method
-        })));
-      }
-    };
 
     fetchOrders();
 
@@ -370,42 +423,6 @@ export default function POS({ user, staffId, userRole, activeShiftId, shiftPerio
   useEffect(() => {
     if (!activeShiftId) return;
 
-    const fetchTransactions = async () => {
-      console.log(`[POS] Fetching combined transactions for shift: ${activeShiftId}`);
-      try {
-        const { data, error } = await supabase.rpc('get_combined_transactions', {
-          p_start_time: new Date(0).toISOString(), // All time for this shift
-          p_end_time: new Date().toISOString(),
-          p_shift_id: activeShiftId,
-          p_limit: 50,
-          p_offset: 0
-        });
-
-        if (error) throw error;
-
-        setTransactions((data || []).map(d => {
-          const quantity = Number(d.quantity || 1);
-          const amount = Number(d.amount || 0);
-          return {
-            ...d,
-            shiftId: d.shift_id,
-            isDeleted: d.is_deleted,
-            paymentMethod: d.payment_method,
-            staffId: d.staff_id,
-            createdAt: d.tx_timestamp,
-            timestamp: d.tx_timestamp,
-            total: amount,
-            quantity: quantity,
-            price: amount / Math.max(1, quantity),
-            expenseType: d.expense_type,
-            expenseStaffName: seqIdToName[d.staff_id] || idToName[d.staff_id] || emailToName[d.staff_id] || ''
-          };
-        }));
-      } catch (err) {
-        console.error("[POS] Fetch Transactions Error:", err);
-      }
-    };
-
     fetchTransactions();
 
     const channel = supabase.channel('public:transactions:shift')
@@ -415,7 +432,7 @@ export default function POS({ user, staffId, userRole, activeShiftId, shiftPerio
       .subscribe();
 
     return () => supabase.removeChannel(channel);
-  }, [activeShiftId]);
+  }, [activeShiftId, seqIdToName]); // seqIdToName is required for labels
 
 
   const handleLogoutOnly = () => {
@@ -477,6 +494,11 @@ export default function POS({ user, staffId, userRole, activeShiftId, shiftPerio
         setMenuAnchor={setMenuAnchor}
         setOpenInvoiceLookup={setOpenInvoiceLookup}
         onSwitchStaff={() => setOpenHandoverDialog(true)}
+        onRefresh={() => {
+          fetchOrders();
+          fetchTransactions();
+          showSnackbar("Refreshed transaction logs.", "info");
+        }}
       />
 
       {/* Shift duration warning banners */}

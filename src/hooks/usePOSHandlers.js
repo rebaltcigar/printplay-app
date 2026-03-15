@@ -13,7 +13,8 @@ export function usePOSHandlers({
     showSnackbar, setChangeDialogOpen, setLastChange, setOpenCheckout,
     shiftOrders, staffDisplayName, sessionStaffEmail,
     setPrintOrder, loadOrder,
-    services, canViewFin
+    services, canViewFin,
+    refreshOrders, refreshTransactions
 }) {
     const [isLoading, setIsLoading] = useState(false);
 
@@ -137,6 +138,7 @@ export function usePOSHandlers({
                 setItem(''); setQuantity(''); setPrice(''); setNotes('');
                 setExpenseType('');
                 showSnackbar(`${item} recorded successfully.`);
+                refreshTransactions?.(); // Background refresh
             } catch (e) {
                 console.error(e);
                 showSnackbar(getFriendlyErrorMessage(e), "error");
@@ -260,7 +262,8 @@ export function usePOSHandlers({
             } else {
                 updateCurrentOrder({ items: [], customer: null });
             }
-
+            refreshOrders?.(); // Background refresh
+            refreshTransactions?.();
         } catch (err) {
             console.error(err);
             showSnackbar(getFriendlyErrorMessage(err), 'error');
@@ -322,7 +325,8 @@ export function usePOSHandlers({
                 setActiveTab(Math.max(0, activeTab - 1));
             }
             showSnackbar("Order has been updated successfully.", "success");
-
+            refreshOrders?.(); // Background refresh
+            refreshTransactions?.();
         } catch (e) {
             console.error("Update failed:", e);
             showSnackbar(getFriendlyErrorMessage(e), 'error');
@@ -346,6 +350,7 @@ export function usePOSHandlers({
             await deleteTransactions(selectedTransactions, user.email, reason);
             setSelectedTransactions([]);
             showSnackbar("Transaction(s) successfully deleted.");
+            refreshTransactions?.(); // Background refresh
         } catch (e) {
             console.error("Error deleting transactions:", e);
             showSnackbar(getFriendlyErrorMessage(e), 'error');
@@ -368,6 +373,8 @@ export function usePOSHandlers({
             }));
             setSelectedOrders([]);
             showSnackbar("Order(s) and linked transactions successfully deleted.");
+            refreshOrders?.(); // Background refresh
+            refreshTransactions?.();
         } catch (e) {
             console.error("Error deleting orders:", e);
             showSnackbar(getFriendlyErrorMessage(e), 'error');
@@ -386,6 +393,7 @@ export function usePOSHandlers({
             setEditTxDialog(false);
             setEditingTx(null);
             showSnackbar("Transaction successfully updated.");
+            refreshTransactions?.(); // Background refresh
         } catch (e) {
             console.error("Error editing transaction:", e);
             showSnackbar(getFriendlyErrorMessage(e), 'error');

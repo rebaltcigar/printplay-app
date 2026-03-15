@@ -11,6 +11,18 @@
 - **Infrastructure**: Database schema changes, new tables/indexes, RLS policies, auth config, and server-side setup.
 - No roadmap content — belongs in ROADMAP.md.
 
+## [0.9.2] — 2026-03-15 — POS Synchronization & Resilience
+
+### Added
+- **POS Manual Sync** — Added a refresh button in the POS header to allow staff to manually re-fetch data without reloading the page.
+- **Tab Focus Auto-Refresh** — The POS now automatically refreshes data when the user switches back to the tab, ensuring data stays current after the tab has been in the background.
+
+### Changed
+- **Background Data Refresh** — All POS handlers (checkout, expense, update, delete) now trigger non-blocking background data refreshes after successful operations to ensure immediate UI consistency.
+
+### Fixed
+- **POS Data Stale Issue** — Addressed the issue where transactions were not appearing in the drawer logs during long shifts due to potential real-time subscription drops.
+
 ## [0.9.1] — 2026-03-15 — Payroll Redesign & Infrastructure Update
 
 ### Added
