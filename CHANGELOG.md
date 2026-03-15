@@ -11,6 +11,19 @@
 - **Infrastructure**: Database schema changes, new tables/indexes, RLS policies, auth config, and server-side setup.
 - No roadmap content — belongs in ROADMAP.md.
 
+## [0.9.1] — 2026-03-15 — Payroll Redesign & Infrastructure Update
+
+### Added
+- **Payroll Process Redesign** — Completely overhauled the payroll system with a new 2-step wizard, dedicated database tables (`payroll_runs`, `payroll_lines`, `payroll_stubs`, etc.), and individual expense recording for posted runs.
+- **Supabase Storage Support** — Configured the `assets` storage bucket with RLS policies to support store logo and asset uploads for authenticated users.
+
+### Fixed
+- **Shift Expected Cash Calculation** — Refactored aggregation logic to accurately compute expected cash by correctly handling digital payments, PC rental revenue, and AR collections.
+- **Shift Difference Precision** — The "Difference" column for shifts is now computed live based on physical denominations and corrected expected cash formulas.
+
+### Infrastructure
+- **Master Schema Sync** — Synchronized `supabase_schema.sql` with the new payroll architecture, storage policies, and optimized shift functions.
+
 ## [0.9.0] — 2026-03-11 — Firebase → Supabase Platform Migration
 
 > Complete replacement of the Firebase/Firestore backend with Supabase (Postgres + Auth + Realtime). All data, authentication, and live-update logic now runs through Supabase. Firebase has been fully removed from the project.
