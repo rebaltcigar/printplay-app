@@ -401,20 +401,29 @@ export async function postRun(runId, userId) {
     .eq("id", runId);
   if (error) throw error;
 
-  // Record total net as an expense
+  // Record each line as an individual expense
   try {
-    await recordExpense({
-      expenseType: 'Salary',
-      price: run.totals?.net || 0,
-      quantity: 1,
-      notes: `Payroll Run ${run.display_id}`,
-      activeShiftId: null, // Payroll is usually back-office, not tied to a drawer shift
-      metadata: { payrollRunId: runId }
-    });
+    const expensePromises = lines
+      .filter(line => line.net > 0)
+      .map(line => 
+        recordExpense({
+          expenseType: 'Salary',
+          expenseStaffId: line.staff_id,
+          price: line.net,
+          quantity: 1,
+          notes: `Payroll - ${line.staff_name} (Run ${run.display_id})`,
+          activeShiftId: null,
+          metadata: { 
+            payrollRunId: runId, 
+            payrollLineId: line.id,
+            staffName: line.staff_name
+          }
+        })
+      );
+
+    await Promise.all(expensePromises);
   } catch (expErr) {
-    console.error("[payrollService] Failed to record payroll expense:", expErr);
-    // We don't throw here to avoid rolling back the "posted" status, but maybe we should?
-    // Given the user's request, it's better to log it and let the stub/status stand.
+    console.error("[payrollService] Failed to record individual payroll expenses:", expErr);
   }
 }
 
