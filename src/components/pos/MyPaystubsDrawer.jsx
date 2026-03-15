@@ -1,5 +1,5 @@
 // src/components/pos/MyPaystubsDrawer.jsx
-// Staff self-service paystubs viewer using collection group query.
+// Staff self-service paystubs viewer — queries new payroll_stubs table.
 
 import React, { useState, useEffect, useMemo } from 'react';
 import {
@@ -7,7 +7,7 @@ import {
 } from '@mui/material';
 import { supabase } from '../../supabase';
 import DetailDrawer from '../common/DetailDrawer';
-import { Paystub } from '../pages/Paystub';
+import PaySlipViewer from '../payroll/PaySlipViewer';
 import { fmtDate } from '../../utils/formatters';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 
@@ -22,19 +22,13 @@ export default function MyPaystubsDrawer({ open, onClose, staffId }) {
     (async () => {
       try {
         const { data } = await supabase
-          .from('paystubs')
+          .from('payroll_stubs')
           .select('*')
           .eq('staff_id', staffId)
           .order('created_at', { ascending: false });
 
-        const list = (data || []).map(d => ({
-          ...d,
-          staffEmail: d.staff_email || d.staff_id,
-          payDate: d.pay_date
-        }));
-
-        setStubs(list);
-        setActive(list[0]?.id || null);
+        setStubs(data || []);
+        setActive((data || [])[0]?.id || null);
       } catch (err) {
         console.error('MyPaystubs fetch error:', err);
       } finally {
@@ -45,14 +39,12 @@ export default function MyPaystubsDrawer({ open, onClose, staffId }) {
 
   const activeStub = useMemo(() => stubs.find(s => s.id === active) || null, [stubs, active]);
 
-
-
   return (
     <DetailDrawer
       open={open}
       onClose={onClose}
-      title="My Paystubs"
-      subtitle={stubs.length ? `${stubs.length} paystub${stubs.length !== 1 ? 's' : ''}` : undefined}
+      title="My Pay Slips"
+      subtitle={stubs.length ? `${stubs.length} pay slip${stubs.length !== 1 ? 's' : ''}` : undefined}
       width={820}
     >
       {loading ? (
@@ -62,7 +54,7 @@ export default function MyPaystubsDrawer({ open, onClose, staffId }) {
       ) : stubs.length === 0 ? (
         <Box sx={{ py: 4, textAlign: 'center' }}>
           <ReceiptLongIcon sx={{ fontSize: 48, opacity: 0.2, mb: 1 }} />
-          <Typography color="text.secondary">No paystubs found.</Typography>
+          <Typography color="text.secondary">No pay slips found.</Typography>
         </Box>
       ) : (
         <Stack direction="row" spacing={2} sx={{ height: '100%' }}>
@@ -79,16 +71,16 @@ export default function MyPaystubsDrawer({ open, onClose, staffId }) {
                 onClick={() => setActive(s.id)}
                 sx={{ justifyContent: 'flex-start', textAlign: 'left' }}
               >
-                {fmtDate(s.payDate) || 'Unknown date'}
+                {fmtDate(s.pay_date) || 'Unknown date'}
               </Button>
             ))}
           </Stack>
 
           <Divider orientation="vertical" flexItem />
 
-          {/* Paystub content */}
+          {/* Pay slip content */}
           <Box sx={{ flex: 1, overflow: 'auto' }}>
-            {activeStub ? <Paystub stub={activeStub} /> : null}
+            {activeStub ? <PaySlipViewer stub={activeStub} /> : null}
           </Box>
         </Stack>
       )}

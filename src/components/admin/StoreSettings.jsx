@@ -9,7 +9,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import FingerprintIcon from '@mui/icons-material/Fingerprint';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
-import { supabase } from '../../supabase';
+import { supabase, supabaseAdmin } from '../../supabase';
 import { registerFingerprint } from '../../services/biometricService';
 import { convertLogoUrl } from '../../services/brandingService';
 import PageHeader from '../common/PageHeader';
@@ -26,7 +26,6 @@ export default function StoreSettings({ section, showSnackbar, user }) {
     const [loading, setLoading] = useState(false);
     const [uploadingLogo, setUploadingLogo] = useState(false);
     const [biometricStatus, setBiometricStatus] = useState("");
-    const [tempLogoUrl, setTempLogoUrl] = useState("");
     const [previewError, setPreviewError] = useState(false);
     const [settings, setSettings] = useState({
         storeName: 'Kunek',
@@ -124,7 +123,6 @@ export default function StoreSettings({ section, showSnackbar, user }) {
                     paymentMethods: data.payment_methods || { cash: { enabled: true }, charge: { enabled: true }, card: { enabled: false }, gcash: { enabled: false, label: 'GCash', accountName: '', accountNumber: '', showDetails: false, qrUrl: '' }, maya: { enabled: false, label: 'Maya', accountName: '', accountNumber: '', showDetails: false, qrUrl: '' }, banks: [] },
                 };
                 setSettings(prev => ({ ...prev, ...mapped }));
-                setTempLogoUrl(mapped.logoUrl);
             }
         } catch (e) {
             console.error("Error loading settings:", e);
@@ -250,9 +248,9 @@ export default function StoreSettings({ section, showSnackbar, user }) {
             else setLoading(true);
 
             const storagePath = type === 'logo' ? `logos/store_logo_${Date.now()}` : `qrcodes/${method}_${Date.now()}`;
-            const { error: uploadError } = await supabase.storage.from('assets').upload(storagePath, file, { upsert: true });
+            const { error: uploadError } = await supabaseAdmin.storage.from('assets').upload(storagePath, file, { upsert: true });
             if (uploadError) throw uploadError;
-            const downloadURL = supabase.storage.from('assets').getPublicUrl(storagePath).data.publicUrl;
+            const downloadURL = supabaseAdmin.storage.from('assets').getPublicUrl(storagePath).data.publicUrl;
 
             if (type === 'logo') {
                 setSettings(prev => ({ ...prev, logoUrl: downloadURL }));
@@ -286,15 +284,6 @@ export default function StoreSettings({ section, showSnackbar, user }) {
         }
     };
 
-    const handleVerifyLogo = () => {
-        setPreviewError(false);
-        const converted = convertLogoUrl(tempLogoUrl);
-        setSettings(prev => ({ ...prev, logoUrl: converted }));
-        setTempLogoUrl(converted);
-        if (converted && converted !== tempLogoUrl) {
-            showSnackbar('Google Drive link detected and converted!', 'info');
-        }
-    };
 
     const renderSaveButton = () => (
         <Box sx={{ mt: 4 }}>
@@ -425,33 +414,22 @@ export default function StoreSettings({ section, showSnackbar, user }) {
                         />
 
                         <Box>
-                            <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-                                QR Code (Supports Google Drive Links)
-                            </Typography>
-                            <Stack direction="row" spacing={1} alignItems="flex-start">
-                                <TextField
-                                    label="QR Code URL / Link"
-                                    fullWidth
-                                    size="small"
-                                    value={method.qrUrl || ''}
-                                    onChange={e => setSettings({
-                                        ...settings,
-                                        paymentMethods: {
-                                            ...settings.paymentMethods,
-                                            [key]: { ...method, qrUrl: e.target.value }
-                                        }
-                                    })}
-                                    helperText="Paste a direct image link or a Google Drive sharing link."
+                            <Button
+                                variant="contained"
+                                component="label"
+                                fullWidth
+                                startIcon={loading ? <CircularProgress size={20} /> : <CloudUploadIcon />}
+                                disabled={loading}
+                                sx={{ height: 40 }}
+                            >
+                                Upload QR Code
+                                <input
+                                    type="file"
+                                    hidden
+                                    accept="image/*"
+                                    onChange={(e) => handleFileChange(e, 'qr', key)}
                                 />
-                                <Button
-                                    variant="outlined"
-                                    size="small"
-                                    onClick={() => handleConvertQRLink(key)}
-                                    sx={{ height: 40, mt: 0 }}
-                                >
-                                    Preview
-                                </Button>
-                            </Stack>
+                            </Button>
                             {method.qrUrl && (
                                 <Box mt={1.5} sx={{ textAlign: 'center', p: 1, border: '1px dashed', borderColor: 'divider', borderRadius: 1 }}>
                                     <img
@@ -566,22 +544,23 @@ export default function StoreSettings({ section, showSnackbar, user }) {
                                     <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
                                         QR Code (Supports Google Drive Links)
                                     </Typography>
-                                    <Stack direction="row" spacing={1}>
-                                        <TextField
-                                            label="QR Code URL"
+                                        <Button
+                                            variant="contained"
+                                            component="label"
                                             fullWidth
                                             size="small"
-                                            value={bank.qrUrl || ''}
-                                            onChange={e => updateBank(index, { qrUrl: e.target.value })}
-                                        />
-                                        <Button
-                                            variant="outlined"
-                                            size="small"
-                                            onClick={() => handleConvertQRLink('bank', index)}
+                                            startIcon={loading ? <CircularProgress size={20} /> : <CloudUploadIcon />}
+                                            disabled={loading}
+                                            sx={{ height: 40 }}
                                         >
-                                            Preview
+                                            Upload QR Code
+                                            <input
+                                                type="file"
+                                                hidden
+                                                accept="image/*"
+                                                onChange={(e) => handleFileChange(e, 'logo', 'bank', index)}
+                                            />
                                         </Button>
-                                    </Stack>
                                     {bank.qrUrl && (
                                         <Box mt={1.5} sx={{ textAlign: 'center', p: 1, border: '1px dashed', borderColor: 'divider', borderRadius: 1 }}>
                                             <img
@@ -627,25 +606,22 @@ export default function StoreSettings({ section, showSnackbar, user }) {
                         onChange={e => setSettings({ ...settings, storeName: e.target.value })}
                     />
                     <Box>
-                        <Stack direction="row" spacing={1} alignItems="flex-start">
-                            <TextField
-                                label="Logo URL (Image Address)"
-                                fullWidth
-                                value={tempLogoUrl}
-                                onChange={e => {
-                                    setTempLogoUrl(e.target.value);
-                                    setPreviewError(false);
-                                }}
-                                helperText="Provide a URL to an image (PNG, JPG). Supports direct Google Drive sharing links."
+                        <Button
+                            variant="contained"
+                            component="label"
+                            fullWidth
+                            startIcon={uploadingLogo ? <CircularProgress size={20} /> : <CloudUploadIcon />}
+                            disabled={uploadingLogo}
+                            sx={{ height: 56 }}
+                        >
+                            Upload Logo Image
+                            <input
+                                type="file"
+                                hidden
+                                accept="image/*"
+                                onChange={(e) => handleFileChange(e, 'logo')}
                             />
-                            <Button
-                                variant="outlined"
-                                onClick={handleVerifyLogo}
-                                sx={{ height: 56, whiteSpace: 'nowrap' }}
-                            >
-                                Preview
-                            </Button>
-                        </Stack>
+                        </Button>
                     </Box>
                     {settings.logoUrl && (
                         <Box mt={1}>

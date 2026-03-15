@@ -1,115 +1,66 @@
 // src/utils/payrollHelpers.js
-// Single source of truth for all payroll calculation helpers.
+// Clean utility functions for payroll calculations.
 
-import { sumDenominations } from "./shiftFinancials";
 import { fmtCurrency, fmtDate, toDateInput, toDatetimeLocal } from "./formatters";
-export { sumDenominations };
 
-// ---------------------------------------------------------------------------
-// Time & Calculations
-// ---------------------------------------------------------------------------
+// ─── Time & Calculations ────────────────────────────────────────────────────
 
 /**
- * Calculates the exact minutes between two time points.
- * @param {Date|string|number} start - Start time.
- * @param {Date|string|number} end - End time.
- * @returns {number} Total minutes (rounded).
+ * Calculates exact minutes between two time points.
  */
 export function minutesBetween(start, end) {
   if (!start || !end) return 0;
-  const s = new Date(start);
-  const e = new Date(end);
-  const ms = Math.max(0, e - s);
+  const ms = Math.max(0, new Date(end) - new Date(start));
   return Math.round(ms / 60000);
 }
 
 /**
- * Formats a number as Philippine Peso with 2 decimal places.
- * @param {number} n - Amount in PHP.
- * @returns {string} Formatted string (e.g. ₱1,234.50).
+ * Format as Philippine Peso.
  */
 export const peso = (n) => fmtCurrency(n);
 
 /**
- * Converts minutes to hours with 2 decimal places.
- * @param {number} minutes 
- * @returns {number} Hours as float.
+ * Minutes → hours (2 decimal places).
  */
 export const toHours = (minutes) =>
   Number((Number(minutes || 0) / 60).toFixed(2));
 
 /**
- * Calculates gross pay.
- * @param {number} minutes 
- * @param {number} rate - Hourly rate 
- * @returns {number} Gross pay rounded to 2 decimal places.
+ * Gross pay = (minutes / 60) × rate.
  */
 export const calcGross = (minutes, rate) =>
   Number(((Number(minutes || 0) / 60) * Number(rate || 0)).toFixed(2));
 
 /**
- * Capitalizes the first letter of a string.
- * @param {string} s 
- * @returns {string} Capitalized string.
+ * Capitalize first letter.
  */
-export const cap = (s) =>
-  s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+export const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : "");
 
-// ---------------------------------------------------------------------------
-// Date Helpers (Consolidated to use formatters.js)
-// ---------------------------------------------------------------------------
+// ─── Date Helpers ───────────────────────────────────────────────────────────
 
-/**
- * Formats a Date/string to "Jan 1, 2024" (PHT).
- * @param {Date|string} val 
- * @returns {string}
- */
+/** Format to "Jan 1, 2024" (PHT). */
 export const toLocaleDateStringPHT = (val) => fmtDate(val);
 
-/**
- * Formats a Date/string to "YYYY-MM-DD" for date inputs.
- * @param {Date|string} val 
- * @returns {string}
- */
+/** Format to "YYYY-MM-DD" for inputs. */
 export const toYMD_PHT_fromTS = (val) => toDateInput(val);
 
-/**
- * Formats a Date/string to "YYYY-MM-DDTHH:mm" for datetime-local inputs.
- * @param {Date|string} val 
- * @returns {string}
- */
+/** Format to "YYYY-MM-DDTHH:mm" for datetime-local inputs. */
 export const toLocalISO_PHT_fromTS = (val) => toDatetimeLocal(val);
 
-/**
- * Returns today's date in PHT as "YYYY-MM-DD".
- * @returns {string}
- */
+/** Today as "YYYY-MM-DD" in PHT. */
 export const todayYMD_PHT = () => toDateInput(new Date());
 
-/**
- * Build an ISO string from a YYYY-MM-DD string anchored in PHT (UTC+8).
- * @param {string} ymd - "YYYY-MM-DD"
- * @param {boolean} [endOfDay=false] - If true, sets time to 23:59:59.
- * @returns {string}
- */
+/** Build ISO string from "YYYY-MM-DD" anchored in PHT (UTC+8). */
 export const tsFromYMD = (ymd, endOfDay = false) =>
-  new Date(`${ymd}T${endOfDay ? '23:59:59' : '00:00:00'}+08:00`).toISOString();
+  new Date(`${ymd}T${endOfDay ? "23:59:59" : "00:00:00"}+08:00`).toISOString();
 
-// ---------------------------------------------------------------------------
-// Rate Resolution
-// ---------------------------------------------------------------------------
+// ─── Rate Resolution ────────────────────────────────────────────────────────
 
 /**
- * Picks the correct hourly rate from a staff member's payroll configuration as of a given date.
- * Supports historical schemas: `rateHistory` or `effectiveRates`.
- *
- * @param {Object} payroll - Staff payroll document data.
- * @param {Date|string} asOfDate - The reference date.
- * @returns {number} Hourly rate in PHP.
+ * Picks the correct hourly rate from a staff member's payroll config as of a given date.
  */
 export const resolveHourlyRate = (payroll, asOfDate) => {
   if (!payroll) return 0;
-
   const asOf = new Date(asOfDate || Date.now());
 
   const history = Array.isArray(payroll.rate_history)
@@ -120,17 +71,12 @@ export const resolveHourlyRate = (payroll, asOfDate) => {
         ? payroll.effectiveRates
         : [];
 
-  // Sort by effective date ascending and find the last one that applies before/on asOf.
   const picked = history
-    .filter((r) => {
-      const effectDate = new Date(r.effective_from || r.effectiveFrom || 0);
-      return effectDate <= asOf;
-    })
-    .sort((a, b) => {
-      const da = new Date(a.effective_from || a.effectiveFrom || 0).getTime();
-      const db = new Date(b.effective_from || b.effectiveFrom || 0).getTime();
-      return da - db;
-    })
+    .filter((r) => new Date(r.effective_from || r.effectiveFrom || 0) <= asOf)
+    .sort((a, b) =>
+      new Date(a.effective_from || a.effectiveFrom || 0) -
+      new Date(b.effective_from || b.effectiveFrom || 0)
+    )
     .pop();
 
   if (picked?.rate != null) return Number(picked.rate);
@@ -139,82 +85,51 @@ export const resolveHourlyRate = (payroll, asOfDate) => {
   return 0;
 };
 
-/**
- * Computes the cash shortage for a shift based on expected vs actual cash.
- * @param {Object} shift - Shift document data.
- * @returns {number} Shortage amount (0 if no shortage or not consolidated).
- */
-export const shortageForShift = (shift) => {
-  // Prefer the authoritative DB-stored cash_difference (set at consolidation).
-  // cash_difference = onHand - expectedCash, so shortage = negative difference.
-  if (shift?.cash_difference != null) {
-    const diff = Number(shift.cash_difference);
-    return diff < 0 ? Number((-diff).toFixed(2)) : 0;
-  }
+// ─── Shift Shortage ─────────────────────────────────────────────────────────
 
-  // Not yet consolidated — no shortage to apply.
+/**
+ * Computes cash shortage for a shift.
+ * NOTE: Automatic shortage detection is disabled because cash_difference
+ * includes the effect of digital/AR payments and is not a reliable indicator
+ * of actual cash shortages. Real shortages should be added manually as
+ * deductions during the payroll run.
+ */
+export const shortageForShift = (/* shift */) => {
   return 0;
 };
 
 /**
- * Infers the shift name (Morning/Afternoon/Night) based on start time in PHT.
- * @param {Date|string} startTime - Start time.
- * @param {string} [title] - Override title.
- * @param {string} [label] - Override label.
- * @returns {string} "Morning", "Afternoon", or "Night".
+ * Infers shift name based on start time in PHT.
  */
 export const inferShiftName = (startTime, title, label) => {
   if (title) return title;
   if (label) return label;
-  if (!startTime) return 'Unknown';
-
+  if (!startTime) return "Unknown";
   const d = new Date(startTime);
-  if (isNaN(d.getTime())) return 'Unknown';
-
+  if (isNaN(d.getTime())) return "Unknown";
   const h = parseInt(
-    new Intl.DateTimeFormat('en-US', {
-      hour: 'numeric',
-      hour12: false,
-      timeZone: 'Asia/Manila',
-    }).format(d)
+    new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone: "Asia/Manila" }).format(d)
   );
-  if (h >= 5 && h < 12) return 'Morning';
-  if (h >= 12 && h < 18) return 'Afternoon';
-  return 'Night';
+  if (h >= 5 && h < 12) return "Morning";
+  if (h >= 12 && h < 18) return "Afternoon";
+  return "Night";
 };
 
-// ---------------------------------------------------------------------------
-// Pay Period Computation
-// ---------------------------------------------------------------------------
+// ─── Pay Period Computation ─────────────────────────────────────────────────
 
 /**
- * Determines the start and end dates of the pay period containing `forDate`.
- * @param {Object} schedule - Payroll schedule configuration.
- * @param {Date|string} forDate - The reference date.
- * @returns {{start: Date, end: Date}}
+ * Determines the start and end dates of the current pay period.
  */
-export function computePeriodForDate(schedule, forDate) {
-  const dateObj = new Date(forDate || Date.now());
-  const today = new Date(dateObj);
-  today.setHours(0, 0, 0, 0);
-
-  const anchor = new Date(schedule.anchor_date || schedule.anchorDate || Date.now());
-  anchor.setHours(0, 0, 0, 0);
-
-  const type = schedule.type || 'biweekly';
+export function computeCurrentPeriod(type = "semi-monthly") {
+  const today = new Date();
   const start = new Date(today);
   const end = new Date(today);
 
-  if (type === 'weekly') {
+  if (type === "weekly") {
     const diff = (today.getDay() + 6) % 7;
     start.setDate(today.getDate() - diff);
     end.setDate(start.getDate() + 6);
-  } else if (type === 'biweekly') {
-    const days = Math.floor((today - anchor) / 86400000);
-    const periodIndex = Math.floor(days / 14);
-    start.setTime(anchor.getTime() + periodIndex * 14 * 86400000);
-    end.setTime(start.getTime() + 13 * 86400000);
-  } else if (type === 'semi-monthly') {
+  } else if (type === "semi-monthly") {
     if (today.getDate() <= 15) {
       start.setDate(1);
       end.setDate(15);
@@ -223,12 +138,29 @@ export function computePeriodForDate(schedule, forDate) {
       end.setMonth(today.getMonth() + 1, 0);
     }
   } else {
-    // monthly (default)
+    // monthly
     start.setDate(1);
     end.setMonth(today.getMonth() + 1, 0);
   }
 
-  return { start, end };
+  return {
+    start: toDateInput(start),
+    end: toDateInput(end),
+  };
 }
 
+// ─── Recalculation ──────────────────────────────────────────────────────────
 
+/**
+ * Recalculates a single line's totals from its shifts, deductions, and additions.
+ */
+export function recalcLine(line) {
+  const activeShifts = (line.shifts || []).filter((s) => !s.excluded);
+  const totalMinutes = activeShifts.reduce((s, r) => s + Number(r.minutesUsed || 0), 0);
+  const gross = calcGross(totalMinutes, line.rate);
+  const totalDeductions = (line.deductions || []).reduce((s, d) => s + Number(d.amount || 0), 0);
+  const totalAdditions = (line.additions || []).reduce((s, a) => s + Number(a.amount || 0), 0);
+  const net = Number((gross + totalAdditions - totalDeductions).toFixed(2));
+
+  return { totalMinutes, gross, totalDeductions, totalAdditions, net };
+}

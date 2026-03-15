@@ -425,9 +425,9 @@ export default function AdminDashboard({ user, userRole, onLogout, appSettings }
                   <Schedule showSnackbar={showSnackbar} />
                 </Box>
               } />
-              <Route path="payroll" element={
-                <Box sx={{ p: 2, height: '100%', overflowY: 'auto' }}>
-                  <Payroll showSnackbar={showSnackbar} />
+              <Route path="payroll/*" element={
+                <Box sx={{ p: 0, height: '100%', overflow: 'hidden' }}>
+                  <Payroll appSettings={appSettings} />
                 </Box>
               } />
               <Route path="settings/*" element={

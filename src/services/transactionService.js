@@ -12,7 +12,8 @@ export const recordExpense = async ({
     notes,
     user,
     activeShiftId,
-    financialCategory = 'OPEX'
+    financialCategory = 'OPEX',
+    metadata = {}
 }) => {
     const finalFinancialCategory = (expenseType?.toLowerCase().includes('capital')) ? 'CAPEX' : financialCategory;
     const staffId = expenseStaffId || getStaffIdentity(user);
@@ -24,7 +25,8 @@ export const recordExpense = async ({
         p_staff_id: staffId,
         p_shift_id: activeShiftId,
         p_category: finalFinancialCategory,
-        p_notes: notes || ''
+        p_notes: notes || '',
+        p_metadata: metadata
     });
 
     if (error) throw error;
